@@ -161,7 +161,7 @@
   The harness provides 256KB of shared WebAssembly memory with a fixed layout:
 </p>
 <table class="mem-table">
-  <tr><td>0x0000</td><td>Control block: frame counter, mouse position, buttons, tick</td></tr>
+  <tr><td>0x0000</td><td>Control block: frame counter, mouse position, buttons, tick, keyboard state</td></tr>
   <tr><td>0x0040</td><td>Palette: 256 entries x 3 bytes (RGB)</td></tr>
   <tr><td>0x0340</td><td>Framebuffer: 64000 bytes (320 x 200, 1 byte per pixel)</td></tr>
   <tr><td>0x10340+</td><td>Free for the demo to use however it wants</td></tr>
@@ -187,6 +187,18 @@
   <li><a href="/#torus"><span class="demo-name">torus</span></a> <span class="demo-desc">Gouraud-shaded rotating torus with directional lighting.</span></li>
   <li><a href="/#shooter"><span class="demo-name">shooter</span></a> <span class="demo-desc">STELLAR ASSAULT: side-scrolling space game with 5-phase intro, 15 enemy waves, and a boss fight. ~2000 lines of WAT.</span></li>
 </ul>
+
+<h2>Controls</h2>
+<p>
+  Interactive demos (like <a href="/#shooter">shooter</a>) respond to mouse
+  and keyboard input. The harness writes input state into the control block
+  so demos can read it from shared memory.
+</p>
+<table class="mem-table">
+  <tr><td>Mouse</td><td>Move cursor over the canvas to aim. Click to fire.</td></tr>
+  <tr><td>Keyboard</td><td><code>W A S D</code> / Arrow keys to move. <code>Space</code> for action. <code>Shift</code>, <code>Enter</code>, <code>Esc</code> for secondary controls.</td></tr>
+  <tr><td>Touch</td><td>Tap and drag on the canvas to aim and fire. On touch devices, a virtual D-pad and action buttons appear below the screen.</td></tr>
+</table>
 
 <h2>Tech stack</h2>
 <p>

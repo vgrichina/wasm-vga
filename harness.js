@@ -111,7 +111,7 @@ canvas.addEventListener('mousemove', (e) => {
   setMousePos((e.clientX - rect.left) / rect.width * WIDTH,
               (e.clientY - rect.top) / rect.height * HEIGHT);
 });
-canvas.addEventListener('mousedown', (e) => setMouseBtn(e.button, true));
+canvas.addEventListener('mousedown', (e) => { setMouseBtn(e.button, true); canvas.focus(); });
 canvas.addEventListener('mouseup', (e) => setMouseBtn(e.button, false));
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -145,7 +145,14 @@ function setKeyBit(bit, down) {
 }
 document.addEventListener('keydown', (e) => {
   const bit = KEY_MAP[e.code];
-  if (bit !== undefined) { e.preventDefault(); setKeyBit(bit, true); }
+  if (bit !== undefined) {
+    e.preventDefault();
+    // pull focus away from select/buttons so they don't eat keys
+    if (document.activeElement && document.activeElement !== document.body) {
+      document.activeElement.blur();
+    }
+    setKeyBit(bit, true);
+  }
 });
 document.addEventListener('keyup', (e) => {
   const bit = KEY_MAP[e.code];

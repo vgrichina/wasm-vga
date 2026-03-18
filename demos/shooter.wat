@@ -296,32 +296,59 @@
   ;; 0x10360: px(u16), py(u16), fire_cooldown(u8), invuln(u8), anim(u8)
 
   (func $update_player
-    (local $mx i32) (local $my i32) (local $btn i32)
+    (local $mx i32) (local $my i32) (local $btn i32) (local $keys i32)
     (local $px i32) (local $py i32) (local $cd i32) (local $inv i32)
-    ;; read mouse
+    ;; read input
     (local.set $mx (i32.load16_u (i32.const 0x04)))
     (local.set $my (i32.load16_u (i32.const 0x06)))
     (local.set $btn (i32.load8_u (i32.const 0x08)))
-    ;; clamp
-    (if (i32.lt_s (local.get $mx) (i32.const 8)) (then (local.set $mx (i32.const 8))))
-    (if (i32.gt_s (local.get $mx) (i32.const 280)) (then (local.set $mx (i32.const 280))))
-    (if (i32.lt_s (local.get $my) (i32.const 16)) (then (local.set $my (i32.const 16))))
-    (if (i32.gt_s (local.get $my) (i32.const 190)) (then (local.set $my (i32.const 190))))
-    ;; smooth movement toward mouse
+    (local.set $keys (i32.load8_u (i32.const 0x10)))
+    ;; current position
     (local.set $px (i32.load16_u (i32.const 0x10360)))
     (local.set $py (i32.load16_u (i32.const 0x10362)))
-    ;; lerp: move 1/4 toward target each frame
-    (local.set $px (i32.add (local.get $px) (i32.shr_s (i32.sub (local.get $mx) (local.get $px)) (i32.const 2))))
-    (local.set $py (i32.add (local.get $py) (i32.shr_s (i32.sub (local.get $my) (local.get $py)) (i32.const 2))))
+    ;; keyboard movement (3px/frame) — takes priority when any direction is held
+    (if (i32.and (local.get $keys) (i32.const 0x0F))  ;; any direction key?
+      (then
+        ;; up (bit0)
+        (if (i32.and (local.get $keys) (i32.const 1))
+          (then (local.set $py (i32.sub (local.get $py) (i32.const 3)))))
+        ;; down (bit1)
+        (if (i32.and (local.get $keys) (i32.const 2))
+          (then (local.set $py (i32.add (local.get $py) (i32.const 3)))))
+        ;; left (bit2)
+        (if (i32.and (local.get $keys) (i32.const 4))
+          (then (local.set $px (i32.sub (local.get $px) (i32.const 3)))))
+        ;; right (bit3)
+        (if (i32.and (local.get $keys) (i32.const 8))
+          (then (local.set $px (i32.add (local.get $px) (i32.const 3)))))
+      )
+      (else
+        ;; no keys held — lerp toward mouse (1/4 distance per frame)
+        (local.set $mx (i32.load16_u (i32.const 0x04)))
+        (if (i32.lt_s (local.get $mx) (i32.const 8)) (then (local.set $mx (i32.const 8))))
+        (if (i32.gt_s (local.get $mx) (i32.const 280)) (then (local.set $mx (i32.const 280))))
+        (local.set $my (i32.load16_u (i32.const 0x06)))
+        (if (i32.lt_s (local.get $my) (i32.const 16)) (then (local.set $my (i32.const 16))))
+        (if (i32.gt_s (local.get $my) (i32.const 190)) (then (local.set $my (i32.const 190))))
+        (local.set $px (i32.add (local.get $px) (i32.shr_s (i32.sub (local.get $mx) (local.get $px)) (i32.const 2))))
+        (local.set $py (i32.add (local.get $py) (i32.shr_s (i32.sub (local.get $my) (local.get $py)) (i32.const 2))))
+      )
+    )
+    ;; clamp position
+    (if (i32.lt_s (local.get $px) (i32.const 8)) (then (local.set $px (i32.const 8))))
+    (if (i32.gt_s (local.get $px) (i32.const 280)) (then (local.set $px (i32.const 280))))
+    (if (i32.lt_s (local.get $py) (i32.const 16)) (then (local.set $py (i32.const 16))))
+    (if (i32.gt_s (local.get $py) (i32.const 190)) (then (local.set $py (i32.const 190))))
     (i32.store16 (i32.const 0x10360) (local.get $px))
     (i32.store16 (i32.const 0x10362) (local.get $py))
     ;; fire cooldown
     (local.set $cd (i32.load8_u (i32.const 0x10364)))
     (if (i32.gt_u (local.get $cd) (i32.const 0))
       (then (local.set $cd (i32.sub (local.get $cd) (i32.const 1)))))
-    ;; auto-fire OR click to fire
+    ;; auto-fire OR click/space to fire
     (if (i32.and (i32.eqz (local.get $cd))
-          (i32.or (i32.and (local.get $btn) (i32.const 1))
+          (i32.or (i32.or (i32.and (local.get $btn) (i32.const 1))
+                          (i32.and (local.get $keys) (i32.const 16)))  ;; space
             ;; auto-fire every 8 frames
             (i32.eqz (i32.and (i32.load (i32.const 0)) (i32.const 7)))))
       (then
@@ -1522,7 +1549,9 @@
     )
     ;; restart on click after delay
     (local.set $btn (i32.load8_u (i32.const 0x08)))
-    (if (i32.and (i32.gt_u (local.get $timer) (i32.const 180)) (i32.and (local.get $btn) (i32.const 1)))
+    (if (i32.and (i32.gt_u (local.get $timer) (i32.const 180))
+          (i32.or (i32.and (local.get $btn) (i32.const 1))
+                  (i32.and (i32.load8_u (i32.const 0x10)) (i32.const 16))))
       (then
         ;; reset to title
         (i32.store8 (i32.const 0x10340) (i32.const 0))
@@ -1961,6 +1990,32 @@
     (i32.store16 (i32.const 0x10342) (local.get $timer))
     ;; dispatch on phase
     (local.set $phase (i32.load8_u (i32.const 0x10340)))
+    ;; skip intro on click or space (keyboard bit4 at 0x10) — require timer>30 to avoid accidental skip
+    (if (i32.and
+          (i32.lt_u (local.get $phase) (i32.const 5))
+          (i32.gt_u (local.get $timer) (i32.const 30)))
+      (then
+        (if (i32.or
+              (i32.and (i32.load8_u (i32.const 0x08)) (i32.const 1))    ;; mouse left
+              (i32.and (i32.load8_u (i32.const 0x10)) (i32.const 16)))  ;; space key
+          (then
+            ;; jump to gameplay
+            (i32.store8 (i32.const 0x10340) (i32.const 5))
+            (i32.store16 (i32.const 0x10342) (i32.const 0))
+            (i32.store16 (i32.const 0x10360) (i32.const 40))
+            (i32.store16 (i32.const 0x10362) (i32.const 100))
+            (i32.store8 (i32.const 0x10348) (i32.const 3))
+            (i32.store8 (i32.const 0x10349) (i32.const 0))
+            (i32.store (i32.const 0x10344) (i32.const 0))
+            (i32.store8 (i32.const 0x1034A) (i32.const 0))
+            (i32.store8 (i32.const 0x1034B) (i32.const 60))
+            (i32.store8 (i32.const 0x1034C) (i32.const 0))
+            (call $phase_gameplay)
+            (return)
+          )
+        )
+      )
+    )
     (if (i32.eqz (local.get $phase)) (then (call $phase_story) (return)))
     (if (i32.eq (local.get $phase) (i32.const 1)) (then (call $phase_planet) (return)))
     (if (i32.eq (local.get $phase) (i32.const 2)) (then (call $phase_ship) (return)))
