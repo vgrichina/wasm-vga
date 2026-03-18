@@ -111,6 +111,7 @@ async function loadDemo() {
   if (animId) { cancelAnimationFrame(animId); animId = null; }
 
   const name = document.getElementById('demo').value;
+  history.replaceState(null, '', '#' + name);
 
   // 4 pages = 256KB, plenty of room
   memory = new WebAssembly.Memory({ initial: 4 });
@@ -155,5 +156,13 @@ async function loadDemo() {
   }
 }
 
-// auto-load on start
-window.addEventListener('load', loadDemo);
+// auto-load on start, respect hash fragment
+window.addEventListener('load', () => {
+  const hash = location.hash.slice(1);
+  if (hash) {
+    const sel = document.getElementById('demo');
+    const opt = [...sel.options].find(o => o.value === hash);
+    if (opt) sel.value = hash;
+  }
+  loadDemo();
+});
