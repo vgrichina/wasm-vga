@@ -1,0 +1,17 @@
+{
+  "name": "wasm-vga",
+  "version": "1.0.0",
+  "description": "",
+  "main": "harness.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "pngjs": "^7.0.0",
+    "wabt": "^1.0.39"
+  }
+}

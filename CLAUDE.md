@@ -20,7 +20,25 @@ All demos are WAT files compiled in-browser via wabt.js. No server-side compilat
   - `0x10`: keyboard state (u8 bitfield: bit0=Up/W, bit1=Down/S, bit2=Left/A, bit3=Right/D, bit4=Space, bit5=Enter, bit6=Esc, bit7=Shift)
 - `0x0040-0x033F` — Palette (256 * 3 RGB bytes)
 - `0x0340-0x1033F` — Framebuffer (320*200 = 64000 bytes, each byte = palette index)
-- `0x10340+` — Free for guest use
+- `0x10340+` — Free for guest use (192KB, up to `0x40000`)
+
+## Guest Memory Layout Best Practices
+
+Pack **const data** (sin tables, font, strings, lookup tables) at the bottom of guest area (`0x10340+` growing up) and **dynamic data** (buffers, state, PRNG) at the top (`0x40000` growing down). This prevents overlapping regions as demos grow:
+
+```
+0x10340  ┌──────────────────┐  guest area start
+         │  CONST DATA      │  data segments, lookup tables
+         │  (grows →)       │  written once in init, read-only after
+         ├──────────────────┤
+         │                  │
+         │  ~180KB gap      │  room to grow either direction
+         │                  │
+         ├──────────────────┤
+         │  DYNAMIC DATA    │  PRNG state, fire buffers, particle state
+         │  (← grows)       │  mutated every frame
+0x40000  └──────────────────┘  end of 4 pages
+```
 
 ## WAT Demo Contract
 
@@ -75,6 +93,36 @@ curl -s -X PUT "$BERRRY_API/apps/wasmvga-demos" \
   -H "Content-Type: application/json" \
   -d '{"files":[{"name":"index.html","content":'"$(python3 -c "import json;print(json.dumps(open('index.html').read()))")"'}],"message":"what changed"}'
 ```
+
+## Input Handling in Demos
+
+The harness writes keyboard/mouse state to the control block every frame. Demos read it directly from shared memory.
+
+### Rising Edge Detection Pattern
+
+For one-shot actions (skip section, fire weapon), detect newly-pressed bits using `input & ~prev_input`:
+
+```wat
+;; Read current input state
+(local.set $input (i32.or
+  (i32.and (i32.load8_u (i32.const 0x10)) (i32.const 28))   ;; keyboard: left|right|space
+  (i32.and (i32.load8_u (i32.const 0x08)) (i32.const 1))))  ;; mouse click
+(local.set $prev_input (i32.load (i32.const 0x3800C)))       ;; from dynamic area
+(i32.store (i32.const 0x3800C) (local.get $input))
+
+;; Newly-pressed bits = input & ~prev_input
+;; Check if any target bits (e.g. 25 = space|right|click) are newly on
+(if (i32.and
+  (i32.and (local.get $input) (i32.xor (local.get $prev_input) (i32.const 0xFFFFFFFF)))
+  (i32.const 25))
+  (then ...))
+```
+
+This is per-bit rising edge — a held mouse click won't block a keyboard press from triggering.
+
+### Harness Keyboard Capture
+
+`harness.js` uses capture-phase (`window.addEventListener(..., true)`) + `stopPropagation()` to intercept arrow keys and space before UI elements (select dropdown, buttons) can consume them. The canvas auto-focuses after `loadDemo()`.
 
 ## Adding a New Demo
 

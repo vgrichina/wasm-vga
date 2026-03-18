@@ -3,26 +3,27 @@
 
   ;; "CODING IS OVER" — Multi-section demoscene piece
   ;;
-  ;; Memory layout (guest area):
-  ;;   0x10040 - sin table (256 bytes)
-  ;;   0x10140 - font data (768 bytes, ASCII 32-127, 8 bytes each)
-  ;;   0x10440 - PRNG state (4 bytes)
-  ;;   0x10444 - start_tick (4 bytes, captured in init)
-  ;;   0x10448 - last_section (4 bytes, for detecting transitions)
-  ;;   0x10450 - rain columns: 40 x {y:u8, speed:u8, char:u8, alive:u8} = 160 bytes
-  ;;   0x104F0 - rain_reveal flag (4 bytes)
-  ;;   0x10500 - fire buffer: 320x30 = 9600 bytes (for graveyard)
-  ;;   0x12D80 - (free)
+  ;; Memory layout — const at bottom, dynamic at top of 256KB:
   ;;
-  ;; Strings (data segments):
-  ;;   0x12E00 - "CODING IS OVER" (14)
-  ;;   0x12E10 - "BERRRY.APP" (10)
-  ;;   0x12E20 - "BERRRY.APP PRESENTS" (19)
-  ;;   0x12E40 - "INTENT NOT SYNTAX" (17)
-  ;;   0x12E60 - "BUILT ON BERRRY.APP" (19)
-  ;;   0x12E80 - scroller message (~220 bytes)
-  ;;   0x12F80 - "WASMVGA-DEMOS.BERRRY.APP" (24)
-  ;;   0x12FA0 - tombstone labels: "C\0JAVA\0PYTHON\0RUST\0JS\0GO\0"
+  ;; CONST (read-only after init):
+  ;;   0x10340 - sin table (256 bytes)
+  ;;   0x10440 - font data (768 bytes, ASCII 32-127, 8 bytes each)
+  ;;   0x10740 - "CODING IS OVER" (14)
+  ;;   0x10750 - "BERRRY.APP" (10)
+  ;;   0x10760 - "BERRRY.APP PRESENTS" (19)
+  ;;   0x10780 - "INTENT NOT SYNTAX" (17)
+  ;;   0x107A0 - "BUILT ON BERRRY.APP" (19)
+  ;;   0x107C0 - scroller message (~240 bytes)
+  ;;   0x108C0 - "WASMVGA-DEMOS.BERRRY.APP" (24)
+  ;;   0x108E0 - tombstone labels: "C\0JAVA\0PYTHON\0RUST\0JS\0GO\0"
+  ;;
+  ;; DYNAMIC (mutated every frame):
+  ;;   0x38000 - PRNG state (4 bytes)
+  ;;   0x38004 - start_tick (4 bytes)
+  ;;   0x38008 - last_section (4 bytes)
+  ;;   0x3800C - prev_input (4 bytes)
+  ;;   0x38010 - rain columns: 40 x 4 = 160 bytes
+  ;;   0x38100 - fire buffer: 320x40 = 12800 bytes (ends 0x3B500)
   ;;
   ;; Section timing (elapsed_ms % 64000):
   ;;   0     -  8000  Section 0: Code Rain
@@ -53,7 +54,7 @@
   ;; UTILITY: sin table lookup (index 0-255 → value 0-255)
   ;; =========================================================
   (func $sin_tab (param $idx i32) (result i32)
-    (i32.load8_u (i32.add (i32.const 0x10040) (i32.and (local.get $idx) (i32.const 255))))
+    (i32.load8_u (i32.add (i32.const 0x10340) (i32.and (local.get $idx) (i32.const 255))))
   )
 
   ;; =========================================================
@@ -61,12 +62,12 @@
   ;; =========================================================
   (func $rand (result i32)
     (local $s i32)
-    (local.set $s (i32.load (i32.const 0x10440)))
+    (local.set $s (i32.load (i32.const 0x38000)))
     (if (i32.eqz (local.get $s)) (then (local.set $s (i32.const 12345))))
     (local.set $s (i32.xor (local.get $s) (i32.shl (local.get $s) (i32.const 13))))
     (local.set $s (i32.xor (local.get $s) (i32.shr_u (local.get $s) (i32.const 17))))
     (local.set $s (i32.xor (local.get $s) (i32.shl (local.get $s) (i32.const 5))))
-    (i32.store (i32.const 0x10440) (local.get $s))
+    (i32.store (i32.const 0x38000) (local.get $s))
     (local.get $s)
   )
 
@@ -77,7 +78,7 @@
   (func $font_pixel (param $c i32) (param $r i32) (param $k i32) (result i32)
     (local $byte i32)
     ;; font stored with row 7 first, so address = base + (c-32)*8 + (7-r)
-    (local.set $byte (i32.load8_u (i32.add (i32.const 0x10140)
+    (local.set $byte (i32.load8_u (i32.add (i32.const 0x10440)
       (i32.add (i32.mul (i32.sub (local.get $c) (i32.const 32)) (i32.const 8))
                (i32.sub (i32.const 7) (local.get $r))))))
     (i32.and (i32.shr_u (local.get $byte) (i32.sub (i32.const 7) (local.get $k))) (i32.const 1))
@@ -264,7 +265,7 @@
             (i32.lt_u (local.get $col) (local.get $kill_dist))
             (i32.ge_u (local.get $col) (i32.sub (i32.const 40) (local.get $kill_dist))))
             (then
-              (i32.store8 (i32.add (i32.const 0x10453)
+              (i32.store8 (i32.add (i32.const 0x38013)
                 (i32.mul (local.get $col) (i32.const 4))) (i32.const 0))))
           (local.set $col (i32.add (local.get $col) (i32.const 1)))
           (br $kl)
@@ -275,7 +276,7 @@
     (local.set $col (i32.const 0))
     (block $cd (loop $cl
       (br_if $cd (i32.ge_u (local.get $col) (i32.const 40)))
-      (local.set $base (i32.add (i32.const 0x10450) (i32.mul (local.get $col) (i32.const 4))))
+      (local.set $base (i32.add (i32.const 0x38010) (i32.mul (local.get $col) (i32.const 4))))
       (local.set $y (i32.load8_u (local.get $base)))
       (local.set $speed (i32.load8_u (i32.add (local.get $base) (i32.const 1))))
       (local.set $alive (i32.load8_u (i32.add (local.get $base) (i32.const 3))))
@@ -358,7 +359,7 @@
         (local.set $ri (i32.const 0))
         (block $rvd (loop $rvl
           (br_if $rvd (i32.ge_u (local.get $ri) (local.get $reveal_count)))
-          (local.set $target_ch (i32.load8_u (i32.add (i32.const 0x12E10) (local.get $ri))))
+          (local.set $target_ch (i32.load8_u (i32.add (i32.const 0x10750) (local.get $ri))))
           (local.set $target_x (i32.add (i32.const 115)
             (i32.mul (local.get $ri) (i32.const 9))))
           (call $draw_char_at (local.get $target_ch) (local.get $target_x) (i32.const 96) (i32.const 15))
@@ -458,64 +459,107 @@
 
     ;; Tombstone 0: "C" at x=15, w=28, target_top=110
     (call $draw_tombstone (i32.const 15) (i32.const 28) (i32.const 60)
-      (local.get $rise) (i32.const 0x12FA0) (i32.const 1))
+      (local.get $rise) (i32.const 0x108E0) (i32.const 1))
     ;; Tombstone 1: "JAVA" at x=65, w=44
     (call $draw_tombstone (i32.const 60) (i32.const 44) (i32.const 55)
-      (local.get $rise) (i32.const 0x12FA2) (i32.const 4))
+      (local.get $rise) (i32.const 0x108E2) (i32.const 4))
     ;; Tombstone 2: "PYTHON" at x=118, w=60
     (call $draw_tombstone (i32.const 113) (i32.const 60) (i32.const 50)
-      (local.get $rise) (i32.const 0x12FA7) (i32.const 6))
+      (local.get $rise) (i32.const 0x108E7) (i32.const 6))
     ;; Tombstone 3: "RUST" at x=185, w=44
     (call $draw_tombstone (i32.const 180) (i32.const 44) (i32.const 55)
-      (local.get $rise) (i32.const 0x12FAE) (i32.const 4))
+      (local.get $rise) (i32.const 0x108EE) (i32.const 4))
     ;; Tombstone 4: "JS" at x=238, w=28
     (call $draw_tombstone (i32.const 235) (i32.const 28) (i32.const 58)
-      (local.get $rise) (i32.const 0x12FB3) (i32.const 2))
+      (local.get $rise) (i32.const 0x108F3) (i32.const 2))
     ;; Tombstone 5: "GO" at x=278, w=28
     (call $draw_tombstone (i32.const 275) (i32.const 28) (i32.const 62)
-      (local.get $rise) (i32.const 0x12FB6) (i32.const 2))
+      (local.get $rise) (i32.const 0x108F6) (i32.const 2))
 
-    ;; Draw fire overlaid on scene (only where hot enough, preserving background)
-    ;; Covers y=160-199 (40 rows), fades with height
-    (local.set $y (i32.const 160))
+    ;; Doom-style fire simulation in buffer at 0x38100 (320×40, rows 0-39 map to y=160-199)
+    ;; Seed bottom row (row 39) with random hot values
+    (local.set $x (i32.const 0))
+    (block $sd (loop $sl
+      (br_if $sd (i32.ge_u (local.get $x) (i32.const 320)))
+      (i32.store8 (i32.add (i32.const 0x38100) (i32.add (i32.mul (i32.const 39) (i32.const 320)) (local.get $x)))
+        (i32.rem_u (i32.and (call $rand) (i32.const 127)) (i32.const 86)))
+      (local.set $x (i32.add (local.get $x) (i32.const 1)))
+      (br $sl)
+    ))
+    ;; Propagate fire upward: for each pixel (x, row) where row < 39
+    ;; new[row][x] = avg(old[row+1][x-1], old[row+1][x], old[row+1][x+1], old[row+2][x]) - decay
+    (local.set $y (i32.const 0))
     (block $fd (loop $fl
-      (br_if $fd (i32.ge_u (local.get $y) (i32.const 200)))
+      (br_if $fd (i32.ge_u (local.get $y) (i32.const 39)))
       (local.set $x (i32.const 0))
       (block $fxd (loop $fxl
         (br_if $fxd (i32.ge_u (local.get $x) (i32.const 320)))
-        ;; 3 sin layers for organic fire shape
-        (local.set $v1 (call $sin_tab (i32.add (i32.mul (local.get $x) (i32.const 3))
-          (i32.shr_u (local.get $t) (i32.const 3)))))
-        (local.set $v2 (call $sin_tab (i32.add (i32.mul (local.get $x) (i32.const 7))
-          (i32.shr_u (local.get $t) (i32.const 2)))))
-        (local.set $heat (call $sin_tab (i32.add (i32.mul (local.get $x) (i32.const 11))
-          (i32.mul (i32.shr_u (local.get $t) (i32.const 2)) (i32.const 3)))))
-        ;; Combine and scale by proximity to bottom (stronger near y=199)
+        ;; below
+        (local.set $v1 (i32.load8_u (i32.add (i32.const 0x38100)
+          (i32.add (i32.mul (i32.add (local.get $y) (i32.const 1)) (i32.const 320)) (local.get $x)))))
+        ;; below-left
+        (local.set $v2 (i32.load8_u (i32.add (i32.const 0x38100)
+          (i32.add (i32.mul (i32.add (local.get $y) (i32.const 1)) (i32.const 320))
+            (select (i32.sub (local.get $x) (i32.const 1)) (i32.const 0)
+              (i32.gt_u (local.get $x) (i32.const 0)))))))
+        ;; below-right
+        (local.set $heat (i32.load8_u (i32.add (i32.const 0x38100)
+          (i32.add (i32.mul (i32.add (local.get $y) (i32.const 1)) (i32.const 320))
+            (select (i32.add (local.get $x) (i32.const 1)) (i32.const 319)
+              (i32.lt_u (local.get $x) (i32.const 319)))))))
+        ;; two-below (or bottom row if at row 38)
         (local.set $heat (i32.shr_u
-          (i32.mul
-            (i32.shr_u (i32.add (i32.add (local.get $v1) (local.get $v2)) (local.get $heat)) (i32.const 1))
-            (i32.sub (local.get $y) (i32.const 155)))
-          (i32.const 6)))
-        (if (i32.gt_s (local.get $heat) (i32.const 85))
-          (then (local.set $heat (i32.const 85))))
-        ;; Only overlay if heat > 15 (alpha threshold — scene shows through weak fire)
-        (if (i32.gt_s (local.get $heat) (i32.const 15))
-          (then
-            (i32.store8 (i32.add (i32.const 0x0340)
-              (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x)))
-              (local.get $heat))))
+          (i32.add (i32.add (local.get $v1) (local.get $v2))
+            (i32.add (local.get $heat)
+              (i32.load8_u (i32.add (i32.const 0x38100)
+                (i32.add (i32.mul
+                  (select (i32.add (local.get $y) (i32.const 2)) (i32.const 39)
+                    (i32.lt_u (local.get $y) (i32.const 38)))
+                  (i32.const 320)) (local.get $x))))))
+          (i32.const 2)))
+        ;; random decay 0-1
+        (local.set $heat (i32.sub (local.get $heat) (i32.and (call $rand) (i32.const 1))))
+        (if (i32.lt_s (local.get $heat) (i32.const 0))
+          (then (local.set $heat (i32.const 0))))
+        ;; Store with wind: randomly shift x by 0 or 1
+        (local.set $v1 (i32.add (local.get $x) (i32.and (call $rand) (i32.const 1))))
+        (if (i32.ge_u (local.get $v1) (i32.const 320))
+          (then (local.set $v1 (i32.const 319))))
+        (i32.store8 (i32.add (i32.const 0x38100)
+          (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $v1)))
+          (local.get $heat))
         (local.set $x (i32.add (local.get $x) (i32.const 1)))
         (br $fxl)
       ))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $fl)
     ))
+    ;; Overlay fire buffer onto framebuffer where intensity > 10
+    (local.set $y (i32.const 0))
+    (block $od (loop $ol
+      (br_if $od (i32.ge_u (local.get $y) (i32.const 40)))
+      (local.set $x (i32.const 0))
+      (block $oxd (loop $oxl
+        (br_if $oxd (i32.ge_u (local.get $x) (i32.const 320)))
+        (local.set $heat (i32.load8_u (i32.add (i32.const 0x38100)
+          (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x)))))
+        (if (i32.gt_u (local.get $heat) (i32.const 25))
+          (then
+            (i32.store8 (i32.add (i32.const 0x0340)
+              (i32.add (i32.mul (i32.add (local.get $y) (i32.const 160)) (i32.const 320)) (local.get $x)))
+              (local.get $heat))))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $oxl)
+      ))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $ol)
+    ))
 
     ;; "BERRRY.APP PRESENTS" at top center, 1x scale
     ;; 19 chars * 9px = 171px. centered: (320-171)/2 = 74
     (if (i32.gt_u (local.get $t) (i32.const 2000))
       (then
-        (call $draw_text (i32.const 0x12E20) (i32.const 19)
+        (call $draw_text (i32.const 0x10760) (i32.const 19)
           (i32.const 74) (i32.const 8) (i32.const 1) (i32.const 90))))
   )
 
@@ -595,7 +639,7 @@
     (local.set $t (i32.sub (local.get $elapsed) (i32.const 20000)))
 
     ;; Pulse text color: oscillate between white (255,255,255) and red (255,0,0)
-    (local.set $pulse (call $sin_tab (i32.shr_u (local.get $t) (i32.const 3))))
+    (local.set $pulse (call $sin_tab (i32.shr_u (local.get $t) (i32.const 2))))
     (call $set_pal (i32.const 1) (i32.const 255) (local.get $pulse) (local.get $pulse))
 
     ;; Clear to black
@@ -633,12 +677,12 @@
 
     ;; "CODING IS OVER" at 2x scale, centered
     ;; 14 chars * 9 * 2 = 252px. base_x = (320-252)/2 = 34
-    (call $draw_text (i32.const 0x12E00) (i32.const 14)
+    (call $draw_text (i32.const 0x10740) (i32.const 14)
       (i32.const 34) (i32.const 72) (i32.const 2) (i32.const 1))
 
     ;; "BERRRY.APP" at 1x below, centered
     ;; 10 chars * 9 = 90px. base_x = (320-90)/2 = 115
-    (call $draw_text (i32.const 0x12E10) (i32.const 10)
+    (call $draw_text (i32.const 0x10750) (i32.const 10)
       (i32.const 115) (i32.const 100) (i32.const 1) (i32.const 2))
 
     ;; CRT scanlines: darken every other row
@@ -771,10 +815,10 @@
 
     (if (i32.lt_u (local.get $sec_t) (i32.const 6000))
       (then
-        (call $draw_text (i32.const 0x12E40) (i32.const 17)
+        (call $draw_text (i32.const 0x10780) (i32.const 17)
           (i32.const 7) (local.get $text_y) (i32.const 2) (i32.const 245)))
       (else
-        (call $draw_text (i32.const 0x12E60) (i32.const 19)
+        (call $draw_text (i32.const 0x107A0) (i32.const 19)
           (i32.const 74) (local.get $text_y) (i32.const 1) (i32.const 250))))
   )
 
@@ -804,17 +848,17 @@
   )
 
   (func $render_scroll (param $elapsed i32)
-    (local $t i32) (local $tick i32) (local $x i32) (local $y i32) (local $i i32)
+    (local $t i32) (local $tick i32) (local $i i32)
     (local $star_x i32) (local $star_y i32) (local $star_speed i32)
-    (local $msg_len i32) (local $scroll_x i32) (local $scale i32)
-    (local $text_x i32) (local $char_idx i32) (local $char_col i32)
-    (local $char_code i32) (local $wave_offset i32) (local $text_y i32)
-    (local $font_row i32) (local $draw_y i32) (local $fb_addr i32)
+    (local $sy i32) (local $sx i32) (local $df i32)
+    (local $scroll i32) (local $text_y i32) (local $text_line i32)
+    (local $font_row i32) (local $screen_half i32) (local $left i32)
+    (local $text_x i32) (local $char_col i32) (local $font_col i32)
+    (local $char_idx i32) (local $char_code i32) (local $color i32)
+    (local $right i32)
 
     (local.set $t (i32.sub (local.get $elapsed) (i32.const 44000)))
     (local.set $tick (i32.shr_u (local.get $t) (i32.const 4)))
-    (local.set $msg_len (i32.const 240))
-    (local.set $scale (i32.const 2))
 
     ;; Clear to background
     (call $clear_fb)
@@ -823,13 +867,11 @@
     (local.set $i (i32.const 0))
     (block $sd (loop $sl
       (br_if $sd (i32.ge_u (local.get $i) (i32.const 80)))
-      ;; deterministic star positions
       (local.set $star_x (i32.rem_u (i32.add
         (i32.rem_u (i32.mul (local.get $i) (i32.const 197)) (i32.const 320))
         (i32.mul (local.get $tick) (i32.add (i32.rem_u (local.get $i) (i32.const 3)) (i32.const 1))))
         (i32.const 320)))
       (local.set $star_y (i32.rem_u (i32.mul (local.get $i) (i32.const 53)) (i32.const 200)))
-      ;; brightness by layer
       (local.set $star_speed (i32.add (i32.rem_u (local.get $i) (i32.const 3)) (i32.const 1)))
       (i32.store8 (i32.add (i32.const 0x0340)
         (i32.add (i32.mul (local.get $star_y) (i32.const 320)) (local.get $star_x)))
@@ -838,64 +880,91 @@
       (br $sl)
     ))
 
-    ;; Sine-wave scroller (same pattern as scroller.wat)
-    (local.set $scroll_x (i32.rem_u (local.get $tick)
-      (i32.mul (local.get $msg_len) (i32.const 10))))
+    ;; Star Wars perspective crawl — inverse mapping approach
+    ;; For each screen pixel, compute which texture pixel it maps to.
+    ;; Vanishing point vy=30. Texture = 28 chars × 9 lines, 8×8 font, line_height=10
+    ;; text_y = K/df - scroll, text_x = (sx - left) * 169 / df
 
-    (local.set $x (i32.const 0))
-    (block $txd (loop $txl
-      (br_if $txd (i32.ge_u (local.get $x) (i32.const 320)))
-      ;; virtual x in message pixel space
-      (local.set $text_x (i32.add (local.get $x)
-        (i32.mul (local.get $scroll_x) (local.get $scale))))
-      ;; which character
-      (local.set $char_idx (i32.rem_u
-        (i32.div_u (local.get $text_x) (i32.mul (i32.const 10) (local.get $scale)))
-        (local.get $msg_len)))
-      (local.set $char_col (i32.div_u
-        (i32.rem_u (local.get $text_x) (i32.mul (i32.const 10) (local.get $scale)))
-        (local.get $scale)))
-      ;; skip gap
-      (if (i32.lt_u (local.get $char_col) (i32.const 8))
+    (local.set $scroll (i32.div_u (local.get $t) (i32.const 150)))
+
+    ;; Iterate screen rows sy = 34..199
+    (local.set $sy (i32.const 34))
+    (block $yd (loop $yl
+      (br_if $yd (i32.ge_u (local.get $sy) (i32.const 200)))
+
+      ;; df = sy - 30 (depth factor)
+      (local.set $df (i32.sub (local.get $sy) (i32.const 30)))
+
+      ;; text_y = scroll - 5000 / df + 89 (flip so line 0 is at top, line 8 at bottom)
+      (local.set $text_y (i32.add
+        (i32.sub (local.get $scroll) (i32.div_u (i32.const 5000) (local.get $df)))
+        (i32.const 89)))
+
+      ;; Only process if text_y in [0, 90)
+      (if (i32.and (i32.ge_s (local.get $text_y) (i32.const 0))
+                   (i32.lt_s (local.get $text_y) (i32.const 90)))
         (then
-          (local.set $char_code (i32.load8_u
-            (i32.add (i32.const 0x12E80) (local.get $char_idx))))
-          ;; sine wave y offset
-          (local.set $wave_offset (i32.sub
-            (i32.shr_u (call $sin_tab (i32.add
-              (i32.mul (local.get $x) (i32.const 2))
-              (i32.mul (local.get $tick) (i32.const 3)))) (i32.const 2))
-            (i32.const 32)))
-          (local.set $text_y (i32.add (i32.const 80) (local.get $wave_offset)))
-          ;; draw font rows
-          (local.set $font_row (i32.const 0))
-          (block $frd (loop $frl
-            (br_if $frd (i32.ge_u (local.get $font_row) (i32.const 8)))
-            (if (call $font_pixel (local.get $char_code) (local.get $font_row) (local.get $char_col))
-              (then
-                (local.set $draw_y (i32.add (local.get $text_y)
-                  (i32.mul (local.get $font_row) (local.get $scale))))
-                ;; draw scale rows at this x
-                (if (i32.and
-                  (i32.ge_s (local.get $draw_y) (i32.const 0))
-                  (i32.lt_s (i32.add (local.get $draw_y) (local.get $scale)) (i32.const 200)))
+          ;; text_line = text_y / 10, font_row = text_y % 10
+          (local.set $text_line (i32.div_u (local.get $text_y) (i32.const 10)))
+          (local.set $font_row (i32.rem_u (local.get $text_y) (i32.const 10)))
+
+          ;; Skip inter-line gap (font_row >= 8)
+          (if (i32.lt_u (local.get $font_row) (i32.const 8))
+            (then
+              ;; screen_half = df * 112 / 169
+              (local.set $screen_half (i32.div_u
+                (i32.mul (local.get $df) (i32.const 112)) (i32.const 169)))
+              (local.set $left (i32.sub (i32.const 160) (local.get $screen_half)))
+              (local.set $right (i32.add (i32.const 160) (local.get $screen_half)))
+              ;; Clamp to screen
+              (if (i32.lt_s (local.get $left) (i32.const 0))
+                (then (local.set $left (i32.const 0))))
+              (if (i32.gt_s (local.get $right) (i32.const 320))
+                (then (local.set $right (i32.const 320))))
+
+              ;; Color: brighter for larger df (closer)
+              ;; color = 240 + min(df / 11, 15)
+              (local.set $color (i32.add (i32.const 240)
+                (select (i32.div_u (local.get $df) (i32.const 11)) (i32.const 15)
+                  (i32.lt_u (i32.div_u (local.get $df) (i32.const 11)) (i32.const 15)))))
+
+              ;; Iterate screen columns sx = left..right
+              (local.set $sx (local.get $left))
+              (block $xd (loop $xl
+                (br_if $xd (i32.ge_u (local.get $sx) (local.get $right)))
+
+                ;; text_x = (sx - left) * 169 / df
+                (local.set $text_x (i32.div_u
+                  (i32.mul (i32.sub (local.get $sx) (local.get $left)) (i32.const 169))
+                  (local.get $df)))
+
+                ;; Only if text_x < 224 (28 chars * 8 px)
+                (if (i32.lt_u (local.get $text_x) (i32.const 224))
                   (then
-                    (i32.store8 (i32.add (i32.const 0x0340)
-                      (i32.add (i32.mul (local.get $draw_y) (i32.const 320)) (local.get $x)))
-                      (i32.const 248))
-                    (if (i32.lt_s (i32.add (local.get $draw_y) (i32.const 1)) (i32.const 200))
+                    (local.set $char_col (i32.div_u (local.get $text_x) (i32.const 8)))
+                    (local.set $font_col (i32.rem_u (local.get $text_x) (i32.const 8)))
+                    (local.set $char_idx (i32.add
+                      (i32.mul (local.get $text_line) (i32.const 28))
+                      (local.get $char_col)))
+
+                    (if (i32.lt_u (local.get $char_idx) (i32.const 240))
                       (then
-                        (i32.store8 (i32.add (i32.const 0x0340)
-                          (i32.add (i32.mul (i32.add (local.get $draw_y) (i32.const 1)) (i32.const 320))
-                            (local.get $x)))
-                          (i32.const 248))))))
-              ))
-            (local.set $font_row (i32.add (local.get $font_row) (i32.const 1)))
-            (br $frl)
-          ))
-        ))
-      (local.set $x (i32.add (local.get $x) (i32.const 1)))
-      (br $txl)
+                        (local.set $char_code (i32.load8_u
+                          (i32.add (i32.const 0x107C0) (local.get $char_idx))))
+                        (if (i32.and
+                          (i32.ne (local.get $char_code) (i32.const 32))
+                          (call $font_pixel (local.get $char_code) (local.get $font_row) (local.get $font_col)))
+                          (then
+                            (i32.store8 (i32.add (i32.const 0x0340)
+                              (i32.add (i32.mul (local.get $sy) (i32.const 320)) (local.get $sx)))
+                              (local.get $color))))))))
+
+                (local.set $sx (i32.add (local.get $sx) (i32.const 1)))
+                (br $xl)
+              ))))))
+
+      (local.set $sy (i32.add (local.get $sy) (i32.const 1)))
+      (br $yl)
     ))
   )
 
@@ -919,6 +988,12 @@
     (call $set_pal (i32.const 6) (i32.const 200) (i32.const 200) (i32.const 255))
     ;; 7 = dim text
     (call $set_pal (i32.const 7) (i32.const 100) (i32.const 100) (i32.const 100))
+    ;; 8 = red berry highlight
+    (call $set_pal (i32.const 8) (i32.const 255) (i32.const 120) (i32.const 130))
+    ;; 9 = purple berry highlight
+    (call $set_pal (i32.const 9) (i32.const 220) (i32.const 120) (i32.const 255))
+    ;; 10 = blue berry highlight
+    (call $set_pal (i32.const 10) (i32.const 140) (i32.const 160) (i32.const 255))
   )
 
   (func $render_berrry (param $elapsed i32)
@@ -942,7 +1017,7 @@
     ;; Sparkle particles in background
     (local.set $i (i32.const 0))
     (block $spd (loop $spl
-      (br_if $spd (i32.ge_u (local.get $i) (i32.const 30)))
+      (br_if $spd (i32.ge_u (local.get $i) (i32.const 60)))
       (local.set $x (i32.rem_u (i32.add
         (i32.mul (local.get $i) (i32.const 197))
         (i32.mul (i32.shr_u (local.get $t) (i32.const 5)) (i32.add (local.get $i) (i32.const 1))))
@@ -961,35 +1036,35 @@
       (br $spl)
     ))
 
-    ;; "BERRRY.APP" at 2x scale, centered
-    ;; 10 * 9 * 2 = 180px → x = (320-180)/2 = 70
-    (call $draw_text (i32.const 0x12E10) (i32.const 10)
-      (i32.const 70) (i32.const 70) (i32.const 2) (local.get $text_color))
+    ;; "BERRRY.APP" at 3x scale, centered
+    ;; 10 * 9 * 3 = 270px → x = (320-270)/2 = 25
+    (call $draw_text (i32.const 0x10750) (i32.const 10)
+      (i32.const 25) (i32.const 55) (i32.const 3) (local.get $text_color))
 
     ;; "WASMVGA-DEMOS.BERRRY.APP" at 1x below
     ;; 24 * 9 = 216px → x = (320-216)/2 = 52
-    (call $draw_text (i32.const 0x12F80) (i32.const 24)
-      (i32.const 52) (i32.const 100) (i32.const 1) (i32.const 1))
+    (call $draw_text (i32.const 0x108C0) (i32.const 24)
+      (i32.const 52) (i32.const 90) (i32.const 1) (i32.const 1))
 
     ;; 3 bouncing berry circles
     ;; Berry 0 (red): orbits around center
     (local.set $bx (i32.add (i32.const 160)
       (i32.sub (i32.shr_u (call $sin_tab (i32.shr_u (local.get $t) (i32.const 3))) (i32.const 1)) (i32.const 64))))
-    (local.set $by (i32.add (i32.const 130)
+    (local.set $by (i32.add (i32.const 140)
       (i32.sub (i32.shr_u (call $sin_tab (i32.add (i32.shr_u (local.get $t) (i32.const 3)) (i32.const 64))) (i32.const 1)) (i32.const 64))))
     (call $draw_berry (local.get $bx) (local.get $by) (i32.const 3))
 
     ;; Berry 1 (purple): different phase
     (local.set $bx (i32.add (i32.const 160)
       (i32.sub (i32.shr_u (call $sin_tab (i32.add (i32.shr_u (local.get $t) (i32.const 3)) (i32.const 85))) (i32.const 1)) (i32.const 64))))
-    (local.set $by (i32.add (i32.const 130)
+    (local.set $by (i32.add (i32.const 140)
       (i32.sub (i32.shr_u (call $sin_tab (i32.add (i32.shr_u (local.get $t) (i32.const 3)) (i32.const 149))) (i32.const 1)) (i32.const 64))))
     (call $draw_berry (local.get $bx) (local.get $by) (i32.const 4))
 
     ;; Berry 2 (blue): different phase
     (local.set $bx (i32.add (i32.const 160)
       (i32.sub (i32.shr_u (call $sin_tab (i32.add (i32.shr_u (local.get $t) (i32.const 3)) (i32.const 170))) (i32.const 1)) (i32.const 64))))
-    (local.set $by (i32.add (i32.const 130)
+    (local.set $by (i32.add (i32.const 140)
       (i32.sub (i32.shr_u (call $sin_tab (i32.add (i32.shr_u (local.get $t) (i32.const 3)) (i32.const 234))) (i32.const 1)) (i32.const 64))))
     (call $draw_berry (local.get $bx) (local.get $by) (i32.const 5))
   )
@@ -997,17 +1072,18 @@
   ;; Helper: draw a filled circle (berry) at (cx, cy) with palette color
   (func $draw_berry (param $cx i32) (param $cy i32) (param $color i32)
     (local $dx i32) (local $dy i32) (local $px i32) (local $py i32)
-    (local.set $dy (i32.const -5))
+    (local $dist_sq2 i32)
+    (local.set $dy (i32.const -9))
     (block $yd (loop $yl
-      (br_if $yd (i32.gt_s (local.get $dy) (i32.const 5)))
-      (local.set $dx (i32.const -5))
+      (br_if $yd (i32.gt_s (local.get $dy) (i32.const 9)))
+      (local.set $dx (i32.const -9))
       (block $xd (loop $xl
-        (br_if $xd (i32.gt_s (local.get $dx) (i32.const 5)))
-        ;; if dx*dx + dy*dy <= 25 (radius 5)
-        (if (i32.le_s
-          (i32.add (i32.mul (local.get $dx) (local.get $dx))
-                   (i32.mul (local.get $dy) (local.get $dy)))
-          (i32.const 25))
+        (br_if $xd (i32.gt_s (local.get $dx) (i32.const 9)))
+        ;; dist_sq = dx*dx + dy*dy
+        (local.set $dist_sq2 (i32.add (i32.mul (local.get $dx) (local.get $dx))
+                   (i32.mul (local.get $dy) (local.get $dy))))
+        ;; if dist_sq <= 81 (radius 9)
+        (if (i32.le_s (local.get $dist_sq2) (i32.const 81))
           (then
             (local.set $px (i32.add (local.get $cx) (local.get $dx)))
             (local.set $py (i32.add (local.get $cy) (local.get $dy)))
@@ -1017,9 +1093,12 @@
               (i32.and (i32.ge_s (local.get $py) (i32.const 0))
                        (i32.lt_s (local.get $py) (i32.const 200))))
               (then
+                ;; highlight: inner radius <= 25 uses color+5 (highlight palette)
                 (i32.store8 (i32.add (i32.const 0x0340)
                   (i32.add (i32.mul (local.get $py) (i32.const 320)) (local.get $px)))
-                  (local.get $color))))))
+                  (select (i32.add (local.get $color) (i32.const 5))
+                          (local.get $color)
+                          (i32.le_s (local.get $dist_sq2) (i32.const 25))))))))
         (local.set $dx (i32.add (local.get $dx) (i32.const 1)))
         (br $xl)
       ))
@@ -1034,7 +1113,7 @@
   (func (export "init")
     (local $i i32) (local $val i32) (local $angle f64)
 
-    ;; Build sin table at 0x10040 (256 entries, 0-255)
+    ;; Build sin table at 0x10340 (256 entries, 0-255)
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (i32.const 256)))
@@ -1042,35 +1121,35 @@
       (local.set $val (i32.trunc_f64_s (f64.add (f64.mul (call $sin_approx (local.get $angle)) (f64.const 127.0)) (f64.const 128.0))))
       (if (i32.lt_s (local.get $val) (i32.const 0)) (then (local.set $val (i32.const 0))))
       (if (i32.gt_s (local.get $val) (i32.const 255)) (then (local.set $val (i32.const 255))))
-      (i32.store8 (i32.add (i32.const 0x10040) (local.get $i)) (local.get $val))
+      (i32.store8 (i32.add (i32.const 0x10340) (local.get $i)) (local.get $val))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)
     ))
 
     ;; Capture start tick
-    (i32.store (i32.const 0x10444) (i32.load (i32.const 0x0C)))
+    (i32.store (i32.const 0x38004) (i32.load (i32.const 0x0C)))
 
     ;; Init PRNG seed
-    (i32.store (i32.const 0x10440) (i32.const 48271))
+    (i32.store (i32.const 0x38000) (i32.const 48271))
 
     ;; Set last_section to 255 (force palette setup on first frame)
-    (i32.store (i32.const 0x10448) (i32.const 255))
+    (i32.store (i32.const 0x38008) (i32.const 255))
 
     ;; Init rain columns: 40 columns, random y/speed/char
     (local.set $i (i32.const 0))
     (block $rdone (loop $rlp
       (br_if $rdone (i32.ge_u (local.get $i) (i32.const 40)))
       ;; y position: random 0-199
-      (i32.store8 (i32.add (i32.const 0x10450) (i32.mul (local.get $i) (i32.const 4)))
+      (i32.store8 (i32.add (i32.const 0x38010) (i32.mul (local.get $i) (i32.const 4)))
         (i32.rem_u (i32.and (call $rand) (i32.const 0x7FFFFFFF)) (i32.const 200)))
       ;; speed: 1-3
-      (i32.store8 (i32.add (i32.const 0x10451) (i32.mul (local.get $i) (i32.const 4)))
+      (i32.store8 (i32.add (i32.const 0x38011) (i32.mul (local.get $i) (i32.const 4)))
         (i32.add (i32.rem_u (i32.and (call $rand) (i32.const 0x7FFFFFFF)) (i32.const 3)) (i32.const 1)))
       ;; char: random ASCII 33-126
-      (i32.store8 (i32.add (i32.const 0x10452) (i32.mul (local.get $i) (i32.const 4)))
+      (i32.store8 (i32.add (i32.const 0x38012) (i32.mul (local.get $i) (i32.const 4)))
         (i32.add (i32.rem_u (i32.and (call $rand) (i32.const 0x7FFFFFFF)) (i32.const 94)) (i32.const 33)))
       ;; alive: 1
-      (i32.store8 (i32.add (i32.const 0x10453) (i32.mul (local.get $i) (i32.const 4)))
+      (i32.store8 (i32.add (i32.const 0x38013) (i32.mul (local.get $i) (i32.const 4)))
         (i32.const 1))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $rlp)
@@ -1090,7 +1169,7 @@
 
     ;; Compute elapsed time since init, modulo 64000 for looping
     (local.set $elapsed (i32.rem_u
-      (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x10444)))
+      (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x38004)))
       (i32.const 64000)))
 
     ;; Determine section from elapsed time
@@ -1106,16 +1185,21 @@
     (if (i32.ge_u (local.get $elapsed) (i32.const 56000))
       (then (local.set $section (i32.const 5))))
 
-    ;; Skip to next section on space press or mouse click (rising edge)
-    ;; input = space(bit4 of keyboard@0x10) | left_click(bit0 of mouse@0x08)
+    ;; Navigation: space/click/right=next, left=prev (rising edge per-bit)
+    ;; keyboard@0x10: bit2=Left(4), bit3=Right(8), bit4=Space(16)
+    ;; mouse@0x08: bit0=left_click(1)
     (local.set $input (i32.or
-      (i32.and (i32.load8_u (i32.const 0x10)) (i32.const 16))
-      (i32.and (i32.load8_u (i32.const 0x08)) (i32.const 1))))
-    (local.set $prev_input (i32.load (i32.const 0x104F4)))
-    (i32.store (i32.const 0x104F4) (local.get $input))
+      (i32.and (i32.load8_u (i32.const 0x10)) (i32.const 28))  ;; bits 2,3,4 = left,right,space
+      (i32.and (i32.load8_u (i32.const 0x08)) (i32.const 1)))) ;; left click
+    (local.set $prev_input (i32.load (i32.const 0x3800C)))
+    (i32.store (i32.const 0x3800C) (local.get $input))
 
-    ;; Rising edge: input is nonzero and prev was zero
-    (if (i32.and (local.get $input) (i32.eqz (local.get $prev_input)))
+    ;; Rising edge: any of space/right/click newly pressed (was 0, now 1)
+    ;; new_bits = input & ~prev_input (bits that just turned on)
+    ;; Check if any of the "next" bits (25 = 16|8|1) are newly on
+    (if (i32.and
+      (i32.and (local.get $input) (i32.xor (local.get $prev_input) (i32.const 0xFFFFFFFF)))
+      (i32.const 25))
       (then
         ;; Compute next section boundary
         (local.set $next_boundary (i32.const 8000))
@@ -1130,12 +1214,48 @@
         (if (i32.ge_u (local.get $elapsed) (i32.const 56000))
           (then (local.set $next_boundary (i32.const 64000))))
         ;; Shift start_tick backward so elapsed jumps to next_boundary
-        ;; new_start = tick_ms - next_boundary
-        (i32.store (i32.const 0x10444)
+        (i32.store (i32.const 0x38004)
           (i32.sub (local.get $tick_ms) (local.get $next_boundary)))
         ;; Recompute elapsed and section
         (local.set $elapsed (i32.rem_u
-          (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x10444)))
+          (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x38004)))
+          (i32.const 64000)))
+        (local.set $section (i32.const 0))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 8000))
+          (then (local.set $section (i32.const 1))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 20000))
+          (then (local.set $section (i32.const 2))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 32000))
+          (then (local.set $section (i32.const 3))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 44000))
+          (then (local.set $section (i32.const 4))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 56000))
+          (then (local.set $section (i32.const 5))))
+      ))
+
+    ;; Rising edge on left(4) → previous section
+    (if (i32.and
+      (i32.and (local.get $input) (i32.xor (local.get $prev_input) (i32.const 0xFFFFFFFF)))
+      (i32.const 4))
+      (then
+        ;; Compute previous section boundary
+        (local.set $next_boundary (i32.const 56000))  ;; wrap to last section
+        (if (i32.ge_u (local.get $elapsed) (i32.const 8000))
+          (then (local.set $next_boundary (i32.const 0))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 20000))
+          (then (local.set $next_boundary (i32.const 8000))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 32000))
+          (then (local.set $next_boundary (i32.const 20000))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 44000))
+          (then (local.set $next_boundary (i32.const 32000))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 56000))
+          (then (local.set $next_boundary (i32.const 44000))))
+        ;; Shift start_tick so elapsed jumps to prev boundary
+        (i32.store (i32.const 0x38004)
+          (i32.sub (local.get $tick_ms) (local.get $next_boundary)))
+        ;; Recompute elapsed and section
+        (local.set $elapsed (i32.rem_u
+          (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x38004)))
           (i32.const 64000)))
         (local.set $section (i32.const 0))
         (if (i32.ge_u (local.get $elapsed) (i32.const 8000))
@@ -1151,10 +1271,10 @@
       ))
 
     ;; On section change: set up palette and re-init PRNG for consistency
-    (local.set $last_section (i32.load (i32.const 0x10448)))
+    (local.set $last_section (i32.load (i32.const 0x38008)))
     (if (i32.ne (local.get $section) (local.get $last_section))
       (then
-        (i32.store (i32.const 0x10448) (local.get $section))
+        (i32.store (i32.const 0x38008) (local.get $section))
         ;; dispatch palette setup
         (if (i32.eqz (local.get $section))            (then (call $pal_rain)))
         (if (i32.eq (local.get $section) (i32.const 1)) (then (call $pal_grave)))
@@ -1178,17 +1298,17 @@
   ;; DATA SEGMENTS
   ;; =========================================================
 
-  ;; 8x8 bitmap font at 0x10140: 96 chars (ASCII 32-127), 8 bytes each
+  ;; 8x8 bitmap font at 0x10440: 96 chars (ASCII 32-127), 8 bytes each
   ;; (copied from scroller.wat)
-  (data (i32.const 0x10140) "\00\00\00\00\00\00\00\00\00\18\00\18\18\18\18\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\18\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00<fffff<\00~\18\18\18\188\18\00~`0\0c\06f<\00<f\06\1c\06f<\00\0c\0c~L,\1c\0c\00<f\06\06|`~\00<ff|``<\00000\18\0c\06~\00<ff<ff<\00<\06\06>ff<\00\00\18\00\00\18\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00ff~ff<\18\00|ff|ff|\00<f```f<\00\00xlfflx\00~``|``~\00```|``~\00<ffn`f<\00fff~fff\00<\18\18\18\18\18<\00<f\06\06\06\06\06\00flxpxlf\00~``````\00ccck\7fwc\00fnn~vvf\00<fffff<\00```|ff|\00\0e<nfff<\00ffl|ff|\00<f\06<`f<\00\18\18\18\18\18\18~\00<ffffff\00\18<fffff\00cw\7fkccc\00ff<\18<ff\00\18\18\18<fff\00~`0\18\0c\06~\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")
+  (data (i32.const 0x10440) "\00\00\00\00\00\00\00\00\00\18\00\18\18\18\18\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\18\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00<fffff<\00~\18\18\18\188\18\00~`0\0c\06f<\00<f\06\1c\06f<\00\0c\0c~L,\1c\0c\00<f\06\06|`~\00<ff|``<\00000\18\0c\06~\00<ff<ff<\00<\06\06>ff<\00\00\18\00\00\18\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00ff~ff<\18\00|ff|ff|\00<f```f<\00\00xlfflx\00~``|``~\00```|``~\00<ffn`f<\00fff~fff\00<\18\18\18\18\18<\00<f\06\06\06\06\06\00flxpxlf\00~``````\00ccck\7fwc\00fnn~vvf\00<fffff<\00```|ff|\00\0e<nfff<\00ffl|ff|\00<f\06<`f<\00\18\18\18\18\18\18~\00<ffffff\00\18<fffff\00cw\7fkccc\00ff<\18<ff\00\18\18\18<fff\00~`0\18\0c\06~\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")
 
   ;; Strings
-  (data (i32.const 0x12E00) "CODING IS OVER")
-  (data (i32.const 0x12E10) "BERRRY.APP")
-  (data (i32.const 0x12E20) "BERRRY.APP PRESENTS")
-  (data (i32.const 0x12E40) "INTENT NOT SYNTAX")
-  (data (i32.const 0x12E60) "BUILT ON BERRRY.APP")
-  (data (i32.const 0x12E80) "THIS DEMO WAS WRITTEN IN RAW WEBASSEMBLY TEXT ... BY CLAUDE CODE ... NO COMPILER ... NO FRAMEWORK ... JUST AN AI WRITING WAT BYTECODE DIRECTLY ... HOSTED ON BERRRY.APP ... THE IRONY? ... CODE WROTE THIS MESSAGE ABOUT THE END OF CODE ...    ")
-  (data (i32.const 0x12F80) "WASMVGA-DEMOS.BERRRY.APP")
-  (data (i32.const 0x12FA0) "C\00JAVA\00PYTHON\00RUST\00JS\00GO\00")
+  (data (i32.const 0x10740) "CODING IS OVER")
+  (data (i32.const 0x10750) "BERRRY.APP")
+  (data (i32.const 0x10760) "BERRRY.APP PRESENTS")
+  (data (i32.const 0x10780) "INTENT NOT SYNTAX")
+  (data (i32.const 0x107A0) "BUILT ON BERRRY.APP")
+  (data (i32.const 0x107C0) "THIS DEMO WAS WRITTEN IN RAW WEBASSEMBLY TEXT ... BY CLAUDE CODE ... NO COMPILER ... NO FRAMEWORK ... JUST AN AI WRITING WAT BYTECODE DIRECTLY ... HOSTED ON BERRRY.APP ... THE IRONY? ... CODE WROTE THIS MESSAGE ABOUT THE END OF CODE ...    ")
+  (data (i32.const 0x108C0) "WASMVGA-DEMOS.BERRRY.APP")
+  (data (i32.const 0x108E0) "C\00JAVA\00PYTHON\00RUST\00JS\00GO\00")
 )

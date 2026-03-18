@@ -143,21 +143,24 @@ function setKeyBit(bit, down) {
   if (down) memU8[CTL_OFFSET + 16] |= (1 << bit);
   else memU8[CTL_OFFSET + 16] &= ~(1 << bit);
 }
-document.addEventListener('keydown', (e) => {
+// Use capture phase so we get keys before select/button elements consume them
+window.addEventListener('keydown', (e) => {
   const bit = KEY_MAP[e.code];
   if (bit !== undefined) {
     e.preventDefault();
+    e.stopPropagation();
     // pull focus away from select/buttons so they don't eat keys
-    if (document.activeElement && document.activeElement !== document.body) {
+    if (document.activeElement && document.activeElement !== document.body
+        && document.activeElement !== document.getElementById('screen')) {
       document.activeElement.blur();
     }
     setKeyBit(bit, true);
   }
-});
-document.addEventListener('keyup', (e) => {
+}, true);
+window.addEventListener('keyup', (e) => {
   const bit = KEY_MAP[e.code];
-  if (bit !== undefined) { setKeyBit(bit, false); }
-});
+  if (bit !== undefined) { e.preventDefault(); setKeyBit(bit, false); }
+}, true);
 
 // --- Virtual controls (touch devices) ---
 const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
@@ -228,6 +231,7 @@ async function loadDemo() {
     frameCount = 0;
     lastFpsTime = performance.now();
     animId = requestAnimationFrame(loop);
+    document.getElementById('screen').focus();
   } catch (e) {
     console.error(e);
     alert('Error loading demo: ' + e.message);
