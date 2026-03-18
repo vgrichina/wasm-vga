@@ -185,53 +185,72 @@
   ;; SECTION 0: Code Rain  (placeholder)
   ;; =========================================================
   (func $pal_rain
-    (local $i i32)
+    (local $i i32) (local $g i32)
     ;; 0 = black
     (call $set_pal (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    ;; 1-10: dark green to bright green trail
+    ;; 1-20: long green trail ramp (dark → bright green)
     (local.set $i (i32.const 1))
     (block $done (loop $lp
-      (br_if $done (i32.gt_u (local.get $i) (i32.const 10)))
+      (br_if $done (i32.gt_u (local.get $i) (i32.const 20)))
+      (local.set $g (i32.div_u (i32.mul (local.get $i) (i32.const 220)) (i32.const 20)))
       (call $set_pal (local.get $i)
-        (i32.const 0)
-        (i32.mul (local.get $i) (i32.const 25))
-        (i32.const 0))
+        (i32.div_u (local.get $g) (i32.const 6))
+        (local.get $g)
+        (i32.div_u (local.get $g) (i32.const 8)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)
     ))
-    ;; 11 = bright white head
-    (call $set_pal (i32.const 11) (i32.const 200) (i32.const 255) (i32.const 200))
-    ;; 12 = yellow (dying)
-    (call $set_pal (i32.const 12) (i32.const 255) (i32.const 255) (i32.const 0))
-    ;; 13 = red (dying)
-    (call $set_pal (i32.const 13) (i32.const 255) (i32.const 0) (i32.const 0))
-    ;; 14 = dark red
-    (call $set_pal (i32.const 14) (i32.const 100) (i32.const 0) (i32.const 0))
+    ;; 21 = bright white-green head
+    (call $set_pal (i32.const 21) (i32.const 180) (i32.const 255) (i32.const 180))
+    ;; 22 = white flash (brand new char)
+    (call $set_pal (i32.const 22) (i32.const 255) (i32.const 255) (i32.const 255))
     ;; 15 = berrry green for reveal text
     (call $set_pal (i32.const 15) (i32.const 0) (i32.const 221) (i32.const 136))
   )
 
-  (func $render_rain (param $elapsed i32)
-    (local $i i32) (local $col i32) (local $base i32)
-    (local $y i32) (local $speed i32) (local $ch i32) (local $alive i32)
-    (local $row i32) (local $k i32) (local $px i32) (local $py i32)
-    (local $fb_addr i32) (local $val i32) (local $kill_dist i32)
-
-    ;; Step 1: Decay all framebuffer pixels by 1 (trail fade)
-    (local.set $i (i32.const 0))
-    (block $dd (loop $dl
-      (br_if $dd (i32.ge_u (local.get $i) (i32.const 64000)))
-      (local.set $fb_addr (i32.add (i32.const 0x0340) (local.get $i)))
-      (local.set $val (i32.load8_u (local.get $fb_addr)))
-      (if (i32.and (i32.gt_u (local.get $val) (i32.const 0))
-                   (i32.le_u (local.get $val) (i32.const 11)))
-        (then
-          (i32.store8 (local.get $fb_addr) (i32.sub (local.get $val) (i32.const 1)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $dl)
+  ;; Draw a single 8x8 char at pixel (px, py) with given color
+  (func $draw_char_at (param $ch i32) (param $px i32) (param $py i32) (param $color i32)
+    (local $row i32) (local $k i32) (local $sx i32) (local $sy i32)
+    (local.set $row (i32.const 0))
+    (block $rd (loop $rl
+      (br_if $rd (i32.ge_u (local.get $row) (i32.const 8)))
+      (local.set $k (i32.const 0))
+      (block $kd (loop $kl
+        (br_if $kd (i32.ge_u (local.get $k) (i32.const 8)))
+        (if (call $font_pixel (local.get $ch) (local.get $row) (local.get $k))
+          (then
+            (local.set $sx (i32.add (local.get $px) (local.get $k)))
+            (local.set $sy (i32.add (local.get $py) (local.get $row)))
+            (if (i32.and (i32.lt_u (local.get $sx) (i32.const 320))
+                         (i32.lt_u (local.get $sy) (i32.const 200)))
+              (then
+                (i32.store8
+                  (i32.add (i32.const 0x0340)
+                    (i32.add (i32.mul (local.get $sy) (i32.const 320)) (local.get $sx)))
+                  (local.get $color))))))
+        (local.set $k (i32.add (local.get $k) (i32.const 1)))
+        (br $kl)
+      ))
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (br $rl)
     ))
+  )
 
-    ;; Step 2: After 5s, kill columns from edges inward
+  (func $render_rain (param $elapsed i32)
+    (local $col i32) (local $base i32)
+    (local $y i32) (local $speed i32) (local $alive i32)
+    (local $px i32) (local $trail_i i32) (local $trail_y i32)
+    (local $trail_ch i32) (local $trail_color i32)
+    (local $kill_dist i32) (local $frame_8 i32)
+    (local $reveal_count i32) (local $ri i32)
+    (local $target_ch i32) (local $target_x i32)
+
+    ;; Clear screen each frame (redraw all streams fresh)
+    (call $clear_fb)
+
+    (local.set $frame_8 (i32.shr_u (local.get $elapsed) (i32.const 6)))
+
+    ;; After 5s, kill columns from edges inward
     (if (i32.gt_u (local.get $elapsed) (i32.const 5000))
       (then
         (local.set $kill_dist (i32.div_u
@@ -252,69 +271,101 @@
         ))
       ))
 
-    ;; Step 3: Update and draw each alive column
+    ;; Update and draw each column with full stream
     (local.set $col (i32.const 0))
     (block $cd (loop $cl
       (br_if $cd (i32.ge_u (local.get $col) (i32.const 40)))
       (local.set $base (i32.add (i32.const 0x10450) (i32.mul (local.get $col) (i32.const 4))))
       (local.set $y (i32.load8_u (local.get $base)))
       (local.set $speed (i32.load8_u (i32.add (local.get $base) (i32.const 1))))
-      (local.set $ch (i32.load8_u (i32.add (local.get $base) (i32.const 2))))
       (local.set $alive (i32.load8_u (i32.add (local.get $base) (i32.const 3))))
 
       (if (local.get $alive)
         (then
-          ;; Advance y
+          ;; Advance head position
           (local.set $y (i32.add (local.get $y) (local.get $speed)))
-          (if (i32.ge_u (local.get $y) (i32.const 200))
+          (if (i32.ge_u (local.get $y) (i32.const 224))
             (then
               (local.set $y (i32.const 0))
-              (local.set $ch (i32.add (i32.rem_u (i32.and (call $rand) (i32.const 0x7FFFFFFF))
-                (i32.const 94)) (i32.const 33)))
               (local.set $speed (i32.add (i32.rem_u (i32.and (call $rand) (i32.const 0x7FFFFFFF))
                 (i32.const 3)) (i32.const 1)))))
-          ;; Store updated state
           (i32.store8 (local.get $base) (local.get $y))
           (i32.store8 (i32.add (local.get $base) (i32.const 1)) (local.get $speed))
-          (i32.store8 (i32.add (local.get $base) (i32.const 2)) (local.get $ch))
+          (local.set $px (i32.mul (local.get $col) (i32.const 8)))
 
-          ;; Draw character at (col*8, y) in bright green (11)
-          (if (i32.lt_u (i32.add (local.get $y) (i32.const 8)) (i32.const 200))
-            (then
-              (local.set $row (i32.const 0))
-              (block $frd (loop $frl
-                (br_if $frd (i32.ge_u (local.get $row) (i32.const 8)))
-                (local.set $k (i32.const 0))
-                (block $fkd (loop $fkl
-                  (br_if $fkd (i32.ge_u (local.get $k) (i32.const 8)))
-                  (if (call $font_pixel (local.get $ch) (local.get $row) (local.get $k))
-                    (then
-                      (local.set $px (i32.add (i32.mul (local.get $col) (i32.const 8)) (local.get $k)))
-                      (local.set $py (i32.add (local.get $y) (local.get $row)))
-                      (if (i32.and (i32.lt_u (local.get $px) (i32.const 320))
-                                   (i32.lt_u (local.get $py) (i32.const 200)))
-                        (then
-                          (i32.store8
-                            (i32.add (i32.const 0x0340)
-                              (i32.add (i32.mul (local.get $py) (i32.const 320)) (local.get $px)))
-                            (i32.const 11))))))
-                  (local.set $k (i32.add (local.get $k) (i32.const 1)))
-                  (br $fkl)
-                ))
-                (local.set $row (i32.add (local.get $row) (i32.const 1)))
-                (br $frl)
+          ;; Draw stream: head + 15 trailing chars
+          (local.set $trail_i (i32.const 0))
+          (block $td (loop $tl
+            (br_if $td (i32.ge_u (local.get $trail_i) (i32.const 16)))
+            (local.set $trail_y (i32.sub (local.get $y)
+              (i32.mul (local.get $trail_i) (i32.const 8))))
+
+            ;; Only draw if on screen
+            (if (i32.and (i32.ge_s (local.get $trail_y) (i32.const 0))
+                         (i32.lt_s (i32.add (local.get $trail_y) (i32.const 8)) (i32.const 200)))
+              (then
+                ;; Generate char: stable hash of col+position, shifts every ~512ms
+                ;; Head shifts every ~128ms, rest every ~512ms
+                (local.set $trail_ch
+                  (i32.add (i32.rem_u
+                    (i32.and
+                      (i32.add
+                        (i32.add (i32.mul (local.get $col) (i32.const 7))
+                                 (i32.mul (local.get $trail_i) (i32.const 13)))
+                        (i32.shr_u (local.get $elapsed)
+                          (select (i32.const 7) (i32.const 9)
+                            (i32.lt_u (local.get $trail_i) (i32.const 2)))))
+                      (i32.const 0x7FFFFFFF))
+                    (i32.const 94))
+                  (i32.const 33)))
+
+                ;; Color: head=22(white), next 2=21(bright), rest fade 20→5
+                (local.set $trail_color
+                  (select (i32.const 22)
+                    (select (i32.const 21)
+                      (select
+                        (i32.sub (i32.const 20) (local.get $trail_i))
+                        (i32.const 1)
+                        (i32.lt_u (local.get $trail_i) (i32.const 19)))
+                      (i32.lt_u (local.get $trail_i) (i32.const 3)))
+                    (i32.eqz (local.get $trail_i))))
+
+                (if (i32.gt_u (local.get $trail_color) (i32.const 0))
+                  (then
+                    (call $draw_char_at (local.get $trail_ch) (local.get $px)
+                      (local.get $trail_y) (local.get $trail_color))))
               ))
-            ))
+
+            (local.set $trail_i (i32.add (local.get $trail_i) (i32.const 1)))
+            (br $tl)
+          ))
         ))
       (local.set $col (i32.add (local.get $col) (i32.const 1)))
       (br $cl)
     ))
 
-    ;; Step 4: After 6s, reveal "BERRRY.APP" centered
-    (if (i32.gt_u (local.get $elapsed) (i32.const 6000))
+    ;; Reveal "BERRRY.APP" characters one by one, formed by the rain
+    ;; Starting at 2.5s, one char every 350ms
+    ;; "BERRRY.APP" at (115, 96), scale 1, spacing 9px
+    (if (i32.gt_u (local.get $elapsed) (i32.const 2500))
       (then
-        (call $draw_text (i32.const 0x12E10) (i32.const 10)
-          (i32.const 115) (i32.const 96) (i32.const 1) (i32.const 15))))
+        (local.set $reveal_count (i32.div_u
+          (i32.sub (local.get $elapsed) (i32.const 2500)) (i32.const 350)))
+        (if (i32.gt_u (local.get $reveal_count) (i32.const 10))
+          (then (local.set $reveal_count (i32.const 10))))
+
+        ;; Draw each revealed character
+        (local.set $ri (i32.const 0))
+        (block $rvd (loop $rvl
+          (br_if $rvd (i32.ge_u (local.get $ri) (local.get $reveal_count)))
+          (local.set $target_ch (i32.load8_u (i32.add (i32.const 0x12E10) (local.get $ri))))
+          (local.set $target_x (i32.add (i32.const 115)
+            (i32.mul (local.get $ri) (i32.const 9))))
+          (call $draw_char_at (local.get $target_ch) (local.get $target_x) (i32.const 96) (i32.const 15))
+          (local.set $ri (i32.add (local.get $ri) (i32.const 1)))
+          (br $rvl)
+        ))
+      ))
   )
 
   ;; =========================================================
@@ -424,25 +475,31 @@
     (call $draw_tombstone (i32.const 275) (i32.const 28) (i32.const 62)
       (local.get $rise) (i32.const 0x12FB6) (i32.const 2))
 
-    ;; Draw fire along bottom 20 rows using sin-based flickering
-    (local.set $y (i32.const 180))
+    ;; Draw fire overlaid on scene (only where hot enough, preserving background)
+    ;; Covers y=160-199 (40 rows), fades with height
+    (local.set $y (i32.const 160))
     (block $fd (loop $fl
       (br_if $fd (i32.ge_u (local.get $y) (i32.const 200)))
       (local.set $x (i32.const 0))
       (block $fxd (loop $fxl
         (br_if $fxd (i32.ge_u (local.get $x) (i32.const 320)))
+        ;; 3 sin layers for organic fire shape
         (local.set $v1 (call $sin_tab (i32.add (i32.mul (local.get $x) (i32.const 3))
           (i32.shr_u (local.get $t) (i32.const 3)))))
         (local.set $v2 (call $sin_tab (i32.add (i32.mul (local.get $x) (i32.const 7))
           (i32.shr_u (local.get $t) (i32.const 2)))))
-        ;; heat scales with proximity to bottom
+        (local.set $heat (call $sin_tab (i32.add (i32.mul (local.get $x) (i32.const 11))
+          (i32.mul (i32.shr_u (local.get $t) (i32.const 2)) (i32.const 3)))))
+        ;; Combine and scale by proximity to bottom (stronger near y=199)
         (local.set $heat (i32.shr_u
-          (i32.mul (i32.add (local.get $v1) (local.get $v2))
-                   (i32.sub (local.get $y) (i32.const 175)))
+          (i32.mul
+            (i32.shr_u (i32.add (i32.add (local.get $v1) (local.get $v2)) (local.get $heat)) (i32.const 1))
+            (i32.sub (local.get $y) (i32.const 155)))
           (i32.const 6)))
         (if (i32.gt_s (local.get $heat) (i32.const 85))
           (then (local.set $heat (i32.const 85))))
-        (if (i32.gt_s (local.get $heat) (i32.const 0))
+        ;; Only overlay if heat > 15 (alpha threshold — scene shows through weak fire)
+        (if (i32.gt_s (local.get $heat) (i32.const 15))
           (then
             (i32.store8 (i32.add (i32.const 0x0340)
               (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x)))
@@ -1025,7 +1082,8 @@
   ;; =========================================================
   (func (export "frame")
     (local $tick_ms i32) (local $elapsed i32) (local $section i32)
-    (local $last_section i32)
+    (local $last_section i32) (local $input i32) (local $prev_input i32)
+    (local $next_boundary i32)
 
     ;; Read current tick
     (local.set $tick_ms (i32.load (i32.const 0x0C)))
@@ -1047,6 +1105,50 @@
       (then (local.set $section (i32.const 4))))
     (if (i32.ge_u (local.get $elapsed) (i32.const 56000))
       (then (local.set $section (i32.const 5))))
+
+    ;; Skip to next section on space press or mouse click (rising edge)
+    ;; input = space(bit4 of keyboard@0x10) | left_click(bit0 of mouse@0x08)
+    (local.set $input (i32.or
+      (i32.and (i32.load8_u (i32.const 0x10)) (i32.const 16))
+      (i32.and (i32.load8_u (i32.const 0x08)) (i32.const 1))))
+    (local.set $prev_input (i32.load (i32.const 0x104F4)))
+    (i32.store (i32.const 0x104F4) (local.get $input))
+
+    ;; Rising edge: input is nonzero and prev was zero
+    (if (i32.and (local.get $input) (i32.eqz (local.get $prev_input)))
+      (then
+        ;; Compute next section boundary
+        (local.set $next_boundary (i32.const 8000))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 8000))
+          (then (local.set $next_boundary (i32.const 20000))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 20000))
+          (then (local.set $next_boundary (i32.const 32000))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 32000))
+          (then (local.set $next_boundary (i32.const 44000))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 44000))
+          (then (local.set $next_boundary (i32.const 56000))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 56000))
+          (then (local.set $next_boundary (i32.const 64000))))
+        ;; Shift start_tick backward so elapsed jumps to next_boundary
+        ;; new_start = tick_ms - next_boundary
+        (i32.store (i32.const 0x10444)
+          (i32.sub (local.get $tick_ms) (local.get $next_boundary)))
+        ;; Recompute elapsed and section
+        (local.set $elapsed (i32.rem_u
+          (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x10444)))
+          (i32.const 64000)))
+        (local.set $section (i32.const 0))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 8000))
+          (then (local.set $section (i32.const 1))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 20000))
+          (then (local.set $section (i32.const 2))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 32000))
+          (then (local.set $section (i32.const 3))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 44000))
+          (then (local.set $section (i32.const 4))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 56000))
+          (then (local.set $section (i32.const 5))))
+      ))
 
     ;; On section change: set up palette and re-init PRNG for consistency
     (local.set $last_section (i32.load (i32.const 0x10448)))
