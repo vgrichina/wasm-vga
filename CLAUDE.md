@@ -30,6 +30,8 @@ Each demo exports:
 
 Memory is imported as `env.memory` (4 pages = 256KB).
 
+Use `(data (i32.const ADDR) "...")` segments for static data (fonts, strings, maps) instead of `i32.store8` chains. Data segments are initialized at instantiation and keep WAT files compact.
+
 ## Building
 
 ```sh

@@ -259,59 +259,8 @@
     )
   )
 
-  ;; ---- Map setup ----
-  (func $setup_map
-    (local $i i32)
-    ;; clear
-    (local.set $i (i32.const 0))
-    (block $done (loop $lp (br_if $done (i32.ge_u (local.get $i) (i32.const 256)))
-      (i32.store8 (i32.add (i32.const 0x10040) (local.get $i)) (i32.const 0))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $lp)))
-    ;; Outer walls
-    (local.set $i (i32.const 0))
-    (block $done2 (loop $lp2 (br_if $done2 (i32.ge_u (local.get $i) (i32.const 16)))
-      ;; top/bottom = brick (1)
-      (i32.store8 (i32.add (i32.const 0x10040) (local.get $i)) (i32.const 1))
-      (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.const 240) (local.get $i))) (i32.const 1))
-      ;; left/right = stone (2)
-      (i32.store8 (i32.add (i32.const 0x10040) (i32.mul (local.get $i) (i32.const 16))) (i32.const 2))
-      (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (local.get $i) (i32.const 16)) (i32.const 15))) (i32.const 2))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $lp2)))
-    ;; Inner walls — wood (3)
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 4) (i32.const 16)) (i32.const 2))) (i32.const 3))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 4) (i32.const 16)) (i32.const 3))) (i32.const 3))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 4) (i32.const 16)) (i32.const 4))) (i32.const 3))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 4) (i32.const 16)) (i32.const 5))) (i32.const 3))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 4) (i32.const 16)) (i32.const 6))) (i32.const 3))
-    ;; Slime walls (4)
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 3) (i32.const 16)) (i32.const 10))) (i32.const 4))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 4) (i32.const 16)) (i32.const 10))) (i32.const 4))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 5) (i32.const 16)) (i32.const 10))) (i32.const 4))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 6) (i32.const 16)) (i32.const 10))) (i32.const 4))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 7) (i32.const 16)) (i32.const 10))) (i32.const 4))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 8) (i32.const 16)) (i32.const 10))) (i32.const 4))
-    ;; Pillar (brick)
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 7) (i32.const 16)) (i32.const 7))) (i32.const 1))
-    ;; L-shape (wood)
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 10) (i32.const 16)) (i32.const 4))) (i32.const 3))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 11) (i32.const 16)) (i32.const 4))) (i32.const 3))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 12) (i32.const 16)) (i32.const 4))) (i32.const 3))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 12) (i32.const 16)) (i32.const 5))) (i32.const 3))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 12) (i32.const 16)) (i32.const 6))) (i32.const 3))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 12) (i32.const 16)) (i32.const 7))) (i32.const 3))
-    ;; Room in bottom-right (stone)
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 10) (i32.const 16)) (i32.const 10))) (i32.const 2))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 10) (i32.const 16)) (i32.const 11))) (i32.const 2))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 10) (i32.const 16)) (i32.const 12))) (i32.const 2))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 10) (i32.const 16)) (i32.const 13))) (i32.const 2))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 11) (i32.const 16)) (i32.const 10))) (i32.const 2))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 13) (i32.const 16)) (i32.const 10))) (i32.const 2))
-    ;; Extra slime pillars
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 6) (i32.const 16)) (i32.const 3))) (i32.const 4))
-    (i32.store8 (i32.add (i32.const 0x10040) (i32.add (i32.mul (i32.const 8) (i32.const 16)) (i32.const 13))) (i32.const 4))
-  )
+  ;; ---- Map data (16x16, initialized via data segment) ----
+  ;; Wall types: 0=empty, 1=brick, 2=stone, 3=wood, 4=slime
 
   ;; ---- INIT ----
   (func (export "init")
@@ -324,7 +273,7 @@
     (call $gen_tex_slime)
     ;; Setup palette and map
     (call $setup_palette)
-    (call $setup_map)
+    ;; Map is initialized via data segment
     ;; Player start
     (f32.store (i32.const 0x10140) (f32.const 2.5))
     (f32.store (i32.const 0x10144) (f32.const 2.5))
@@ -539,5 +488,26 @@
 
       (local.set $col (i32.add (local.get $col) (i32.const 1)))
       (br $rlp)))
+  )
+
+  ;; 16x16 map at 0x10040 (256 bytes)
+  ;; Row 0/15: brick(1) borders, Col 0/15: stone(2) borders, interior walls: wood(3), slime(4)
+  (data (i32.const 0x10040)
+    "\02\01\01\01\01\01\01\01\01\01\01\01\01\01\01\02"  ;; row 0
+    "\02\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02"  ;; row 1
+    "\02\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02"  ;; row 2
+    "\02\00\00\00\00\00\00\00\00\00\04\00\00\00\00\02"  ;; row 3
+    "\02\00\03\03\03\03\03\00\00\00\04\00\00\00\00\02"  ;; row 4
+    "\02\00\00\00\00\00\00\00\00\00\04\00\00\00\00\02"  ;; row 5
+    "\02\00\00\04\00\00\00\00\00\00\04\00\00\00\00\02"  ;; row 6
+    "\02\00\00\00\00\00\00\01\00\00\04\00\00\00\00\02"  ;; row 7
+    "\02\00\00\00\00\00\00\00\00\00\04\00\00\04\00\02"  ;; row 8
+    "\02\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02"  ;; row 9
+    "\02\00\00\00\03\00\00\00\00\00\02\02\02\02\00\02"  ;; row 10
+    "\02\00\00\00\03\00\00\00\00\00\02\00\00\00\00\02"  ;; row 11
+    "\02\00\00\00\03\03\03\03\00\00\00\00\00\00\00\02"  ;; row 12
+    "\02\00\00\00\00\00\00\00\00\00\02\00\00\00\00\02"  ;; row 13
+    "\02\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02"  ;; row 14
+    "\02\01\01\01\01\01\01\01\01\01\01\01\01\01\01\02"  ;; row 15
   )
 )

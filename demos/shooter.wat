@@ -1539,6 +1539,8 @@
       (then
         (local.set $flash (i32.sub (i32.const 6) (local.get $elapsed)))
         ;; draw horizontal white lines every N rows for a scanline flash effect
+        (if (i32.gt_u (local.get $flash) (i32.const 0))
+        (then
         (local.set $y (i32.const 0))
         (block $fd (loop $fl
           (br_if $fd (i32.ge_u (local.get $y) (i32.const 200)))
@@ -1549,6 +1551,7 @@
           )
           (local.set $y (i32.add (local.get $y) (i32.const 1)))
           (br $fl)))
+        ))
       )
     )
     ;; Scrolling text for first 70 frames
@@ -1770,310 +1773,28 @@
   )
 
   ;; ============================================================
-  ;; FONT DATA (8x8 bitmap, same as scroller.wat)
+  ;; STATIC DATA (font + strings) via data segments
   ;; ============================================================
 
-  (func $init_font
-    ;; Space (32)
-    (i64.store (i32.const 0x10E00) (i64.const 0x0000000000000000))
-    ;; ! (33)
-    (i64.store (i32.add (i32.const 0x10E00) (i32.const 8)) (i64.const 0x0018181818001800))
-    ;; 0-9 (48-57, offset 16-25)
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 16) (i32.const 8))) (i64.const 0x3C66666666663C00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 17) (i32.const 8))) (i64.const 0x1838181818187E00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 18) (i32.const 8))) (i64.const 0x3C66060C30607E00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 19) (i32.const 8))) (i64.const 0x3C66061C06663C00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 20) (i32.const 8))) (i64.const 0x0C1C2C4C7E0C0C00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 21) (i32.const 8))) (i64.const 0x7E607C0606663C00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 22) (i32.const 8))) (i64.const 0x3C60607C66663C00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 23) (i32.const 8))) (i64.const 0x7E060C1830303000))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 24) (i32.const 8))) (i64.const 0x3C66663C66663C00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 25) (i32.const 8))) (i64.const 0x3C66663E06063C00))
-    ;; : (58, offset 26)
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 26) (i32.const 8))) (i64.const 0x0000180000180000))
-    ;; A-Z (65-90, offset 33-58)
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 33) (i32.const 8))) (i64.const 0x183C66667E666600))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 34) (i32.const 8))) (i64.const 0x7C66667C66667C00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 35) (i32.const 8))) (i64.const 0x3C66606060663C00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 36) (i32.const 8))) (i64.const 0x786C66666C780000))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 37) (i32.const 8))) (i64.const 0x7E60607C60607E00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 38) (i32.const 8))) (i64.const 0x7E60607C60606000))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 39) (i32.const 8))) (i64.const 0x3C66606E66663C00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 40) (i32.const 8))) (i64.const 0x6666667E66666600))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 41) (i32.const 8))) (i64.const 0x3C18181818183C00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 42) (i32.const 8))) (i64.const 0x0606060606663C00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 43) (i32.const 8))) (i64.const 0x666C7870786C6600))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 44) (i32.const 8))) (i64.const 0x6060606060607E00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 45) (i32.const 8))) (i64.const 0x63777F6B63636300))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 46) (i32.const 8))) (i64.const 0x6676767E6E6E6600))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 47) (i32.const 8))) (i64.const 0x3C66666666663C00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 48) (i32.const 8))) (i64.const 0x7C66667C60606000))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 49) (i32.const 8))) (i64.const 0x3C6666666E3C0E00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 50) (i32.const 8))) (i64.const 0x7C66667C6C666600))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 51) (i32.const 8))) (i64.const 0x3C66603C06663C00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 52) (i32.const 8))) (i64.const 0x7E18181818181800))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 53) (i32.const 8))) (i64.const 0x6666666666663C00))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 54) (i32.const 8))) (i64.const 0x66666666663C1800))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 55) (i32.const 8))) (i64.const 0x6363636B7F776300))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 56) (i32.const 8))) (i64.const 0x66663C183C666600))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 57) (i32.const 8))) (i64.const 0x6666663C18181800))
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 58) (i32.const 8))) (i64.const 0x7E060C1830607E00))
-    ;; . (46, offset 14)
-    (i64.store (i32.add (i32.const 0x10E00) (i32.mul (i32.const 14) (i32.const 8))) (i64.const 0x0000000000001800))
-  )
+  ;; Font: 8x8 bitmap, 96 glyphs (768 bytes at 0x10E00)
+  (data (i32.const 0x10E00) "\00\00\00\00\00\00\00\00\00\18\00\18\18\18\18\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\18\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00<fffff<\00~\18\18\18\188\18\00~`0\0c\06f<\00<f\06\1c\06f<\00\0c\0c~L,\1c\0c\00<f\06\06|`~\00<ff|``<\00000\18\0c\06~\00<ff<ff<\00<\06\06>ff<\00\00\18\00\00\18\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00ff~ff<\18\00|ff|ff|\00<f```f<\00\00xlfflx\00~``|``~\00```|``~\00<ffn`f<\00fff~fff\00<\18\18\18\18\18<\00<f\06\06\06\06\06\00flxpxlf\00~``````\00ccck\7fwc\00fnn~vvf\00<fffff<\00```|ff|\00\0e<nfff<\00ffl|ff|\00<f\06<`f<\00\18\18\18\18\18\18~\00<ffffff\00\18<fffff\00cw\7fkccc\00ff<\18<ff\00\18\18\18<fff\00~`0\18\0c\06~\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")
 
-  ;; ============================================================
-  ;; STRING DATA
-  ;; ============================================================
-
-  (func $store_strings
-    ;; 0x11100: "THE YEAR IS 2187" (16 chars)
-    (i32.store8 (i32.const 0x11100) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x11101) (i32.const 72))  ;; H
-    (i32.store8 (i32.const 0x11102) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x11103) (i32.const 32))
-    (i32.store8 (i32.const 0x11104) (i32.const 89))  ;; Y
-    (i32.store8 (i32.const 0x11105) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x11106) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x11107) (i32.const 82))  ;; R
-    (i32.store8 (i32.const 0x11108) (i32.const 32))
-    (i32.store8 (i32.const 0x11109) (i32.const 73))  ;; I
-    (i32.store8 (i32.const 0x1110A) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x1110B) (i32.const 32))
-    (i32.store8 (i32.const 0x1110C) (i32.const 50))  ;; 2
-    (i32.store8 (i32.const 0x1110D) (i32.const 49))  ;; 1
-    (i32.store8 (i32.const 0x1110E) (i32.const 56))  ;; 8
-    (i32.store8 (i32.const 0x1110F) (i32.const 55))  ;; 7
-
-    ;; 0x11110: "THE LAST COLONY SHIP" (20 chars)
-    (i32.store8 (i32.const 0x11110) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x11111) (i32.const 72))  ;; H
-    (i32.store8 (i32.const 0x11112) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x11113) (i32.const 32))
-    (i32.store8 (i32.const 0x11114) (i32.const 76))  ;; L
-    (i32.store8 (i32.const 0x11115) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x11116) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x11117) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x11118) (i32.const 32))
-    (i32.store8 (i32.const 0x11119) (i32.const 67))  ;; C
-    (i32.store8 (i32.const 0x1111A) (i32.const 79))  ;; O
-    (i32.store8 (i32.const 0x1111B) (i32.const 76))  ;; L
-    (i32.store8 (i32.const 0x1111C) (i32.const 79))  ;; O
-    (i32.store8 (i32.const 0x1111D) (i32.const 78))  ;; N
-    (i32.store8 (i32.const 0x1111E) (i32.const 89))  ;; Y
-    (i32.store8 (i32.const 0x1111F) (i32.const 32))
-    (i32.store8 (i32.const 0x11120) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x11121) (i32.const 72))  ;; H
-    (i32.store8 (i32.const 0x11122) (i32.const 73))  ;; I
-    (i32.store8 (i32.const 0x11123) (i32.const 80))  ;; P
-
-    ;; 0x11124: "APPROACHES THE FRONTIER" (23 chars)
-    (i32.store8 (i32.const 0x11124) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x11125) (i32.const 80))  ;; P
-    (i32.store8 (i32.const 0x11126) (i32.const 80))  ;; P
-    (i32.store8 (i32.const 0x11127) (i32.const 82))  ;; R
-    (i32.store8 (i32.const 0x11128) (i32.const 79))  ;; O
-    (i32.store8 (i32.const 0x11129) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x1112A) (i32.const 67))  ;; C
-    (i32.store8 (i32.const 0x1112B) (i32.const 72))  ;; H
-    (i32.store8 (i32.const 0x1112C) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x1112D) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x1112E) (i32.const 32))
-    (i32.store8 (i32.const 0x1112F) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x11130) (i32.const 72))  ;; H
-    (i32.store8 (i32.const 0x11131) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x11132) (i32.const 32))
-    (i32.store8 (i32.const 0x11133) (i32.const 70))  ;; F
-    (i32.store8 (i32.const 0x11134) (i32.const 82))  ;; R
-    (i32.store8 (i32.const 0x11135) (i32.const 79))  ;; O
-    (i32.store8 (i32.const 0x11136) (i32.const 78))  ;; N
-    (i32.store8 (i32.const 0x11137) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x11138) (i32.const 73))  ;; I
-    (i32.store8 (i32.const 0x11139) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x1113A) (i32.const 82))  ;; R
-    (i32.store8 (i32.const 0x1113B) (i32.const 0))
-
-    ;; 0x1113C: "BUT SOMETHING WAITS" (19 chars)
-    (i32.store8 (i32.const 0x1113C) (i32.const 66))  ;; B
-    (i32.store8 (i32.const 0x1113D) (i32.const 85))  ;; U
-    (i32.store8 (i32.const 0x1113E) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x1113F) (i32.const 32))
-    (i32.store8 (i32.const 0x11140) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x11141) (i32.const 79))  ;; O
-    (i32.store8 (i32.const 0x11142) (i32.const 77))  ;; M
-    (i32.store8 (i32.const 0x11143) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x11144) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x11145) (i32.const 72))  ;; H
-    (i32.store8 (i32.const 0x11146) (i32.const 73))  ;; I
-    (i32.store8 (i32.const 0x11147) (i32.const 78))  ;; N
-    (i32.store8 (i32.const 0x11148) (i32.const 71))  ;; G
-    (i32.store8 (i32.const 0x11149) (i32.const 32))
-    (i32.store8 (i32.const 0x1114A) (i32.const 87))  ;; W
-    (i32.store8 (i32.const 0x1114B) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x1114C) (i32.const 73))  ;; I
-    (i32.store8 (i32.const 0x1114D) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x1114E) (i32.const 83))  ;; S
-
-    ;; 0x11150: "IN THE DARKNESS..." (18 chars)
-    (i32.store8 (i32.const 0x11150) (i32.const 73))  ;; I
-    (i32.store8 (i32.const 0x11151) (i32.const 78))  ;; N
-    (i32.store8 (i32.const 0x11152) (i32.const 32))
-    (i32.store8 (i32.const 0x11153) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x11154) (i32.const 72))  ;; H
-    (i32.store8 (i32.const 0x11155) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x11156) (i32.const 32))
-    (i32.store8 (i32.const 0x11157) (i32.const 68))  ;; D
-    (i32.store8 (i32.const 0x11158) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x11159) (i32.const 82))  ;; R
-    (i32.store8 (i32.const 0x1115A) (i32.const 75))  ;; K
-    (i32.store8 (i32.const 0x1115B) (i32.const 78))  ;; N
-    (i32.store8 (i32.const 0x1115C) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x1115D) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x1115E) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x1115F) (i32.const 46))  ;; .
-    (i32.store8 (i32.const 0x11160) (i32.const 46))  ;; .
-    (i32.store8 (i32.const 0x11161) (i32.const 46))  ;; .
-
-    ;; 0x11168: "YOUR SHIP: MK7" (ship assembly label, 13 chars, pad to match)
-    (i32.store8 (i32.const 0x11168) (i32.const 89))  ;; Y
-    (i32.store8 (i32.const 0x11169) (i32.const 79))  ;; O
-    (i32.store8 (i32.const 0x1116A) (i32.const 85))  ;; U
-    (i32.store8 (i32.const 0x1116B) (i32.const 82))  ;; R
-    (i32.store8 (i32.const 0x1116C) (i32.const 32))
-    (i32.store8 (i32.const 0x1116D) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x1116E) (i32.const 72))  ;; H
-    (i32.store8 (i32.const 0x1116F) (i32.const 73))  ;; I
-    (i32.store8 (i32.const 0x11170) (i32.const 80))  ;; P
-    (i32.store8 (i32.const 0x11171) (i32.const 58))  ;; :
-    (i32.store8 (i32.const 0x11172) (i32.const 32))
-    (i32.store8 (i32.const 0x11173) (i32.const 77))  ;; M
-    (i32.store8 (i32.const 0x11174) (i32.const 75))  ;; K
-
-    ;; 0x11178: "STELLAR" (7 chars, title part 1)
-    (i32.store8 (i32.const 0x11178) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x11179) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x1117A) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x1117B) (i32.const 76))  ;; L
-    (i32.store8 (i32.const 0x1117C) (i32.const 76))  ;; L
-    (i32.store8 (i32.const 0x1117D) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x1117E) (i32.const 82))  ;; R
-    (i32.store8 (i32.const 0x1117F) (i32.const 0))
-
-    ;; 0x11180: "ASSAULT" (7 chars, title part 2)
-    (i32.store8 (i32.const 0x11180) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x11181) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x11182) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x11183) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x11184) (i32.const 85))  ;; U
-    (i32.store8 (i32.const 0x11185) (i32.const 76))  ;; L
-    (i32.store8 (i32.const 0x11186) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x11187) (i32.const 0))
-
-    ;; 0x11188: "CLICK TO START" (14 chars)
-    (i32.store8 (i32.const 0x11188) (i32.const 67))  ;; C
-    (i32.store8 (i32.const 0x11189) (i32.const 76))  ;; L
-    (i32.store8 (i32.const 0x1118A) (i32.const 73))  ;; I
-    (i32.store8 (i32.const 0x1118B) (i32.const 67))  ;; C
-    (i32.store8 (i32.const 0x1118C) (i32.const 75))  ;; K
-    (i32.store8 (i32.const 0x1118D) (i32.const 32))
-    (i32.store8 (i32.const 0x1118E) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x1118F) (i32.const 79))  ;; O
-    (i32.store8 (i32.const 0x11190) (i32.const 32))
-    (i32.store8 (i32.const 0x11191) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x11192) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x11193) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x11194) (i32.const 82))  ;; R
-    (i32.store8 (i32.const 0x11195) (i32.const 84))  ;; T
-
-    ;; 0x11198: "GAME OVER" (9 chars)
-    (i32.store8 (i32.const 0x11198) (i32.const 71))  ;; G
-    (i32.store8 (i32.const 0x11199) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x1119A) (i32.const 77))  ;; M
-    (i32.store8 (i32.const 0x1119B) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x1119C) (i32.const 32))
-    (i32.store8 (i32.const 0x1119D) (i32.const 79))  ;; O
-    (i32.store8 (i32.const 0x1119E) (i32.const 86))  ;; V
-    (i32.store8 (i32.const 0x1119F) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x111A0) (i32.const 82))  ;; R
-
-    ;; 0x111A0: "VICTORY" (7 chars) - overlaps last byte of GAME OVER (R), reuse it
-    ;; Actually let's put VICTORY at 0x111A0
-    (i32.store8 (i32.const 0x111A0) (i32.const 86))  ;; V
-    (i32.store8 (i32.const 0x111A1) (i32.const 73))  ;; I
-    (i32.store8 (i32.const 0x111A2) (i32.const 67))  ;; C
-    (i32.store8 (i32.const 0x111A3) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x111A4) (i32.const 79))  ;; O
-    (i32.store8 (i32.const 0x111A5) (i32.const 82))  ;; R
-    (i32.store8 (i32.const 0x111A6) (i32.const 89))  ;; Y
-
-    ;; 0x111A8: "CLICK TO RESTART" (16 chars)
-    (i32.store8 (i32.const 0x111A8) (i32.const 67))  ;; C
-    (i32.store8 (i32.const 0x111A9) (i32.const 76))  ;; L
-    (i32.store8 (i32.const 0x111AA) (i32.const 73))  ;; I
-    (i32.store8 (i32.const 0x111AB) (i32.const 67))  ;; C
-    (i32.store8 (i32.const 0x111AC) (i32.const 75))  ;; K
-    (i32.store8 (i32.const 0x111AD) (i32.const 32))
-    (i32.store8 (i32.const 0x111AE) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x111AF) (i32.const 79))  ;; O
-    (i32.store8 (i32.const 0x111B0) (i32.const 32))
-    (i32.store8 (i32.const 0x111B1) (i32.const 82))  ;; R
-    (i32.store8 (i32.const 0x111B2) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x111B3) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x111B4) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x111B5) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x111B6) (i32.const 82))  ;; R
-    (i32.store8 (i32.const 0x111B7) (i32.const 84))  ;; T
-
-    ;; 0x111C0: "HULL BREACH" (11 chars)
-    (i32.store8 (i32.const 0x111C0) (i32.const 72))  ;; H
-    (i32.store8 (i32.const 0x111C1) (i32.const 85))  ;; U
-    (i32.store8 (i32.const 0x111C2) (i32.const 76))  ;; L
-    (i32.store8 (i32.const 0x111C3) (i32.const 76))  ;; L
-    (i32.store8 (i32.const 0x111C4) (i32.const 32))
-    (i32.store8 (i32.const 0x111C5) (i32.const 66))  ;; B
-    (i32.store8 (i32.const 0x111C6) (i32.const 82))  ;; R
-    (i32.store8 (i32.const 0x111C7) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x111C8) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x111C9) (i32.const 67))  ;; C
-    (i32.store8 (i32.const 0x111CA) (i32.const 72))  ;; H
-
-    ;; 0x111CC: "SHIELDS DOWN" (12 chars)
-    (i32.store8 (i32.const 0x111CC) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x111CD) (i32.const 72))  ;; H
-    (i32.store8 (i32.const 0x111CE) (i32.const 73))  ;; I
-    (i32.store8 (i32.const 0x111CF) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x111D0) (i32.const 76))  ;; L
-    (i32.store8 (i32.const 0x111D1) (i32.const 68))  ;; D
-    (i32.store8 (i32.const 0x111D2) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x111D3) (i32.const 32))
-    (i32.store8 (i32.const 0x111D4) (i32.const 68))  ;; D
-    (i32.store8 (i32.const 0x111D5) (i32.const 79))  ;; O
-    (i32.store8 (i32.const 0x111D6) (i32.const 87))  ;; W
-    (i32.store8 (i32.const 0x111D7) (i32.const 78))  ;; N
-
-    ;; 0x111D8: "DAMAGE CRITICAL" (15 chars)
-    (i32.store8 (i32.const 0x111D8) (i32.const 68))  ;; D
-    (i32.store8 (i32.const 0x111D9) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x111DA) (i32.const 77))  ;; M
-    (i32.store8 (i32.const 0x111DB) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x111DC) (i32.const 71))  ;; G
-    (i32.store8 (i32.const 0x111DD) (i32.const 69))  ;; E
-    (i32.store8 (i32.const 0x111DE) (i32.const 32))
-    (i32.store8 (i32.const 0x111DF) (i32.const 67))  ;; C
-    (i32.store8 (i32.const 0x111E0) (i32.const 82))  ;; R
-    (i32.store8 (i32.const 0x111E1) (i32.const 73))  ;; I
-    (i32.store8 (i32.const 0x111E2) (i32.const 84))  ;; T
-    (i32.store8 (i32.const 0x111E3) (i32.const 73))  ;; I
-    (i32.store8 (i32.const 0x111E4) (i32.const 67))  ;; C
-    (i32.store8 (i32.const 0x111E5) (i32.const 65))  ;; A
-    (i32.store8 (i32.const 0x111E6) (i32.const 76))  ;; L
-
-    ;; 0x12388: "SC: " (HUD score label, 4 chars)
-    (i32.store8 (i32.const 0x12388) (i32.const 83))  ;; S
-    (i32.store8 (i32.const 0x12389) (i32.const 67))  ;; C
-    (i32.store8 (i32.const 0x1238A) (i32.const 58))  ;; :
-    (i32.store8 (i32.const 0x1238B) (i32.const 32))
-  )
+  ;; Strings at 0x11100+
+  (data (i32.const 0x11100) "THE YEAR IS 2187")
+  (data (i32.const 0x11110) "THE LAST COLONY SHIP")
+  (data (i32.const 0x11124) "APPROACHES THE FRONTIER")
+  (data (i32.const 0x1113C) "BUT SOMETHING WAITS")
+  (data (i32.const 0x11150) "IN THE DARKNESS...")
+  (data (i32.const 0x11168) "YOUR SHIP: MK")
+  (data (i32.const 0x11178) "STELLAR\00ASSAULT\00")
+  (data (i32.const 0x11188) "CLICK TO START")
+  (data (i32.const 0x11198) "GAME OVER")
+  (data (i32.const 0x111A0) "VICTORY")
+  (data (i32.const 0x111A8) "CLICK TO RESTART")
+  (data (i32.const 0x111C0) "HULL BREACH")
+  (data (i32.const 0x111CC) "SHIELDS DOWN")
+  (data (i32.const 0x111D8) "DAMAGE CRITICAL")
+  (data (i32.const 0x12388) "SC: ")
 
   ;; ============================================================
   ;; INIT SIN TABLE
@@ -2103,8 +1824,7 @@
     ;; init subsystems
     (call $setup_palette)
     (call $init_sin_table)
-    (call $init_font)
-    (call $store_strings)
+    ;; font + strings initialized via data segments
     (call $init_stars)
     ;; start at phase 0 (story)
     (i32.store8 (i32.const 0x10340) (i32.const 0))
