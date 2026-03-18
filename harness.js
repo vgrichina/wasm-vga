@@ -104,6 +104,10 @@ canvas.addEventListener('mousemove', (e) => {
   memU8[CTL_OFFSET + 6] = y & 0xFF;
   memU8[CTL_OFFSET + 7] = (y >> 8) & 0xFF;
 });
+// mouse buttons at offset 8
+canvas.addEventListener('mousedown', (e) => { if (memU8) memU8[CTL_OFFSET + 8] |= (1 << e.button); });
+canvas.addEventListener('mouseup', (e) => { if (memU8) memU8[CTL_OFFSET + 8] &= ~(1 << e.button); });
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 async function loadDemo() {
   if (animId) { cancelAnimationFrame(animId); animId = null; }
