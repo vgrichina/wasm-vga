@@ -917,9 +917,13 @@
             (then
               ;; hit!
               (i32.store8 (local.get $addr) (i32.const 0))
-              (call $spawn_explosion (local.get $px) (local.get $py) (i32.const 16))
+              (call $spawn_explosion (local.get $px) (local.get $py) (i32.const 32))
+              (call $spawn_explosion (local.get $px) (i32.sub (local.get $py) (i32.const 8)) (i32.const 8))
+              (call $spawn_explosion (local.get $px) (i32.add (local.get $py) (i32.const 8)) (i32.const 8))
               (i32.store8 (i32.const 0x10365) (i32.const 90))  ;; invuln for 1.5s
-              (i32.store8 (i32.const 0x10354) (i32.const 8))   ;; big shake
+              (i32.store8 (i32.const 0x10354) (i32.const 12))  ;; bigger shake
+              ;; pick a random hit message (0-2) and store index at 0x10355
+              (i32.store8 (i32.const 0x10355) (i32.rem_u (i32.and (call $rand) (i32.const 0xFF)) (i32.const 3)))
               ;; lose life
               (local.set $lives (i32.load8_u (i32.const 0x10348)))
               (if (i32.gt_u (local.get $lives) (i32.const 0))
@@ -1519,6 +1523,86 @@
     (call $update_and_draw_particles)
     (call $update_and_draw_powerups)
     (call $draw_hud)
+    ;; --- Hit flash + scrolling message during invulnerability ---
+    (call $draw_hit_effects)
+  )
+
+  (func $draw_hit_effects
+    (local $inv i32) (local $elapsed i32) (local $msg_idx i32)
+    (local $msg_addr i32) (local $msg_len i32) (local $scroll_x i32)
+    (local $flash i32) (local $y i32)
+    (local.set $inv (i32.load8_u (i32.const 0x10365)))
+    (if (i32.eqz (local.get $inv)) (then (return)))
+    (local.set $elapsed (i32.sub (i32.const 90) (local.get $inv)))
+    ;; White flash overlay for first 6 frames (fade: palette 15=white)
+    (if (i32.lt_u (local.get $elapsed) (i32.const 6))
+      (then
+        (local.set $flash (i32.sub (i32.const 6) (local.get $elapsed)))
+        ;; draw horizontal white lines every N rows for a scanline flash effect
+        (local.set $y (i32.const 0))
+        (block $fd (loop $fl
+          (br_if $fd (i32.ge_u (local.get $y) (i32.const 200)))
+          (if (i32.eqz (i32.rem_u (local.get $y) (local.get $flash)))
+            (then
+              (call $draw_rect (i32.const 0) (local.get $y) (i32.const 320) (i32.const 1) (i32.const 15))
+            )
+          )
+          (local.set $y (i32.add (local.get $y) (i32.const 1)))
+          (br $fl)))
+      )
+    )
+    ;; Scrolling text for first 70 frames
+    (if (i32.lt_u (local.get $elapsed) (i32.const 70))
+      (then
+        ;; pick message by index at 0x10355
+        (local.set $msg_idx (i32.load8_u (i32.const 0x10355)))
+        ;; message 0: "HULL BREACH" (11) at 0x111C0
+        ;; message 1: "SHIELDS DOWN" (12) at 0x111CC
+        ;; message 2: "DAMAGE CRITICAL" (15) at 0x111D8
+        (if (i32.eqz (local.get $msg_idx))
+          (then
+            (local.set $msg_addr (i32.const 0x111C0))
+            (local.set $msg_len (i32.const 11))
+          )
+        )
+        (if (i32.eq (local.get $msg_idx) (i32.const 1))
+          (then
+            (local.set $msg_addr (i32.const 0x111CC))
+            (local.set $msg_len (i32.const 12))
+          )
+        )
+        (if (i32.eq (local.get $msg_idx) (i32.const 2))
+          (then
+            (local.set $msg_addr (i32.const 0x111D8))
+            (local.set $msg_len (i32.const 15))
+          )
+        )
+        ;; scroll from right (320) to center, then hold
+        ;; target x = 160 - (len*8)/2 = centered
+        (if (i32.lt_u (local.get $elapsed) (i32.const 20))
+          (then
+            ;; scrolling in: x = 320 - elapsed * 16 ... but clamp to target
+            (local.set $scroll_x (i32.sub (i32.const 320) (i32.mul (local.get $elapsed) (i32.const 16))))
+            ;; clamp to minimum (center)
+            (if (i32.lt_s (local.get $scroll_x) (i32.sub (i32.const 160) (i32.mul (local.get $msg_len) (i32.const 4))))
+              (then (local.set $scroll_x (i32.sub (i32.const 160) (i32.mul (local.get $msg_len) (i32.const 4))))))
+          )
+          (else
+            ;; hold at center
+            (local.set $scroll_x (i32.sub (i32.const 160) (i32.mul (local.get $msg_len) (i32.const 4))))
+          )
+        )
+        ;; blink the text after frame 50
+        (if (i32.or (i32.lt_u (local.get $elapsed) (i32.const 50))
+              (i32.and (local.get $elapsed) (i32.const 4)))
+          (then
+            ;; draw with red color (36=bright red in our palette)
+            (call $draw_string (local.get $msg_addr) (local.get $msg_len)
+              (local.get $scroll_x) (i32.const 95) (i32.const 36) (i32.const 1))
+          )
+        )
+      )
+    )
   )
 
   ;; Phase 6: Game over
@@ -1939,6 +2023,50 @@
     (i32.store8 (i32.const 0x111B5) (i32.const 65))  ;; A
     (i32.store8 (i32.const 0x111B6) (i32.const 82))  ;; R
     (i32.store8 (i32.const 0x111B7) (i32.const 84))  ;; T
+
+    ;; 0x111C0: "HULL BREACH" (11 chars)
+    (i32.store8 (i32.const 0x111C0) (i32.const 72))  ;; H
+    (i32.store8 (i32.const 0x111C1) (i32.const 85))  ;; U
+    (i32.store8 (i32.const 0x111C2) (i32.const 76))  ;; L
+    (i32.store8 (i32.const 0x111C3) (i32.const 76))  ;; L
+    (i32.store8 (i32.const 0x111C4) (i32.const 32))
+    (i32.store8 (i32.const 0x111C5) (i32.const 66))  ;; B
+    (i32.store8 (i32.const 0x111C6) (i32.const 82))  ;; R
+    (i32.store8 (i32.const 0x111C7) (i32.const 69))  ;; E
+    (i32.store8 (i32.const 0x111C8) (i32.const 65))  ;; A
+    (i32.store8 (i32.const 0x111C9) (i32.const 67))  ;; C
+    (i32.store8 (i32.const 0x111CA) (i32.const 72))  ;; H
+
+    ;; 0x111CC: "SHIELDS DOWN" (12 chars)
+    (i32.store8 (i32.const 0x111CC) (i32.const 83))  ;; S
+    (i32.store8 (i32.const 0x111CD) (i32.const 72))  ;; H
+    (i32.store8 (i32.const 0x111CE) (i32.const 73))  ;; I
+    (i32.store8 (i32.const 0x111CF) (i32.const 69))  ;; E
+    (i32.store8 (i32.const 0x111D0) (i32.const 76))  ;; L
+    (i32.store8 (i32.const 0x111D1) (i32.const 68))  ;; D
+    (i32.store8 (i32.const 0x111D2) (i32.const 83))  ;; S
+    (i32.store8 (i32.const 0x111D3) (i32.const 32))
+    (i32.store8 (i32.const 0x111D4) (i32.const 68))  ;; D
+    (i32.store8 (i32.const 0x111D5) (i32.const 79))  ;; O
+    (i32.store8 (i32.const 0x111D6) (i32.const 87))  ;; W
+    (i32.store8 (i32.const 0x111D7) (i32.const 78))  ;; N
+
+    ;; 0x111D8: "DAMAGE CRITICAL" (15 chars)
+    (i32.store8 (i32.const 0x111D8) (i32.const 68))  ;; D
+    (i32.store8 (i32.const 0x111D9) (i32.const 65))  ;; A
+    (i32.store8 (i32.const 0x111DA) (i32.const 77))  ;; M
+    (i32.store8 (i32.const 0x111DB) (i32.const 65))  ;; A
+    (i32.store8 (i32.const 0x111DC) (i32.const 71))  ;; G
+    (i32.store8 (i32.const 0x111DD) (i32.const 69))  ;; E
+    (i32.store8 (i32.const 0x111DE) (i32.const 32))
+    (i32.store8 (i32.const 0x111DF) (i32.const 67))  ;; C
+    (i32.store8 (i32.const 0x111E0) (i32.const 82))  ;; R
+    (i32.store8 (i32.const 0x111E1) (i32.const 73))  ;; I
+    (i32.store8 (i32.const 0x111E2) (i32.const 84))  ;; T
+    (i32.store8 (i32.const 0x111E3) (i32.const 73))  ;; I
+    (i32.store8 (i32.const 0x111E4) (i32.const 67))  ;; C
+    (i32.store8 (i32.const 0x111E5) (i32.const 65))  ;; A
+    (i32.store8 (i32.const 0x111E6) (i32.const 76))  ;; L
 
     ;; 0x12388: "SC: " (HUD score label, 4 chars)
     (i32.store8 (i32.const 0x12388) (i32.const 83))  ;; S
