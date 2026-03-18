@@ -19,7 +19,7 @@
     --glow: rgba(0, 221, 136, 0.15);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html { height: 100%; }
+  html, body { height: 100%; overflow: hidden; }
   body {
     background: var(--bg);
     color: var(--text);
@@ -27,42 +27,56 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    min-height: 100vh;
-    padding: 20px 16px;
+    padding: 10px 16px;
     background-image:
       radial-gradient(ellipse at 50% 0%, rgba(0,221,136,0.04) 0%, transparent 60%),
       linear-gradient(180deg, #0a0a0f 0%, #0e0e18 100%);
   }
-  header {
-    text-align: center;
-    margin-bottom: 16px;
+  .top-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    width: 100%;
+    max-width: 960px;
+    margin-bottom: 8px;
+    flex-shrink: 0;
   }
-  h1 {
-    font-size: 11px;
+  .top-bar .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .top-bar h1 {
+    font-size: 9px;
     font-weight: 200;
-    letter-spacing: 6px;
+    letter-spacing: 4px;
     text-transform: uppercase;
     color: var(--text-dim);
-    margin-bottom: 4px;
   }
-  .title {
-    font-size: 28px;
+  .top-bar .title {
+    font-size: 18px;
     font-weight: 800;
     color: var(--accent);
-    letter-spacing: -1px;
-    text-shadow: 0 0 30px var(--glow);
+    letter-spacing: -0.5px;
+    text-shadow: 0 0 20px var(--glow);
+    white-space: nowrap;
   }
   #picker {
     display: flex;
     gap: 6px;
-    margin-bottom: 16px;
     align-items: center;
+    margin-left: auto;
+  }
+  #picker label {
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
   }
   #picker select {
     background: var(--surface);
     color: var(--text);
     border: 1px solid var(--border);
-    padding: 8px 12px;
+    padding: 6px 10px;
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
     font-weight: 400;
@@ -73,29 +87,25 @@
     appearance: none;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23555568'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
-    background-position: right 10px center;
-    padding-right: 28px;
+    background-position: right 8px center;
+    padding-right: 24px;
   }
   #picker select:hover, #picker select:focus {
     border-color: var(--accent-dim);
     outline: none;
   }
-  #picker button {
-    background: var(--accent-dim);
-    color: var(--bg);
-    border: none;
-    padding: 8px 16px;
+  #fs-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 5px 8px;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
-    font-weight: 700;
+    font-size: 11px;
     border-radius: 4px;
     cursor: pointer;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    transition: background 0.15s, transform 0.1s;
+    transition: border-color 0.2s, color 0.2s;
   }
-  #picker button:hover { background: var(--accent); }
-  #picker button:active { transform: scale(0.97); }
+  #fs-btn:hover { border-color: var(--accent-dim); color: var(--text); }
   .canvas-wrap {
     position: relative;
     border: 1px solid var(--border);
@@ -103,6 +113,10 @@
     overflow: hidden;
     box-shadow: 0 0 40px rgba(0,0,0,0.5), 0 0 80px var(--glow);
     line-height: 0;
+    flex: 1;
+    min-height: 0;
+    aspect-ratio: 320 / 200;
+    max-width: 100%;
   }
   .canvas-wrap::before {
     content: '';
@@ -116,35 +130,33 @@
   canvas {
     image-rendering: pixelated;
     image-rendering: crisp-edges;
-    width: 640px;
-    height: 400px;
+    width: 100%;
+    height: 100%;
     display: block;
+  }
+  .bottom-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    max-width: 960px;
+    margin-top: 6px;
+    flex-shrink: 0;
   }
   #info {
     font-size: 10px;
     font-weight: 400;
     color: var(--text);
-    margin-top: 10px;
     letter-spacing: 2px;
   }
   .demo-desc {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 400;
-    color: var(--text);
-    margin-top: 12px;
-    text-align: center;
-    max-width: 500px;
-    line-height: 1.6;
+    color: var(--text-dim);
     letter-spacing: 0.5px;
   }
-  footer {
-    margin-top: auto;
-    padding-top: 24px;
-    padding-bottom: 8px;
-    text-align: center;
-  }
   footer a {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     color: var(--accent);
     text-decoration: none;
@@ -154,46 +166,62 @@
     transition: text-shadow 0.2s;
   }
   footer a:hover { text-shadow: 0 0 30px var(--accent-dim), 0 0 60px var(--glow); }
+
+  /* Fullscreen mode */
+  .canvas-wrap:fullscreen { border-radius: 0; border: none; box-shadow: none; background: #000; }
+  .canvas-wrap:fullscreen::before { display: none; }
+  .canvas-wrap:-webkit-full-screen { border-radius: 0; border: none; box-shadow: none; background: #000; }
+
   @media (max-width: 680px) {
-    .title { font-size: 22px; }
-    canvas { width: 320px; height: 200px; }
-    #picker select { font-size: 11px; padding: 6px 8px; }
-    #picker button { padding: 6px 12px; font-size: 11px; }
+    .top-bar { flex-wrap: wrap; gap: 8px; }
+    .top-bar .title { font-size: 15px; }
+    #picker { margin-left: 0; }
+    .bottom-bar { flex-wrap: wrap; gap: 4px; justify-content: center; text-align: center; }
   }
 </style>
 </head>
 <body>
-<header>
-  <h1>WebAssembly</h1>
-  <div class="title">VGA Mode 13h</div>
-</header>
-<div id="picker">
-  <label for="demo" style="font-size:11px;color:var(--text-dim);letter-spacing:1px">SELECT DEMO:</label>
-  <select id="demo" onchange="loadDemo()">
-    <option value="gradient">gradient</option>
-    <option value="plasma">plasma</option>
-    <option value="fire" selected>fire</option>
-    <option value="starfield">starfield</option>
-    <option value="tunnel">tunnel</option>
-    <option value="metaballs">metaballs</option>
-    <option value="raycaster">raycaster</option>
-    <option value="scroller">scroller</option>
-    <option value="landscape">landscape</option>
-    <option value="torus">torus</option>
-    <option value="shooter">shooter</option>
-  </select>
+<div class="top-bar">
+  <div class="brand">
+    <h1>WASM</h1>
+    <div class="title">VGA Mode 13h</div>
+  </div>
+  <div id="picker">
+    <label for="demo">SELECT DEMO:</label>
+    <select id="demo" onchange="loadDemo()">
+      <option value="gradient">gradient</option>
+      <option value="plasma">plasma</option>
+      <option value="fire" selected>fire</option>
+      <option value="starfield">starfield</option>
+      <option value="tunnel">tunnel</option>
+      <option value="metaballs">metaballs</option>
+      <option value="raycaster">raycaster</option>
+      <option value="scroller">scroller</option>
+      <option value="landscape">landscape</option>
+      <option value="torus">torus</option>
+      <option value="shooter">shooter</option>
+    </select>
+    <button id="fs-btn" onclick="toggleFullscreen()" title="Fullscreen">[&nbsp;]</button>
+  </div>
 </div>
-<div class="canvas-wrap">
+<div class="canvas-wrap" id="canvas-wrap">
   <canvas id="screen" width="320" height="200"></canvas>
 </div>
-<div id="info">fps: --</div>
-<div class="demo-desc">
-  WAT demos generated by Claude Code, compiled in-browser via wabt.js.
-  320x200, 256 colors, 64KB framebuffer. Pure WebAssembly, no JS rendering.
+<div class="bottom-bar">
+  <div id="info">fps: --</div>
+  <div class="demo-desc">WAT by Claude Code. 320x200 / 256 colors / wabt.js</div>
+  <footer><a href="/remix">Remix on Berrry</a></footer>
 </div>
-<footer>
-  <a href="/remix">Remix on Berrry</a>
-</footer>
+<script>
+function toggleFullscreen() {
+  const wrap = document.getElementById('canvas-wrap');
+  if (!document.fullscreenElement) {
+    (wrap.requestFullscreen || wrap.webkitRequestFullscreen).call(wrap);
+  } else {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  }
+}
+</script>
 <script src="https://cdn.jsdelivr.net/npm/wabt@1.0.36/index.js"></script>
 <script src="harness.js"></script>
 </body>
