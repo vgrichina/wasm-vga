@@ -6,13 +6,18 @@ All demos are WAT files compiled in-browser via wabt.js. No server-side compilat
 ## Architecture
 
 - `index.html` — UI with demo picker, fullscreen, responsive layout
-- `harness.js` — VGA harness: memory layout, palette, framebuffer blit, mouse input, animation loop
+- `harness.js` — VGA harness: memory layout, palette, framebuffer blit, mouse/keyboard/touch input, virtual controls, animation loop
 - `demos/*.wat` — WAT source files (WebAssembly Text format)
 - `demos/*.wasm` — Compiled binaries (gitignored, built by `build.sh`)
 
 ## Memory Layout (harness-owned)
 
-- `0x0000-0x003F` — Control block: frame counter (u32@0), mouse x/y (u16@4,6), mouse buttons (u8@8), tick_ms (u32@12)
+- `0x0000-0x003F` — Control block:
+  - `0x00`: frame counter (u32)
+  - `0x04`: mouse x (u16), `0x06`: mouse y (u16)
+  - `0x08`: mouse buttons (u8, bit0=left, bit1=right, bit2=middle)
+  - `0x0C`: tick_ms (u32)
+  - `0x10`: keyboard state (u8 bitfield: bit0=Up/W, bit1=Down/S, bit2=Left/A, bit3=Right/D, bit4=Space, bit5=Enter, bit6=Esc, bit7=Shift)
 - `0x0040-0x033F` — Palette (256 * 3 RGB bytes)
 - `0x0340-0x1033F` — Framebuffer (320*200 = 64000 bytes, each byte = palette index)
 - `0x10340+` — Free for guest use

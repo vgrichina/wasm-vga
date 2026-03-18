@@ -20,6 +20,9 @@
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; overflow: hidden; }
+  @media (pointer: coarse) {
+    body { overflow-y: auto; }
+  }
   body {
     background: var(--bg);
     color: var(--text);
@@ -184,6 +187,78 @@
   .canvas-wrap:fullscreen::before { display: none; }
   .canvas-wrap:-webkit-full-screen { border-radius: 0; border: none; box-shadow: none; background: #000; }
 
+  /* Virtual controls */
+  #virtual-controls {
+    display: none;
+    width: 100%;
+    max-width: 960px;
+    padding: 10px 0;
+    flex-shrink: 0;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+  .vc-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 8px;
+  }
+  .vc-dpad {
+    display: grid;
+    grid-template-columns: 48px 48px 48px;
+    grid-template-rows: 48px 48px 48px;
+    gap: 4px;
+  }
+  .vc-dpad .vc-btn { font-size: 18px; }
+  .vc-dpad .vc-up { grid-column: 2; grid-row: 1; }
+  .vc-dpad .vc-left { grid-column: 1; grid-row: 2; }
+  .vc-dpad .vc-right { grid-column: 3; grid-row: 2; }
+  .vc-dpad .vc-down { grid-column: 2; grid-row: 3; }
+  .vc-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+  .vc-btn {
+    background: var(--surface);
+    border: 1px solid var(--border-hi);
+    color: var(--text-dim);
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .vc-btn.active, .vc-btn:active {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .vc-fire {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    font-size: 13px;
+    letter-spacing: 1px;
+  }
+  .vc-alt {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    font-size: 10px;
+  }
+
+  @media (pointer: coarse) {
+    .canvas-wrap {
+      width: min(100%, calc((100vh - 250px) * 1.6), 960px);
+    }
+  }
+
   @media (max-width: 680px) {
     .top-bar { flex-wrap: wrap; gap: 8px; }
     .top-bar .title { font-size: 15px; }
@@ -219,6 +294,20 @@
 </div>
 <div class="canvas-wrap" id="canvas-wrap">
   <canvas id="screen" width="320" height="200"></canvas>
+</div>
+<div id="virtual-controls">
+  <div class="vc-row">
+    <div class="vc-dpad">
+      <div class="vc-btn vc-up" data-key="0">&#9650;</div>
+      <div class="vc-btn vc-left" data-key="2">&#9664;</div>
+      <div class="vc-btn vc-right" data-key="3">&#9654;</div>
+      <div class="vc-btn vc-down" data-key="1">&#9660;</div>
+    </div>
+    <div class="vc-actions">
+      <div class="vc-btn vc-alt" data-key="4">ALT</div>
+      <div class="vc-btn vc-fire" data-mouse="0">FIRE</div>
+    </div>
+  </div>
 </div>
 <div class="bottom-bar">
   <div id="info">fps: --</div>
