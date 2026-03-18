@@ -144,14 +144,16 @@
     text-align: center;
   }
   footer a {
-    font-size: 10px;
-    font-weight: 400;
-    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent);
     text-decoration: none;
-    letter-spacing: 1px;
-    transition: color 0.2s;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    text-shadow: 0 0 20px var(--glow);
+    transition: text-shadow 0.2s;
   }
-  footer a:hover { color: var(--accent); }
+  footer a:hover { text-shadow: 0 0 30px var(--accent-dim), 0 0 60px var(--glow); }
   @media (max-width: 680px) {
     .title { font-size: 22px; }
     canvas { width: 320px; height: 200px; }
@@ -166,7 +168,7 @@
   <div class="title">VGA Mode 13h</div>
 </header>
 <div id="picker">
-  <select id="demo">
+  <select id="demo" onchange="loadDemo()">
     <option value="gradient">gradient</option>
     <option value="plasma">plasma</option>
     <option value="fire" selected>fire</option>
@@ -179,7 +181,6 @@
     <option value="torus">torus</option>
     <option value="shooter">shooter</option>
   </select>
-  <button onclick="loadDemo()">Run</button>
 </div>
 <div class="canvas-wrap">
   <canvas id="screen" width="320" height="200"></canvas>
