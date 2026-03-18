@@ -16,9 +16,7 @@ const WIDTH = 320, HEIGHT = 200;
 
 const canvas = document.getElementById('screen');
 const ctx = canvas.getContext('2d');
-// scale canvas for visibility
-canvas.style.width = '640px';
-canvas.style.height = '400px';
+// canvas scaling handled by CSS
 
 const imgData = ctx.createImageData(WIDTH, HEIGHT);
 const rgba = imgData.data;
