@@ -105,7 +105,20 @@
     cursor: pointer;
     transition: border-color 0.2s, color 0.2s;
   }
-  #fs-btn:hover { border-color: var(--accent-dim); color: var(--text); }
+  #fs-btn:hover, #info-btn:hover { border-color: var(--accent-dim); color: var(--text); }
+  #info-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 9px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+    text-decoration: none;
+  }
   .canvas-wrap {
     position: relative;
     border: 1px solid var(--border);
@@ -201,6 +214,7 @@
       <option value="shooter">shooter</option>
     </select>
     <button id="fs-btn" onclick="toggleFullscreen()" title="Fullscreen">[&nbsp;]</button>
+    <a href="/info.html" id="info-btn" title="About">?</a>
   </div>
 </div>
 <div class="canvas-wrap" id="canvas-wrap">
@@ -208,7 +222,7 @@
 </div>
 <div class="bottom-bar">
   <div id="info">fps: --</div>
-  <div class="demo-desc">WAT by Claude Code. 320x200 / 256 colors / wabt.js</div>
+  <div class="demo-desc">WAT by Claude Code. 320x200 / 256 colors / wabt.js. <a href="/info.html" style="color:var(--text-dim);text-decoration:underline">More info</a></div>
   <footer><a href="/remix">Remix on Berrry</a></footer>
 </div>
 <script>
