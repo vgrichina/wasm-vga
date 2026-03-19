@@ -96,33 +96,61 @@ function note(oscType, freq, durMs, vol255) {
   playTone(types[oscType & 3] || 'sine', freq || 440, (durMs || 100) / 1000, (vol255 || 128) / 255 * 0.3);
 }
 
-// BGM pattern — freqs high enough for phone speakers
-const bgmBass = [131, 0, 131, 0, 196, 0, 196, 0, 220, 0, 220, 0, 175, 0, 175, 0]; // C3 G3 A3 F3
-const bgmArp = [523, 659, 784, 1047, 784, 659, 523, 392]; // C5 E5 G5 C6 G4
+// Music patterns: cmd 1=intro, 2=gameplay, 3=game over
+const musicPatterns = {
+  1: { // intro — slow, mysterious
+    bpm: 200,
+    bass:  [131, 0, 0, 0, 110, 0, 0, 0, 87, 0, 0, 0, 98, 0, 0, 0], // C3 A2 F2 G2
+    arp:   [262, 0, 330, 0, 262, 0, 196, 0], // C4 E4 C4 G3
+    bassVol: 0.1, arpVol: 0.08, bassType: 'triangle', arpType: 'sine',
+    bassDur: 0.2, arpDur: 0.15,
+  },
+  2: { // gameplay — driving, energetic
+    bpm: 240,
+    bass:  [131, 0, 131, 0, 196, 0, 196, 0, 220, 0, 220, 0, 175, 0, 175, 0], // C3 G3 A3 F3
+    arp:   [523, 659, 784, 1047, 784, 659, 523, 392], // C5 E5 G5 C6 G4
+    bassVol: 0.2, arpVol: 0.15, bassType: 'square', arpType: 'triangle',
+    bassDur: 0.1, arpDur: 0.08,
+  },
+  3: { // game over — slow, somber
+    bpm: 150,
+    bass:  [110, 0, 0, 0, 87, 0, 0, 0, 82, 0, 0, 0, 87, 0, 0, 0], // A2 F2 E2 F2
+    arp:   [220, 0, 208, 0, 196, 0, 175, 0], // A3 Ab3 G3 F3
+    bassVol: 0.12, arpVol: 0.1, bassType: 'triangle', arpType: 'sine',
+    bassDur: 0.25, arpDur: 0.2,
+  },
+};
+let currentMusicCmd = 0;
 
 function music(cmd) {
-  console.log('music() called with cmd=' + cmd, 'audioCtx=' + !!audioCtx, 'musicInterval=' + !!musicInterval);
   ensureAudio();
-  if (cmd === 0) { if (musicInterval) { clearInterval(musicInterval); musicInterval = null; } return; }
-  if (musicInterval) return; // already playing
+  if (musicInterval) { clearInterval(musicInterval); musicInterval = null; }
+  currentMusicCmd = cmd;
+  if (cmd === 0) return;
+  const p = musicPatterns[cmd];
+  if (!p) return;
   musicStep = 0;
-  // play an immediate note to confirm music started
-  playTone('square', 440, 0.2, 0.3);
+  const interval = 60000 / p.bpm / 4; // 16th note interval
   musicInterval = setInterval(() => {
     if (!audioCtx || isMuted) return;
-    const bassFreq = bgmBass[musicStep % bgmBass.length];
-    if (bassFreq) playTone('square', bassFreq, 0.12, 0.25);
-    const arpFreq = bgmArp[musicStep % bgmArp.length];
-    if (arpFreq) playTone('triangle', arpFreq, 0.1, 0.2);
+    const bassFreq = p.bass[musicStep % p.bass.length];
+    if (bassFreq) playTone(p.bassType, bassFreq, p.bassDur, p.bassVol);
+    const arpFreq = p.arp[musicStep % p.arp.length];
+    if (arpFreq) playTone(p.arpType, arpFreq, p.arpDur, p.arpVol);
     musicStep++;
-  }, 125);
-  console.log('music started, interval=' + musicInterval);
+  }, interval);
 }
 
 function toggleMute() {
   isMuted = !isMuted;
   if (masterGain) masterGain.gain.value = isMuted ? 0 : 1;
-  if (isMuted && musicInterval) { clearInterval(musicInterval); musicInterval = null; }
+  if (isMuted) {
+    if (musicInterval) { clearInterval(musicInterval); musicInterval = null; }
+  } else if (currentMusicCmd) {
+    const saved = currentMusicCmd;
+    currentMusicCmd = 0; // reset so music() doesn't skip
+    music(saved);
+  }
   const btn = document.getElementById('mute-btn');
   if (btn) btn.textContent = isMuted ? 'OFF' : 'SND';
 }
@@ -311,12 +339,7 @@ async function loadDemo() {
   if (musicInterval) { clearInterval(musicInterval); musicInterval = null; }
 
   const imports = {
-    env: {
-      memory,
-      sfx: (id) => { console.log('sfx wrapper', id); sfx(id); },
-      note: (a,b,c,d) => note(a,b,c,d),
-      music: (cmd) => { console.log('music wrapper', cmd); music(cmd); }
-    }
+    env: { memory, sfx, note, music }
   };
 
   try {
