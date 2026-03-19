@@ -304,42 +304,112 @@
     ))
   )
 
+  ;; Draw a keyword with falling-into-place animation
+  ;; Each char falls from top with ease-out, scrambling, then locks to correct letter
+  (func $draw_keyword (param $elapsed i32) (param $str_addr i32) (param $str_len i32)
+                      (param $base_x i32) (param $target_y i32)
+                      (param $start_ms i32)
+    (local $i i32) (local $char_start i32) (local $fall_t i32)
+    (local $cur_y i32) (local $ch i32) (local $color i32)
+    (local $px i32) (local $inv i32) (local $ease i32)
+    (local $range i32)
+    (local $tj i32) (local $ty i32) (local $tc i32)
+
+    ;; Skip if not started
+    (if (i32.lt_u (local.get $elapsed) (local.get $start_ms)) (then (return)))
+
+    (local.set $range (i32.add (local.get $target_y) (i32.const 8)))
+
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $str_len)))
+      (local.set $px (i32.add (local.get $base_x)
+        (i32.mul (local.get $i) (i32.const 8))))
+      (local.set $char_start (i32.add (local.get $start_ms)
+        (i32.mul (local.get $i) (i32.const 100))))
+
+      (if (i32.ge_u (local.get $elapsed) (local.get $char_start))
+        (then
+          (local.set $fall_t (i32.sub (local.get $elapsed) (local.get $char_start)))
+
+          (if (i32.lt_u (local.get $fall_t) (i32.const 700))
+            (then
+              ;; FALLING: ease-out quadratic from y=-8 to target_y over 700ms
+              (local.set $inv (i32.sub (i32.const 700) (local.get $fall_t)))
+              (local.set $ease (i32.sub (i32.const 490000)
+                (i32.mul (local.get $inv) (local.get $inv))))
+              (local.set $cur_y (i32.sub
+                (i32.div_u (i32.mul (local.get $range) (local.get $ease))
+                  (i32.const 490000))
+                (i32.const 8)))
+
+              ;; Scramble char: cycles fast
+              (local.set $ch (i32.add (i32.rem_u
+                (i32.and (i32.add
+                  (i32.mul (local.get $i) (i32.const 7))
+                  (i32.shr_u (local.get $elapsed) (i32.const 4)))
+                  (i32.const 0x7FFFFFFF))
+                (i32.const 94)) (i32.const 33)))
+
+              ;; Draw trail behind falling head (4 chars)
+              (local.set $tj (i32.const 1))
+              (block $td (loop $tl
+                (br_if $td (i32.gt_u (local.get $tj) (i32.const 4)))
+                (local.set $ty (i32.sub (local.get $cur_y)
+                  (i32.mul (local.get $tj) (i32.const 8))))
+                (if (i32.and (i32.ge_s (local.get $ty) (i32.const 0))
+                             (i32.lt_s (local.get $ty) (i32.const 192)))
+                  (then
+                    (local.set $tc (i32.add (i32.rem_u
+                      (i32.and (i32.add
+                        (i32.mul (local.get $tj) (i32.const 17))
+                        (i32.add (i32.mul (local.get $i) (i32.const 11))
+                          (i32.shr_u (local.get $elapsed) (i32.const 6))))
+                        (i32.const 0x7FFFFFFF))
+                      (i32.const 94)) (i32.const 33)))
+                    (call $draw_char_at (local.get $tc) (local.get $px)
+                      (local.get $ty)
+                      (select (i32.const 30)
+                        (select (i32.const 25)
+                          (select (i32.const 18) (i32.const 13)
+                            (i32.lt_u (local.get $tj) (i32.const 4)))
+                          (i32.lt_u (local.get $tj) (i32.const 3)))
+                        (i32.lt_u (local.get $tj) (i32.const 2))))))
+                (local.set $tj (i32.add (local.get $tj) (i32.const 1)))
+                (br $tl)
+              ))
+
+              ;; Draw head in white
+              (if (i32.and (i32.ge_s (local.get $cur_y) (i32.const 0))
+                           (i32.lt_s (local.get $cur_y) (i32.const 192)))
+                (then (call $draw_char_at (local.get $ch) (local.get $px)
+                  (local.get $cur_y) (i32.const 31))))
+            )
+            (else
+              ;; LOCKED: correct char, flash white briefly then green
+              (local.set $ch (i32.load8_u (i32.add (local.get $str_addr) (local.get $i))))
+              (local.set $color (select (i32.const 31) (i32.const 32)
+                (i32.lt_u (local.get $fall_t) (i32.const 900))))
+              (call $draw_char_at (local.get $ch) (local.get $px)
+                (local.get $target_y) (local.get $color))
+            ))
+        ))
+
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)
+    ))
+  )
+
   (func $render_rain (param $elapsed i32)
     (local $col i32) (local $base i32)
     (local $y i32) (local $speed i32) (local $alive i32)
     (local $px i32) (local $trail_i i32) (local $trail_y i32)
     (local $trail_ch i32) (local $trail_color i32)
-    (local $kill_dist i32) (local $frame_8 i32)
-    (local $reveal_count i32) (local $ri i32)
-    (local $target_ch i32) (local $target_x i32)
 
-    ;; Clear screen each frame (redraw all streams fresh)
+    ;; Clear screen each frame
     (call $clear_fb)
 
-    (local.set $frame_8 (i32.shr_u (local.get $elapsed) (i32.const 6)))
-
-    ;; After 5s, kill columns from edges inward
-    (if (i32.gt_u (local.get $elapsed) (i32.const 5000))
-      (then
-        (local.set $kill_dist (i32.div_u
-          (i32.sub (local.get $elapsed) (i32.const 5000)) (i32.const 150)))
-        (if (i32.gt_u (local.get $kill_dist) (i32.const 20))
-          (then (local.set $kill_dist (i32.const 20))))
-        (local.set $col (i32.const 0))
-        (block $kd (loop $kl
-          (br_if $kd (i32.ge_u (local.get $col) (i32.const 40)))
-          (if (i32.or
-            (i32.lt_u (local.get $col) (local.get $kill_dist))
-            (i32.ge_u (local.get $col) (i32.sub (i32.const 40) (local.get $kill_dist))))
-            (then
-              (i32.store8 (i32.add (i32.const 0x38013)
-                (i32.mul (local.get $col) (i32.const 4))) (i32.const 0))))
-          (local.set $col (i32.add (local.get $col) (i32.const 1)))
-          (br $kl)
-        ))
-      ))
-
-    ;; Update and draw each column with full stream
+    ;; Update and draw each rain column
     (local.set $col (i32.const 0))
     (block $cd (loop $cl
       (br_if $cd (i32.ge_u (local.get $col) (i32.const 40)))
@@ -412,28 +482,19 @@
       (br $cl)
     ))
 
-    ;; Reveal "BERRRY.APP" characters one by one, formed by the rain
-    ;; Starting at 2.5s, one char every 350ms
-    ;; "BERRRY.APP" at (115, 96), scale 1, spacing 9px
-    (if (i32.gt_u (local.get $elapsed) (i32.const 2500))
-      (then
-        (local.set $reveal_count (i32.div_u
-          (i32.sub (local.get $elapsed) (i32.const 2500)) (i32.const 350)))
-        (if (i32.gt_u (local.get $reveal_count) (i32.const 10))
-          (then (local.set $reveal_count (i32.const 10))))
-
-        ;; Draw each revealed character
-        (local.set $ri (i32.const 0))
-        (block $rvd (loop $rvl
-          (br_if $rvd (i32.ge_u (local.get $ri) (local.get $reveal_count)))
-          (local.set $target_ch (i32.load8_u (i32.add (i32.const 0x10750) (local.get $ri))))
-          (local.set $target_x (i32.add (i32.const 115)
-            (i32.mul (local.get $ri) (i32.const 9))))
-          (call $draw_char_at (local.get $target_ch) (local.get $target_x) (i32.const 96) (i32.const 32))
-          (local.set $ri (i32.add (local.get $ri) (i32.const 1)))
-          (br $rvl)
-        ))
-      ))
+    ;; Falling keywords — accumulate on screen, 8px-grid aligned
+    ;; "BERRRY.APP" (10×8=80px) center: x=120 (col 15), y=96
+    (call $draw_keyword (local.get $elapsed) (i32.const 0x10750) (i32.const 10)
+      (i32.const 120) (i32.const 96) (i32.const 500))
+    ;; "WASM" (4×8=32px) upper-left: x=24 (col 3), y=40
+    (call $draw_keyword (local.get $elapsed) (i32.const 0x10960) (i32.const 4)
+      (i32.const 24) (i32.const 40) (i32.const 2000))
+    ;; "VGA" (3×8=24px) lower-right: x=232 (col 29), y=152
+    (call $draw_keyword (local.get $elapsed) (i32.const 0x10964) (i32.const 3)
+      (i32.const 232) (i32.const 152) (i32.const 3500))
+    ;; "MODE 13H" (8×8=64px) upper-right: x=176 (col 22), y=32
+    (call $draw_keyword (local.get $elapsed) (i32.const 0x10968) (i32.const 8)
+      (i32.const 176) (i32.const 32) (i32.const 5000))
   )
 
   ;; =========================================================
@@ -1407,23 +1468,22 @@
                     (if (i32.eqz (local.get $in_leaf))
                       (then (local.set $in_leaf (i32.const 2))))))
 
-                ;; Seeds: procedural staggered grid wrapped around berry surface
-                ;; Place N seeds per row evenly spaced in angle around circumference.
-                ;; screen_x = rx * sin(angle), only draw front-facing (|angle| < ~70°)
-                ;; Rows every 7px, ~8 seeds per row (angular spacing ≈ 45° = 360/8)
-                (local.set $seed_cx (i32.const 0))
-                (local.set $seed_cy (i32.const 0))
+                ;; Seeds: read from precomputed+relaxed table at 0x10B00
+                ;; Table: u16 count, then count*(dy:i8, angle:u8)
                 (if (i32.and
                       (i32.gt_s (local.get $in_body) (i32.const 0))
                       (i32.eqz (local.get $in_leaf)))
                   (then
-                    ;; Iterate seed rows: dy from -30 to 34, step 7
-                    (local.set $seed_cy (i32.const -30))
+                    (local.set $sdsq (i32.load16_u (i32.const 0x10B00)))
+                    (local.set $si (i32.const 0))
                     (block $sdone (loop $slp
                       (br_if $sdone (i32.or
-                        (i32.gt_s (local.get $seed_cy) (i32.const 34))
+                        (i32.ge_u (local.get $si) (local.get $sdsq))
                         (i32.gt_s (local.get $in_leaf) (i32.const 0))))
-                      ;; Skip row if pixel dy is far from this seed row
+                      ;; Load seed (dy, angle) from table
+                      (local.set $seed_cy (i32.load8_s (i32.add (i32.const 0x10B02) (i32.shl (local.get $si) (i32.const 1)))))
+                      (local.set $seed_cx (i32.load8_u (i32.add (i32.add (i32.const 0x10B02) (i32.shl (local.get $si) (i32.const 1))) (i32.const 1))))
+                      ;; Skip if pixel dy too far
                       (if (i32.le_s
                             (select
                               (i32.sub (local.get $dy) (local.get $seed_cy))
@@ -1431,58 +1491,43 @@
                               (i32.ge_s (local.get $dy) (local.get $seed_cy)))
                             (i32.const 4))
                         (then
-                          ;; Get full radius at this row
+                          ;; Radius at seed Y
                           (local.set $rx (i32.load8_u (i32.add (i32.const 0x10A00)
-                            (i32.add (local.get $seed_cy) (i32.const 40)))))
-                          ;; 8 seeds per row, angular step = 32 (out of 256 = full circle)
-                          ;; Stagger odd rows by half step (16)
-                          ;; 16 seeds per row (step 16), stagger odd rows by 8
-                          ;; With rotation, ~8 are front-facing at any angle
-                          (local.set $si (i32.mul
-                            (i32.and
-                              (i32.div_u (i32.add (local.get $seed_cy) (i32.const 30)) (i32.const 7))
-                              (i32.const 1))
-                            (i32.const 8)))  ;; stagger offset: 0 or 8
-                          (block $cdone (loop $clp
-                            (br_if $cdone (i32.or
-                              (i32.ge_u (local.get $si) (i32.const 256))
-                              (i32.gt_s (local.get $in_leaf) (i32.const 0))))
-                            ;; Seed center at full 128x precision
-                            (local.set $seed_cx (i32.mul (local.get $rx)
-                              (i32.sub (call $sin_tab (i32.and (i32.add (local.get $si) (local.get $rot)) (i32.const 255))) (i32.const 128))))
-                            ;; cos value for this seed angle (0-128)
-                            (local.set $cos_val (i32.sub (call $sin_tab (i32.and (i32.add (i32.add (local.get $si) (local.get $rot)) (i32.const 64)) (i32.const 255))) (i32.const 128)))
-                            (if (i32.gt_s (local.get $cos_val) (i32.const 0))
-                              (then
-                                ;; Distance at 128x precision
-                                ;; sdx_128 in $norm_sq, sdy_128 in $guess (temp reuse)
-                                (local.set $norm_sq (i32.sub (i32.mul (local.get $dx) (i32.const 128)) (local.get $seed_cx)))
-                                (local.set $guess (i32.mul (i32.sub (local.get $dy) (local.get $seed_cy)) (i32.const 128)))
-                                ;; Foreshortened ellipse: sdx² + (sdy*cos/128)² < (R*cos/128)²
-                                ;; sdy_cos = sdy_128 * cos_val >> 7
-                                (local.set $sdsq (i32.add
-                                  (i32.mul (local.get $norm_sq) (local.get $norm_sq))
-                                  (i32.mul
-                                    (i32.shr_s (i32.mul (local.get $guess) (local.get $cos_val)) (i32.const 7))
-                                    (i32.shr_s (i32.mul (local.get $guess) (local.get $cos_val)) (i32.const 7)))))
-                                ;; R_seed=280 (~2.2px*128), R_groove=440 (~3.4px*128)
-                                ;; r_scaled = R * cos_val >> 7
-                                (local.set $seed_cx (i32.shr_s (i32.mul (i32.const 280) (local.get $cos_val)) (i32.const 7)))
-                                (if (i32.lt_u (local.get $sdsq) (i32.mul (local.get $seed_cx) (local.get $seed_cx)))
-                                  (then (local.set $in_leaf (i32.const 1)))
-                                  (else
-                                    (local.set $seed_cx (i32.shr_s (i32.mul (i32.const 440) (local.get $cos_val)) (i32.const 7)))
-                                    (if (i32.lt_u (local.get $sdsq) (i32.mul (local.get $seed_cx) (local.get $seed_cx)))
-                                      (then (local.set $in_leaf (i32.const 3))))))
-                                ;; Store sdx/sdy at 2x scale for bump mapping
-                                (local.set $sdx (i32.shr_s (local.get $norm_sq) (i32.const 6)))
-                                (local.set $sdy (i32.shr_s (local.get $guess) (i32.const 6)))
-                              ))
-                            (local.set $si (i32.add (local.get $si) (i32.const 16)))
-                            (br $clp)
-                          ))
+                            (i32.add (local.get $seed_cy) (i32.const 45)))))
+                          (if (i32.gt_s (local.get $rx) (i32.const 0))
+                            (then
+                              ;; cos for seed angle + rotation
+                              (local.set $cos_val (i32.sub (call $sin_tab (i32.and (i32.add (i32.add (local.get $seed_cx) (local.get $rot)) (i32.const 64)) (i32.const 255))) (i32.const 128)))
+                              (if (i32.gt_s (local.get $cos_val) (i32.const 0))
+                                (then
+                                  ;; Screen x at 128x
+                                  (local.set $norm_sq (i32.sub (i32.mul (local.get $dx) (i32.const 128))
+                                    (i32.mul (local.get $rx)
+                                      (i32.sub (call $sin_tab (i32.and (i32.add (local.get $seed_cx) (local.get $rot)) (i32.const 255))) (i32.const 128)))))
+                                  ;; sdy at 128x
+                                  (local.set $guess (i32.mul (i32.sub (local.get $dy) (local.get $seed_cy)) (i32.const 128)))
+                                  ;; Foreshortened ellipse
+                                  (local.set $seed_cx (i32.add
+                                    (i32.mul (local.get $norm_sq) (local.get $norm_sq))
+                                    (i32.mul
+                                      (i32.shr_s (i32.mul (local.get $guess) (local.get $cos_val)) (i32.const 7))
+                                      (i32.shr_s (i32.mul (local.get $guess) (local.get $cos_val)) (i32.const 7)))))
+                                  ;; R_seed=280, R_groove=440, scaled by cos
+                                  (local.set $cos_val (i32.shr_s (i32.mul (i32.const 280) (local.get $cos_val)) (i32.const 7)))
+                                  (if (i32.lt_u (local.get $seed_cx) (i32.mul (local.get $cos_val) (local.get $cos_val)))
+                                    (then (local.set $in_leaf (i32.const 1)))
+                                    (else
+                                      ;; Groove: 440/280 ≈ 11/7
+                                      (local.set $cos_val (i32.div_u (i32.mul (local.get $cos_val) (i32.const 11)) (i32.const 7)))
+                                      (if (i32.lt_u (local.get $seed_cx) (i32.mul (local.get $cos_val) (local.get $cos_val)))
+                                        (then (local.set $in_leaf (i32.const 3))))))
+                                  ;; sdx/sdy at 2x for bump mapping
+                                  (local.set $sdx (i32.shr_s (local.get $norm_sq) (i32.const 6)))
+                                  (local.set $sdy (i32.shr_s (local.get $guess) (i32.const 6)))
+                                ))
+                            ))
                         ))
-                      (local.set $seed_cy (i32.add (local.get $seed_cy) (i32.const 7)))
+                      (local.set $si (i32.add (local.get $si) (i32.const 1)))
                       (br $slp)
                     ))
                   ))
@@ -1699,6 +1744,195 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $rlp)
     ))
+
+    ;; Generate seed table for strawberry
+    (call $init_seeds)
+  )
+
+  ;; =========================================================
+  ;; Generate strawberry seed positions with relaxation
+  ;; Table at 0x10B00: u16 count, then count*(dy:i8, angle:u8)
+  ;; =========================================================
+  (func $init_seeds
+    (local $row_y i32) (local $num i32) (local $idx i32) (local $si i32)
+    (local $rx i32) (local $angle i32) (local $base i32) (local $count i32)
+    (local $pass i32) (local $j i32) (local $addr_i i32) (local $addr_j i32)
+    (local $dy_i i32) (local $a_i i32) (local $dy_j i32) (local $a_j i32)
+    (local $dd i32) (local $da i32) (local $dist_sq i32) (local $rx_avg i32)
+    (local $circ i32)
+
+    (local.set $count (i32.const 0))
+
+    ;; Generate seeds: rows from -35 to 38, step 7
+    (local.set $row_y (i32.const -42))
+    (block $rdone (loop $rlp
+      (br_if $rdone (i32.gt_s (local.get $row_y) (i32.const 38)))
+
+      ;; Get radius at row midpoint for seed count
+      (local.set $rx (i32.const 10))
+      (if (i32.and
+            (i32.ge_s (i32.add (local.get $row_y) (i32.const 3)) (i32.const -45))
+            (i32.le_s (i32.add (local.get $row_y) (i32.const 3)) (i32.const 45)))
+        (then
+          (local.set $rx (i32.load8_u (i32.add (i32.const 0x10A00)
+            (i32.add (i32.add (local.get $row_y) (i32.const 3)) (i32.const 45)))))))
+
+      ;; num = rx/2, clamped 5..20
+      (local.set $num (i32.shr_u (local.get $rx) (i32.const 1)))
+      (if (i32.lt_s (local.get $num) (i32.const 5))
+        (then (local.set $num (i32.const 5))))
+      (if (i32.gt_s (local.get $num) (i32.const 20))
+        (then (local.set $num (i32.const 20))))
+
+      ;; Base angle: row_index * 6
+      (local.set $base (i32.and
+        (i32.mul
+          (i32.div_u (i32.add (local.get $row_y) (i32.const 42)) (i32.const 7))
+          (i32.const 6))
+        (i32.const 255)))
+
+      ;; Generate seeds for this row
+      (local.set $si (i32.const 0))
+      (block $sdone (loop $slp
+        (br_if $sdone (i32.ge_u (local.get $si) (local.get $num)))
+
+        ;; angle = (base + i * 256 / num) & 255
+        (local.set $angle (i32.and
+          (i32.add (local.get $base)
+            (i32.div_u (i32.mul (local.get $si) (i32.const 256)) (local.get $num)))
+          (i32.const 255)))
+
+        ;; dy = row_y + angle*7/256 (spiral offset)
+        (local.set $idx (i32.add (local.get $row_y)
+          (i32.shr_u (i32.mul (local.get $angle) (i32.const 7)) (i32.const 8))))
+
+        ;; Only store if within profile range and radius > 0
+        (if (i32.and
+              (i32.ge_s (local.get $idx) (i32.const -45))
+              (i32.le_s (local.get $idx) (i32.const 45)))
+          (then
+            (if (i32.gt_s (i32.load8_u (i32.add (i32.const 0x10A00)
+                  (i32.add (local.get $idx) (i32.const 45)))) (i32.const 0))
+              (then
+                ;; Store: 0x10B02 + count*2 = (dy, angle)
+                (i32.store8 (i32.add (i32.const 0x10B02) (i32.shl (local.get $count) (i32.const 1)))
+                  (local.get $idx))
+                (i32.store8 (i32.add (i32.add (i32.const 0x10B02) (i32.shl (local.get $count) (i32.const 1))) (i32.const 1))
+                  (local.get $angle))
+                (local.set $count (i32.add (local.get $count) (i32.const 1)))
+              ))))
+
+        (local.set $si (i32.add (local.get $si) (i32.const 1)))
+        (br $slp)
+      ))
+
+      (local.set $row_y (i32.add (local.get $row_y) (i32.const 7)))
+      (br $rlp)
+    ))
+
+    ;; Store count
+    (i32.store16 (i32.const 0x10B00) (local.get $count))
+
+    ;; Sort seeds by dy (bubble sort — small N, runs once at init)
+    (local.set $pass (i32.const 1))
+    (block $sdone2 (loop $slp2
+      (br_if $sdone2 (i32.eqz (local.get $pass)))
+      (local.set $pass (i32.const 0))
+      (local.set $si (i32.const 0))
+      (block $idone2 (loop $ilp2
+        (br_if $idone2 (i32.ge_u (local.get $si) (i32.sub (local.get $count) (i32.const 1))))
+        (local.set $addr_i (i32.add (i32.const 0x10B02) (i32.shl (local.get $si) (i32.const 1))))
+        (local.set $addr_j (i32.add (local.get $addr_i) (i32.const 2)))
+        (if (i32.gt_s (i32.load8_s (local.get $addr_i)) (i32.load8_s (local.get $addr_j)))
+          (then
+            ;; Swap 2-byte entries
+            (local.set $dy_i (i32.load16_u (local.get $addr_i)))
+            (i32.store16 (local.get $addr_i) (i32.load16_u (local.get $addr_j)))
+            (i32.store16 (local.get $addr_j) (local.get $dy_i))
+            (local.set $pass (i32.const 1))))
+        (local.set $si (i32.add (local.get $si) (i32.const 1)))
+        (br $ilp2)
+      ))
+      (br $slp2)
+    ))
+
+    ;; Relaxation: 6 passes, push overlapping seeds apart
+    (local.set $pass (i32.const 0))
+    (block $pdone (loop $plp
+      (br_if $pdone (i32.ge_u (local.get $pass) (i32.const 6)))
+
+      (local.set $si (i32.const 0))
+      (block $idone (loop $ilp
+        (br_if $idone (i32.ge_u (local.get $si) (local.get $count)))
+        (local.set $addr_i (i32.add (i32.const 0x10B02) (i32.shl (local.get $si) (i32.const 1))))
+        (local.set $dy_i (i32.load8_s (local.get $addr_i)))
+        (local.set $a_i (i32.load8_u (i32.add (local.get $addr_i) (i32.const 1))))
+
+        ;; Compare with next 15 seeds (sorted by dy, so nearby = nearby on surface)
+        (local.set $j (i32.add (local.get $si) (i32.const 1)))
+        (block $jdone (loop $jlp
+          (br_if $jdone (i32.or
+            (i32.ge_u (local.get $j) (local.get $count))
+            (i32.gt_u (i32.sub (local.get $j) (local.get $si)) (i32.const 15))))
+          (local.set $addr_j (i32.add (i32.const 0x10B02) (i32.shl (local.get $j) (i32.const 1))))
+          (local.set $dy_j (i32.load8_s (local.get $addr_j)))
+          (local.set $a_j (i32.load8_u (i32.add (local.get $addr_j) (i32.const 1))))
+
+          ;; dy distance
+          (local.set $dd (i32.sub (local.get $dy_i) (local.get $dy_j)))
+          ;; Skip if dy too far (> 8)
+          (if (i32.le_s
+                (select (local.get $dd) (i32.sub (i32.const 0) (local.get $dd)) (i32.ge_s (local.get $dd) (i32.const 0)))
+                (i32.const 8))
+            (then
+              ;; Angular distance (shortest arc on 256-circle)
+              (local.set $da (i32.sub (local.get $a_i) (local.get $a_j)))
+              (if (i32.gt_s (local.get $da) (i32.const 128))
+                (then (local.set $da (i32.sub (local.get $da) (i32.const 256)))))
+              (if (i32.lt_s (local.get $da) (i32.const -128))
+                (then (local.set $da (i32.add (local.get $da) (i32.const 256)))))
+
+              ;; Surface distance²: dd² + (da * rx_avg / 41)²
+              ;; rx_avg from profile at midpoint dy
+              (local.set $rx_avg (i32.const 20))
+              (local.set $idx (i32.shr_s (i32.add (local.get $dy_i) (local.get $dy_j)) (i32.const 1)))
+              (if (i32.and (i32.ge_s (local.get $idx) (i32.const -45)) (i32.le_s (local.get $idx) (i32.const 45)))
+                (then (local.set $rx_avg (i32.load8_u (i32.add (i32.const 0x10A00) (i32.add (local.get $idx) (i32.const 45)))))))
+              ;; circ_dist = da * rx_avg / 41 (arc length in pixels)
+              (local.set $circ (i32.div_s (i32.mul (local.get $da) (local.get $rx_avg)) (i32.const 41)))
+              (local.set $dist_sq (i32.add (i32.mul (local.get $dd) (local.get $dd)) (i32.mul (local.get $circ) (local.get $circ))))
+
+              ;; If too close (< 6²=36 pixels), push angles apart by 2
+              (if (i32.lt_s (local.get $dist_sq) (i32.const 36))
+                (then
+                  ;; Push i's angle away from j (direction based on da sign)
+                  (if (i32.ge_s (local.get $da) (i32.const 0))
+                    (then
+                      (i32.store8 (i32.add (local.get $addr_i) (i32.const 1))
+                        (i32.and (i32.add (local.get $a_i) (i32.const 2)) (i32.const 255)))
+                      (i32.store8 (i32.add (local.get $addr_j) (i32.const 1))
+                        (i32.and (i32.sub (local.get $a_j) (i32.const 2)) (i32.const 255))))
+                    (else
+                      (i32.store8 (i32.add (local.get $addr_i) (i32.const 1))
+                        (i32.and (i32.sub (local.get $a_i) (i32.const 2)) (i32.const 255)))
+                      (i32.store8 (i32.add (local.get $addr_j) (i32.const 1))
+                        (i32.and (i32.add (local.get $a_j) (i32.const 2)) (i32.const 255)))))
+                  ;; Reload a_i since it may have changed
+                  (local.set $a_i (i32.load8_u (i32.add (local.get $addr_i) (i32.const 1))))
+                ))
+            ))
+
+          (local.set $j (i32.add (local.get $j) (i32.const 1)))
+          (br $jlp)
+        ))
+
+        (local.set $si (i32.add (local.get $si) (i32.const 1)))
+        (br $ilp)
+      ))
+
+      (local.set $pass (i32.add (local.get $pass) (i32.const 1)))
+      (br $plp)
+    ))
   )
 
   ;; =========================================================
@@ -1903,6 +2137,9 @@
   (data (i32.const 0x107C0) "  YOU DESCRIBE IT             THE MACHINE WRITES          ASSEMBLY                    NOT CODE   ASSEMBLY         EVERY LINE OF THIS DEMO     WRITTEN FROM INTENT         NO LANGUAGE IN BETWEEN      ENGLISH IN WEBASSEMBLY OUT  TRY IT ON BERRRY.APP      ")
   (data (i32.const 0x108C0) "WASMVGA-DEMOS.BERRRY.APP")
   (data (i32.const 0x108E0) "C\00JAVA\00PYTHON\00RUST\00JS\00GO\00")
+  (data (i32.const 0x10960) "WASM")
+  (data (i32.const 0x10964) "VGA")
+  (data (i32.const 0x10968) "MODE 13H")
 
   ;; Music pattern address lookup table (5 entries × 4 bytes at 0x10900)
   ;; section 0→0x20000, 1→0x20100, 2→0x20200, 3→0x20300, 4→0x20400
@@ -1923,9 +2160,8 @@
   ;; r:13 12 12 10  9  8  7  6  4  2  0
   (data (i32.const 0x10A00) "\00\0f\18\1b\1c\1d\1e\1f\20\21\22\22\23\23\24\24\24\25\25\25\25\26\26\26\26\26\26\26\26\26\26\26\26\25\25\25\25\25\24\24\24\24\23\22\22\22\22\22\21\20\20\1f\1f\1e\1e\1e\1d\1d\1c\1b\1b\1a\19\19\18\17\17\16\15\15\14\13\13\12\11\11\10\0f\0f\0e\0d\0c\0c\0a\09\08\07\06\04\02\00")
 
-  ;; Strawberry seed positions: 26 pairs of (dx:i8, dy:i8) in screen-space
-  ;; Stored at 0x10B00. Read with i32.load8_s for signed values.
-  (data (i32.const 0x10B00) "\f1\dd\08\dd\1c\df\e4\e9\f6\e8\0c\ea\1e\e8\e0\f4\f2\f6\05\f4\16\f5\23\f3\e2\00\f6\02\0c\00\1c\01\e6\0c\fa\0a\0e\0d\1c\0b\ec\16\04\14\14\17\f4\20\08\22\00\26")
+  ;; Strawberry seed table at 0x10B00 — generated by $init_seeds at runtime
+  ;; Format: u16 count, then count*(dy:i8, angle:u8)
 
   ;; Music patterns (MIDI-note format, read by harness from memory)
   ;; Pattern 5: CODE RAIN (90 BPM, Am)
