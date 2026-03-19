@@ -96,28 +96,111 @@ function note(oscType, freq, durMs, vol255) {
   playTone(types[oscType & 3] || 'sine', freq || 440, (durMs || 100) / 1000, (vol255 || 128) / 255 * 0.3);
 }
 
-// Music patterns: cmd 1=intro, 2=gameplay, 3=game over
+// Music — 3-track sequencer (bass, arp, lead) per song
+// Each track: [freq, ...] where 0 = rest. Step = 16th note.
+// Frequencies: C2=65 D2=73 E2=82 F2=87 G2=98 A2=110 B2=123
+//   C3=131 D3=147 E3=165 F3=175 G3=196 A3=220 Bb3=233 B3=247
+//   C4=262 D4=294 E4=330 F4=349 G4=392 A4=440 Bb4=466 B4=494
+//   C5=523 D5=587 E5=659 F5=698 G5=784 A5=880
+
 const musicPatterns = {
-  1: { // intro — slow, mysterious
-    bpm: 200,
-    bass:  [131, 0, 0, 0, 110, 0, 0, 0, 87, 0, 0, 0, 98, 0, 0, 0], // C3 A2 F2 G2
-    arp:   [262, 0, 330, 0, 262, 0, 196, 0], // C4 E4 C4 G3
-    bassVol: 0.1, arpVol: 0.08, bassType: 'triangle', arpType: 'sine',
-    bassDur: 0.2, arpDur: 0.15,
+  1: { // INTRO — ominous space ambient, Am → Em → Dm → E
+    bpm: 100,
+    tracks: [
+      { // bass — low octave pedal tones, slow pulse
+        type: 'triangle', vol: 0.12, dur: 0.4,
+        notes: [
+          110,0,0,0, 0,0,110,0, 0,0,0,0, 110,0,0,0,  // Am pedal
+          82,0,0,0,  0,0,82,0,  0,0,0,0, 82,0,0,0,    // Em pedal
+          73,0,0,0,  0,0,73,0,  0,0,0,0, 73,0,0,0,    // Dm pedal
+          82,0,0,0,  0,0,0,0,   82,0,82,0, 0,0,0,0,   // E with rhythm
+        ],
+      },
+      { // pad — sustained minor chords, eerie
+        type: 'sine', vol: 0.06, dur: 0.5,
+        notes: [
+          220,0,0,262, 0,0,220,0, 330,0,0,0, 262,0,220,0,  // Am tones
+          165,0,0,196, 0,0,247,0, 0,0,196,0, 165,0,0,0,    // Em tones
+          147,0,0,175, 0,0,220,0, 0,0,175,0, 147,0,0,0,    // Dm tones
+          165,0,0,208, 0,0,247,0, 330,0,0,0, 247,0,208,0,  // E tones
+        ],
+      },
+      { // high — sparse, haunting melody
+        type: 'sine', vol: 0.05, dur: 0.3,
+        notes: [
+          0,0,0,0, 523,0,0,0, 0,0,0,0, 0,0,440,0,      // A minor hint
+          0,0,0,0, 494,0,0,0, 0,0,0,0, 0,0,0,0,         // B over Em
+          0,0,0,0, 440,0,0,0, 0,0,0,0, 0,0,349,0,       // F over Dm
+          0,0,0,0, 0,0,416,0, 0,0,0,0, 494,0,0,0,       // G#→B over E
+        ],
+      },
+    ],
   },
-  2: { // gameplay — driving, energetic
-    bpm: 240,
-    bass:  [131, 0, 131, 0, 196, 0, 196, 0, 220, 0, 220, 0, 175, 0, 175, 0], // C3 G3 A3 F3
-    arp:   [523, 659, 784, 1047, 784, 659, 523, 392], // C5 E5 G5 C6 G4
-    bassVol: 0.2, arpVol: 0.15, bassType: 'square', arpType: 'triangle',
-    bassDur: 0.1, arpDur: 0.08,
-  },
-  3: { // game over — slow, somber
+
+  2: { // GAMEPLAY — aggressive driving chiptune, Am: i-VII-VI-V
     bpm: 150,
-    bass:  [110, 0, 0, 0, 87, 0, 0, 0, 82, 0, 0, 0, 87, 0, 0, 0], // A2 F2 E2 F2
-    arp:   [220, 0, 208, 0, 196, 0, 175, 0], // A3 Ab3 G3 F3
-    bassVol: 0.12, arpVol: 0.1, bassType: 'triangle', arpType: 'sine',
-    bassDur: 0.25, arpDur: 0.2,
+    tracks: [
+      { // bass — pumping eighth-note pattern
+        type: 'square', vol: 0.15, dur: 0.08,
+        notes: [
+          110,0,110,0, 110,0,110,110, 110,0,110,0, 110,0,165,0,  // Am bass
+          98,0,98,0,   98,0,98,98,    98,0,98,0,   98,0,147,0,   // G bass
+          87,0,87,0,   87,0,87,87,    87,0,87,0,   87,0,131,0,   // F bass
+          82,0,82,0,   82,0,82,82,    82,0,82,0,   82,0,110,0,   // E bass → back
+        ],
+      },
+      { // arp — fast arpeggios cycling chord tones
+        type: 'triangle', vol: 0.12, dur: 0.06,
+        notes: [
+          440,523,659,523, 440,523,659,784, 659,523,440,523, 659,784,659,523,  // Am arp
+          392,494,587,494, 392,494,587,784, 587,494,392,494, 587,784,587,494,  // G arp
+          349,440,523,440, 349,440,523,698, 523,440,349,440, 523,698,523,440,  // F arp
+          330,416,494,416, 330,416,494,659, 494,416,330,416, 494,659,494,416,  // E arp
+        ],
+      },
+      { // lead — catchy 8-bit melody
+        type: 'square', vol: 0.10, dur: 0.12,
+        notes: [
+          880,0,784,880, 0,0,659,0, 784,0,659,0, 523,0,659,0,   // melody A
+          784,0,659,784, 0,0,587,0, 494,0,587,0, 494,0,392,0,   // melody B
+          698,0,659,698, 0,0,523,0, 440,0,523,0, 440,0,349,0,   // melody C
+          659,0,0,494,   659,0,784,0, 880,0,784,659, 0,0,0,0,   // melody D (resolve)
+        ],
+      },
+    ],
+  },
+
+  3: { // GAME OVER — slow, tragic, Dm → Bb → Gm → A
+    bpm: 80,
+    tracks: [
+      { // bass — slow heartbeat
+        type: 'triangle', vol: 0.12, dur: 0.35,
+        notes: [
+          73,0,0,0, 0,0,0,0, 73,0,0,0, 0,0,0,0,    // Dm
+          58,0,0,0, 0,0,0,0, 58,0,0,0, 0,0,0,0,    // Bb (Bb1=58)
+          49,0,0,0, 0,0,0,0, 49,0,0,0, 0,0,0,0,    // Gm (G1=49)
+          55,0,0,0, 0,0,0,0, 55,0,55,0, 0,0,0,0,   // A (A1=55)
+        ],
+      },
+      { // chords — descending minor
+        type: 'sine', vol: 0.08, dur: 0.4,
+        notes: [
+          294,0,0,349, 0,0,0,0, 262,0,0,0, 0,0,0,0,   // Dm chord
+          233,0,0,294, 0,0,0,0, 233,0,0,0, 0,0,0,0,   // Bb chord
+          196,0,0,233, 0,0,0,0, 196,0,0,0, 0,0,0,0,   // Gm chord
+          220,0,0,277, 0,0,0,0, 220,0,0,0, 0,0,0,0,   // A chord
+        ],
+      },
+      { // melody — descending lament
+        type: 'sine', vol: 0.07, dur: 0.3,
+        notes: [
+          587,0,0,0, 523,0,0,0, 440,0,0,0, 0,0,0,0,   // D5 C5 A4
+          466,0,0,0, 440,0,0,0, 349,0,0,0, 0,0,0,0,   // Bb4 A4 F4
+          392,0,0,0, 349,0,0,0, 294,0,0,0, 0,0,0,0,   // G4 F4 D4
+          330,0,0,0, 277,0,0,0, 220,0,0,0, 0,0,0,0,   // E4 C#4 A3
+        ],
+      },
+    ],
   },
 };
 let currentMusicCmd = 0;
@@ -130,13 +213,13 @@ function music(cmd) {
   const p = musicPatterns[cmd];
   if (!p) return;
   musicStep = 0;
-  const interval = 60000 / p.bpm / 4; // 16th note interval
+  const interval = 60000 / p.bpm / 4;
   musicInterval = setInterval(() => {
     if (!audioCtx || isMuted) return;
-    const bassFreq = p.bass[musicStep % p.bass.length];
-    if (bassFreq) playTone(p.bassType, bassFreq, p.bassDur, p.bassVol);
-    const arpFreq = p.arp[musicStep % p.arp.length];
-    if (arpFreq) playTone(p.arpType, arpFreq, p.arpDur, p.arpVol);
+    for (const tr of p.tracks) {
+      const freq = tr.notes[musicStep % tr.notes.length];
+      if (freq) playTone(tr.type, freq, tr.dur, tr.vol);
+    }
     musicStep++;
   }, interval);
 }
