@@ -313,8 +313,16 @@ canvas.addEventListener('mousemove', (e) => {
   setMousePos((e.clientX - rect.left) / rect.width * WIDTH,
               (e.clientY - rect.top) / rect.height * HEIGHT);
 });
-canvas.addEventListener('mousedown', (e) => { ensureAudio(); setMouseBtn(e.button, true); canvas.focus(); });
-canvas.addEventListener('mouseup', (e) => setMouseBtn(e.button, false));
+canvas.addEventListener('mousedown', (e) => {
+  e.preventDefault(); ensureAudio();
+  const btn = (e.button === 0 && e.ctrlKey) ? 2 : e.button;
+  setMouseBtn(btn, true); canvas.focus();
+});
+canvas.addEventListener('mouseup', (e) => {
+  e.preventDefault();
+  const btn = (e.button === 0 && e.ctrlKey) ? 2 : e.button;
+  setMouseBtn(btn, false);
+});
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // --- Touch → mouse mapping on canvas ---

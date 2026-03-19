@@ -402,6 +402,19 @@
     )
   )
 
+  (func $vline (param $x i32) (param $y i32) (param $len i32) (param $col i32)
+    (local $i i32)
+    (local.set $i (i32.const 0))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_s (local.get $i) (local.get $len)))
+        (call $put_pixel (local.get $x) (i32.add (local.get $y) (local.get $i)) (local.get $col))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)
+      )
+    )
+  )
+
   ;; ============ MAP GENERATION ============
   (func $generate_map
     (local $x i32)
@@ -1246,6 +1259,15 @@
     )
   )
 
+  (func $min (param $a i32) (param $b i32) (result i32)
+    (if (result i32) (i32.lt_s (local.get $a) (local.get $b))
+      (then (local.get $a)) (else (local.get $b)))
+  )
+  (func $max (param $a i32) (param $b i32) (result i32)
+    (if (result i32) (i32.gt_s (local.get $a) (local.get $b))
+      (then (local.get $a)) (else (local.get $b)))
+  )
+
   ;; ============ UPDATE UNITS ============
   (func $update_units
     (local $i i32)
@@ -1696,7 +1718,7 @@
       (i32.load8_u (i32.const 6))
       (i32.shl (i32.load8_u (i32.const 7)) (i32.const 8))))
     (local.set $mbtn (i32.load8_u (i32.const 8)))
-    (local.set $last_btn (i32.load (i32.const 0x1A940)))
+    (local.set $last_btn (i32.load8_u (i32.const 0x1A940)))
     (local.set $keys (i32.load8_u (i32.const 16)))
 
     ;; Camera
@@ -1752,10 +1774,23 @@
     (local.set $world_x (i32.add (local.get $mx) (local.get $cam_x)))
     (local.set $world_y (i32.add (local.get $my) (local.get $cam_y)))
 
-    ;; LEFT CLICK - Select
+    ;; LEFT CLICK DOWN - Start drag
     (if (i32.and
           (i32.and (local.get $mbtn) (i32.const 1))
           (i32.eqz (i32.and (local.get $last_btn) (i32.const 1)))
+        )
+      (then
+        ;; Store drag start in world coords
+        (i32.store16 (i32.const 0x1A950) (local.get $world_x))
+        (i32.store16 (i32.const 0x1A952) (local.get $world_y))
+        (i32.store8 (i32.const 0x1A958) (i32.const 1)) ;; dragging = true
+      )
+    )
+
+    ;; LEFT CLICK UP - Finish selection
+    (if (i32.and
+          (i32.eqz (i32.and (local.get $mbtn) (i32.const 1)))
+          (i32.and (local.get $last_btn) (i32.const 1))
         )
       (then
         ;; Clear selection
@@ -1771,57 +1806,119 @@
         )
         (i32.store (i32.const 0x1A930) (i32.const 0)) ;; clear num selected
 
-        ;; Find unit nearest to click (player only)
-        (local.set $best_i (i32.const -1))
-        (local.set $best_dist (i32.const 100))
-        (local.set $i (i32.const 0))
-        (block $sel_brk
-          (loop $sel_lp
-            (br_if $sel_brk (i32.ge_s (local.get $i) (i32.const 64)))
-            (local.set $addr (i32.add (i32.const 0x14400) (i32.mul (local.get $i) (i32.const 32))))
-            (if (i32.and
-                  (i32.load8_u (local.get $addr))
-                  (i32.and
-                    (i32.eqz (i32.load8_u (i32.add (local.get $addr) (i32.const 2)))) ;; player team
-                    (i32.ne (i32.load8_u (i32.add (local.get $addr) (i32.const 3))) (i32.const 4))
-                  )
-                )
-              (then
-                (local.set $ux (i32.load16_s (i32.add (local.get $addr) (i32.const 4))))
-                (local.set $uy (i32.load16_s (i32.add (local.get $addr) (i32.const 6))))
-                (local.set $dx (call $abs (i32.sub (local.get $world_x) (local.get $ux))))
-                (local.set $dy (call $abs (i32.sub (local.get $world_y) (local.get $uy))))
-                (local.set $dist (i32.add (local.get $dx) (local.get $dy)))
-                (if (i32.lt_s (local.get $dist) (local.get $best_dist))
+        ;; Check drag distance to decide box vs single select
+        ;; drag_dx = abs(world_x - drag_start_x), drag_dy = abs(world_y - drag_start_y)
+        (local.set $dx (call $abs (i32.sub (local.get $world_x) (i32.load16_s (i32.const 0x1A950)))))
+        (local.set $dy (call $abs (i32.sub (local.get $world_y) (i32.load16_s (i32.const 0x1A952)))))
+
+        (if (i32.gt_s (i32.add (local.get $dx) (local.get $dy)) (i32.const 10))
+          (then
+            ;; BOX SELECT - select all player units inside rectangle
+            ;; Compute min/max of drag start and current world pos
+            ;; Reuse $ux/$uy/$dx/$dy as min_x/min_y/max_x/max_y
+            (local.set $ux (call $min (local.get $world_x) (i32.load16_s (i32.const 0x1A950))))
+            (local.set $uy (call $min (local.get $world_y) (i32.load16_s (i32.const 0x1A952))))
+            (local.set $dx (call $max (local.get $world_x) (i32.load16_s (i32.const 0x1A950))))
+            (local.set $dy (call $max (local.get $world_y) (i32.load16_s (i32.const 0x1A952))))
+
+            (local.set $nsel (i32.const 0))
+            (local.set $i (i32.const 0))
+            (block $bs_brk
+              (loop $bs_lp
+                (br_if $bs_brk (i32.ge_s (local.get $i) (i32.const 64)))
+                (local.set $addr (i32.add (i32.const 0x14400) (i32.mul (local.get $i) (i32.const 32))))
+                (if (i32.and
+                      (i32.load8_u (local.get $addr))
+                      (i32.and
+                        (i32.eqz (i32.load8_u (i32.add (local.get $addr) (i32.const 2)))) ;; player team
+                        (i32.ne (i32.load8_u (i32.add (local.get $addr) (i32.const 3))) (i32.const 4)) ;; not dead
+                      )
+                    )
                   (then
-                    (local.set $best_dist (local.get $dist))
-                    (local.set $best_i (local.get $i))
+                    (local.set $best_i (i32.load16_s (i32.add (local.get $addr) (i32.const 4)))) ;; unit x
+                    (local.set $best_dist (i32.load16_s (i32.add (local.get $addr) (i32.const 6)))) ;; unit y
+                    (if (i32.and
+                          (i32.and
+                            (i32.ge_s (local.get $best_i) (local.get $ux))
+                            (i32.le_s (local.get $best_i) (local.get $dx)))
+                          (i32.and
+                            (i32.ge_s (local.get $best_dist) (local.get $uy))
+                            (i32.le_s (local.get $best_dist) (local.get $dy)))
+                        )
+                      (then
+                        (i32.store8 (i32.add (local.get $addr) (i32.const 19)) (i32.const 1))
+                        (if (i32.lt_s (local.get $nsel) (i32.const 16))
+                          (then
+                            (i32.store8 (i32.add (i32.const 0x1A920) (local.get $nsel)) (local.get $i))
+                          )
+                        )
+                        (local.set $nsel (i32.add (local.get $nsel) (i32.const 1)))
+                      )
+                    )
                   )
                 )
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br $bs_lp)
               )
             )
-            (local.set $i (i32.add (local.get $i) (i32.const 1)))
-            (br $sel_lp)
+            (i32.store (i32.const 0x1A930) (local.get $nsel))
+            (if (local.get $nsel)
+              (then (call $note (i32.const 0) (i32.const 600) (i32.const 30) (i32.const 50)))
+            )
+          )
+          (else
+            ;; SINGLE SELECT - Find unit nearest to click (player only)
+            (local.set $best_i (i32.const -1))
+            (local.set $best_dist (i32.const 100))
+            (local.set $i (i32.const 0))
+            (block $sel_brk
+              (loop $sel_lp
+                (br_if $sel_brk (i32.ge_s (local.get $i) (i32.const 64)))
+                (local.set $addr (i32.add (i32.const 0x14400) (i32.mul (local.get $i) (i32.const 32))))
+                (if (i32.and
+                      (i32.load8_u (local.get $addr))
+                      (i32.and
+                        (i32.eqz (i32.load8_u (i32.add (local.get $addr) (i32.const 2)))) ;; player team
+                        (i32.ne (i32.load8_u (i32.add (local.get $addr) (i32.const 3))) (i32.const 4))
+                      )
+                    )
+                  (then
+                    (local.set $ux (i32.load16_s (i32.add (local.get $addr) (i32.const 4))))
+                    (local.set $uy (i32.load16_s (i32.add (local.get $addr) (i32.const 6))))
+                    (local.set $dist (i32.add
+                      (call $abs (i32.sub (local.get $world_x) (local.get $ux)))
+                      (call $abs (i32.sub (local.get $world_y) (local.get $uy)))))
+                    (if (i32.lt_s (local.get $dist) (local.get $best_dist))
+                      (then
+                        (local.set $best_dist (local.get $dist))
+                        (local.set $best_i (local.get $i))
+                      )
+                    )
+                  )
+                )
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br $sel_lp)
+              )
+            )
+
+            (if (i32.ge_s (local.get $best_i) (i32.const 0))
+              (then
+                (local.set $addr (i32.add (i32.const 0x14400) (i32.mul (local.get $best_i) (i32.const 32))))
+                (i32.store8 (i32.add (local.get $addr) (i32.const 19)) (i32.const 1))
+                (i32.store8 (i32.const 0x1A920) (local.get $best_i))
+                (i32.store (i32.const 0x1A930) (i32.const 1))
+                (call $note (i32.const 0) (i32.const 600) (i32.const 30) (i32.const 50))
+              )
+            )
           )
         )
 
-        (if (i32.ge_s (local.get $best_i) (i32.const 0))
-          (then
-            (local.set $addr (i32.add (i32.const 0x14400) (i32.mul (local.get $best_i) (i32.const 32))))
-            (i32.store8 (i32.add (local.get $addr) (i32.const 19)) (i32.const 1))
-            (i32.store8 (i32.const 0x1A920) (local.get $best_i))
-            (i32.store (i32.const 0x1A930) (i32.const 1))
-            (call $note (i32.const 0) (i32.const 600) (i32.const 30) (i32.const 50))
-          )
-        )
+        (i32.store8 (i32.const 0x1A958) (i32.const 0)) ;; dragging = false
       )
     )
 
     ;; RIGHT CLICK - Command (move/attack)
-    (if (i32.and
-          (i32.and (local.get $mbtn) (i32.const 2))
-          (i32.eqz (i32.and (local.get $last_btn) (i32.const 2)))
-        )
+    (if (i32.and (local.get $mbtn) (i32.const 4))
       (then
         (local.set $nsel (i32.load (i32.const 0x1A930)))
         (if (local.get $nsel)
@@ -1876,7 +1973,6 @@
                         ;; Attack command
                         (i32.store8 (i32.add (local.get $addr) (i32.const 3)) (i32.const 2))
                         (i32.store8 (i32.add (local.get $addr) (i32.const 24)) (local.get $clicked_enemy))
-                        (call $note (i32.const 1) (i32.const 300) (i32.const 50) (i32.const 80))
                       )
                       (else
                         ;; Move command
@@ -1884,7 +1980,6 @@
                         (i32.store16 (i32.add (local.get $addr) (i32.const 8)) (local.get $world_x))
                         (i32.store16 (i32.add (local.get $addr) (i32.const 10)) (local.get $world_y))
                         (i32.store8 (i32.add (local.get $addr) (i32.const 24)) (i32.const 255))
-                        (call $note (i32.const 0) (i32.const 400) (i32.const 20) (i32.const 40))
                       )
                     )
                   )
@@ -1893,6 +1988,7 @@
                 (br $cmd_lp)
               )
             )
+            (call $note (i32.const 0) (i32.const 400) (i32.const 20) (i32.const 40))
           )
         )
       )
@@ -1965,7 +2061,7 @@
     )
 
     ;; Save last button state
-    (i32.store (i32.const 0x1A940) (local.get $mbtn))
+    (i32.store8 (i32.const 0x1A940) (local.get $mbtn))
     (i32.store (i32.const 0x1A944) (local.get $keys))
   )
 
@@ -2271,6 +2367,109 @@
       (i32.add (local.get $sy) (local.get $my)) (i32.const 15) (i32.const 12))
     (call $hline (i32.add (local.get $sx) (local.get $mx))
       (i32.add (i32.add (local.get $sy) (local.get $my)) (i32.const 9)) (i32.const 15) (i32.const 12))
+    (call $vline (i32.add (local.get $sx) (local.get $mx))
+      (i32.add (local.get $sy) (local.get $my)) (i32.const 10) (i32.const 12))
+    (call $vline (i32.add (i32.add (local.get $sx) (local.get $mx)) (i32.const 14))
+      (i32.add (local.get $sy) (local.get $my)) (i32.const 10) (i32.const 12))
+  )
+
+  ;; ============ UNIT SEPARATION ============
+  ;; Push overlapping units apart so they don't stack
+  (func $separate_units
+    (local $i i32)
+    (local $j i32)
+    (local $addr_i i32)
+    (local $addr_j i32)
+    (local $ix i32)
+    (local $iy i32)
+    (local $jx i32)
+    (local $jy i32)
+    (local $dx i32)
+    (local $dy i32)
+
+    (local.set $i (i32.const 0))
+    (block $brk_i
+      (loop $lp_i
+        (br_if $brk_i (i32.ge_s (local.get $i) (i32.const 64)))
+        (local.set $addr_i (i32.add (i32.const 0x14400) (i32.mul (local.get $i) (i32.const 32))))
+        (if (i32.and
+              (i32.load8_u (local.get $addr_i))
+              (i32.ne (i32.load8_u (i32.add (local.get $addr_i) (i32.const 3))) (i32.const 4))) ;; active & not dead
+          (then
+            (local.set $ix (i32.load16_s (i32.add (local.get $addr_i) (i32.const 4))))
+            (local.set $iy (i32.load16_s (i32.add (local.get $addr_i) (i32.const 6))))
+
+            (local.set $j (i32.add (local.get $i) (i32.const 1)))
+            (block $brk_j
+              (loop $lp_j
+                (br_if $brk_j (i32.ge_s (local.get $j) (i32.const 64)))
+                (local.set $addr_j (i32.add (i32.const 0x14400) (i32.mul (local.get $j) (i32.const 32))))
+                (if (i32.and
+                      (i32.load8_u (local.get $addr_j))
+                      (i32.ne (i32.load8_u (i32.add (local.get $addr_j) (i32.const 3))) (i32.const 4)))
+                  (then
+                    (local.set $jx (i32.load16_s (i32.add (local.get $addr_j) (i32.const 4))))
+                    (local.set $jy (i32.load16_s (i32.add (local.get $addr_j) (i32.const 6))))
+                    (local.set $dx (i32.sub (local.get $ix) (local.get $jx)))
+                    (local.set $dy (i32.sub (local.get $iy) (local.get $jy)))
+
+                    ;; If within 12px manhattan distance, push apart
+                    (if (i32.lt_s (i32.add (call $abs (local.get $dx)) (call $abs (local.get $dy))) (i32.const 12))
+                      (then
+                        ;; Push each unit 1px away from the other
+                        ;; If exactly overlapping, push in arbitrary direction
+                        (if (i32.and (i32.eqz (local.get $dx)) (i32.eqz (local.get $dy)))
+                          (then
+                            (local.set $dx (i32.const 1))
+                            (local.set $dy (i32.const 1))
+                          )
+                        )
+                        ;; Push along the larger axis
+                        (if (i32.ge_s (call $abs (local.get $dx)) (call $abs (local.get $dy)))
+                          (then
+                            ;; Push horizontally
+                            (if (i32.gt_s (local.get $dx) (i32.const 0))
+                              (then
+                                (i32.store16 (i32.add (local.get $addr_i) (i32.const 4)) (i32.add (local.get $ix) (i32.const 1)))
+                                (i32.store16 (i32.add (local.get $addr_j) (i32.const 4)) (i32.sub (local.get $jx) (i32.const 1)))
+                              )
+                              (else
+                                (i32.store16 (i32.add (local.get $addr_i) (i32.const 4)) (i32.sub (local.get $ix) (i32.const 1)))
+                                (i32.store16 (i32.add (local.get $addr_j) (i32.const 4)) (i32.add (local.get $jx) (i32.const 1)))
+                              )
+                            )
+                          )
+                          (else
+                            ;; Push vertically
+                            (if (i32.gt_s (local.get $dy) (i32.const 0))
+                              (then
+                                (i32.store16 (i32.add (local.get $addr_i) (i32.const 6)) (i32.add (local.get $iy) (i32.const 1)))
+                                (i32.store16 (i32.add (local.get $addr_j) (i32.const 6)) (i32.sub (local.get $jy) (i32.const 1)))
+                              )
+                              (else
+                                (i32.store16 (i32.add (local.get $addr_i) (i32.const 6)) (i32.sub (local.get $iy) (i32.const 1)))
+                                (i32.store16 (i32.add (local.get $addr_j) (i32.const 6)) (i32.add (local.get $jy) (i32.const 1)))
+                              )
+                            )
+                          )
+                        )
+                        ;; Re-read i position since it may have changed
+                        (local.set $ix (i32.load16_s (i32.add (local.get $addr_i) (i32.const 4))))
+                        (local.set $iy (i32.load16_s (i32.add (local.get $addr_i) (i32.const 6))))
+                      )
+                    )
+                  )
+                )
+                (local.set $j (i32.add (local.get $j) (i32.const 1)))
+                (br $lp_j)
+              )
+            )
+          )
+        )
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp_i)
+      )
+    )
   )
 
   ;; ============ REMOVE DEAD UNITS (cleanup) ============
@@ -2447,6 +2646,7 @@
     ;; Update game logic
     (call $update_units)
     (call $update_ai)
+    (call $separate_units)
     (call $cleanup_dead)
 
     ;; Get camera
@@ -2514,5 +2714,30 @@
 
     ;; Draw UI on top
     (call $draw_ui)
+
+    ;; Draw drag selection box if dragging
+    (if (i32.load8_u (i32.const 0x1A958))
+      (then
+        (local.set $sx (i32.sub (i32.load16_s (i32.const 0x1A950)) (local.get $cam_x)))
+        (local.set $sy (i32.sub (i32.load16_s (i32.const 0x1A952)) (local.get $cam_y)))
+        ;; Current mouse screen pos
+        (local.set $tx (i32.or
+          (i32.load8_u (i32.const 4))
+          (i32.shl (i32.load8_u (i32.const 5)) (i32.const 8))))
+        (local.set $ty (i32.or
+          (i32.load8_u (i32.const 6))
+          (i32.shl (i32.load8_u (i32.const 7)) (i32.const 8))))
+        ;; Draw box: top, bottom hlines and left, right vlines
+        (local.set $start_tx (call $min (local.get $sx) (local.get $tx)))
+        (local.set $start_ty (call $min (local.get $sy) (local.get $ty)))
+        (local.set $end_tx (i32.add (call $abs (i32.sub (local.get $tx) (local.get $sx))) (i32.const 1)))
+        (local.set $end_ty (i32.add (call $abs (i32.sub (local.get $ty) (local.get $sy))) (i32.const 1)))
+        (call $hline (local.get $start_tx) (local.get $start_ty) (local.get $end_tx) (i32.const 27))
+        (call $hline (local.get $start_tx) (i32.add (local.get $start_ty) (i32.sub (local.get $end_ty) (i32.const 1))) (local.get $end_tx) (i32.const 27))
+        (call $vline (local.get $start_tx) (local.get $start_ty) (local.get $end_ty) (i32.const 27))
+        (call $vline (i32.add (local.get $start_tx) (i32.sub (local.get $end_tx) (i32.const 1))) (local.get $start_ty) (local.get $end_ty) (i32.const 27))
+      )
+    )
+
   )
 )
