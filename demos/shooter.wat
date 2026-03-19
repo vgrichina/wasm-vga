@@ -1014,6 +1014,63 @@
       (br $lp)))
   )
 
+  ;; Enemy ships vs player
+  (func $check_ship_player
+    (local $i i32) (local $addr i32) (local $ex i32) (local $ey i32)
+    (local $px i32) (local $py i32) (local $lives i32)
+    ;; skip if invulnerable
+    (if (i32.gt_u (i32.load8_u (i32.const 0x10365)) (i32.const 0)) (then (return)))
+    (local.set $px (i32.load16_u (i32.const 0x10360)))
+    (local.set $py (i32.load16_u (i32.const 0x10362)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+      (local.set $addr (i32.add (i32.const 0x10470) (i32.mul (local.get $i) (i32.const 16))))
+      (if (i32.load8_u (local.get $addr))
+        (then
+          (local.set $ex (i32.load16_u (i32.add (local.get $addr) (i32.const 4))))
+          (local.set $ey (i32.load16_u (i32.add (local.get $addr) (i32.const 6))))
+          ;; AABB: enemy ~12x10 vs player ~16x10
+          (if (i32.and
+                (i32.and (i32.lt_s (i32.sub (local.get $ex) (local.get $px)) (i32.const 14))
+                         (i32.gt_s (i32.sub (local.get $ex) (local.get $px)) (i32.const -14)))
+                (i32.and (i32.lt_s (i32.sub (local.get $ey) (local.get $py)) (i32.const 10))
+                         (i32.gt_s (i32.sub (local.get $ey) (local.get $py)) (i32.const -10))))
+            (then
+              ;; destroy enemy
+              (i32.store8 (local.get $addr) (i32.const 0))
+              ;; explosion on both
+              (call $spawn_explosion (local.get $ex) (local.get $ey) (i32.const 32))
+              (call $spawn_explosion (local.get $px) (local.get $py) (i32.const 48))
+              (call $spawn_explosion (i32.sub (local.get $px) (i32.const 12)) (i32.sub (local.get $py) (i32.const 10)) (i32.const 16))
+              (call $spawn_explosion (i32.add (local.get $px) (i32.const 8)) (i32.add (local.get $py) (i32.const 10)) (i32.const 16))
+              (call $play_sfx (i32.const 3))
+              (call $play_sfx (i32.const 1))
+              (i32.store8 (i32.const 0x10365) (i32.const 90))  ;; invuln 1.5s
+              (i32.store8 (i32.const 0x10354) (i32.const 20))  ;; screen shake
+              (i32.store8 (i32.const 0x10355) (i32.rem_u (i32.and (call $rand) (i32.const 0xFF)) (i32.const 3)))
+              ;; lose life
+              (local.set $lives (i32.load8_u (i32.const 0x10348)))
+              (if (i32.gt_u (local.get $lives) (i32.const 0))
+                (then
+                  (i32.store8 (i32.const 0x10348) (i32.sub (local.get $lives) (i32.const 1)))
+                  (i32.store8 (i32.const 0x10349) (i32.const 0))  ;; reset power
+                )
+                (else
+                  (call $music (i32.const 0x12600))
+                  (i32.store8 (i32.const 0x10340) (i32.const 6))
+                  (i32.store16 (i32.const 0x10342) (i32.const 0))
+                )
+              )
+              (return)
+            )
+          )
+        )
+      )
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+  )
+
   ;; Powerup vs player
   (func $check_powerup_player
     (local $i i32) (local $addr i32) (local $ux i32) (local $uy i32)
@@ -1590,6 +1647,7 @@
     (call $check_bullet_enemy)
     (call $check_bullet_boss)
     (call $check_enemy_player)
+    (call $check_ship_player)
     (call $check_powerup_player)
     ;; draw everything
     (call $draw_enemies)
