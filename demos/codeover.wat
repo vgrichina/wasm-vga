@@ -1122,8 +1122,8 @@
       (i32.const 25)) (i32.const 4)))
     (local.set $lz128 (i32.const 180))
 
-    ;; Bounding box: dy -65..+47, dx -40..+40
-    (local.set $dy (i32.const -65))
+    ;; Bounding box: dy -72..+47, dx -40..+40
+    (local.set $dy (i32.const -72))
     (block $yd (loop $yl
       (br_if $yd (i32.gt_s (local.get $dy) (i32.const 47)))
       (local.set $dx (i32.const -40))
@@ -1131,7 +1131,7 @@
         (br_if $xd (i32.gt_s (local.get $dx) (i32.const 40)))
 
         ;; ---- Shape test via radius profile table at 0x10A00 ----
-        ;; 91 entries for dy=-45..+45, each byte = max rx at that height
+        ;; 91 entries for dy=-45..+45 (index = dy+45), each byte = max rx at that height
         (local.set $in_body (i32.const 0))
         (local.set $rx (i32.const 0))
 
@@ -1396,10 +1396,10 @@
                 (local.set $dot_spec (i32.shr_u (i32.mul (local.get $dot_spec) (local.get $dot_spec)) (i32.const 8)))
                 (local.set $dot_spec (i32.shr_u (i32.mul (local.get $dot_spec) (local.get $dot_spec)) (i32.const 8)))
 
-                ;; Calyx zone: body pixels dy < -40 → green
+                ;; Calyx zone: body pixels dy < -44 → green (just 1 row)
                 (if (i32.and
                       (i32.gt_s (local.get $in_body) (i32.const 0))
-                      (i32.lt_s (local.get $dy) (i32.const -40)))
+                      (i32.lt_s (local.get $dy) (i32.const -44)))
                   (then
                     (if (i32.eqz (local.get $in_leaf))
                       (then (local.set $in_leaf (i32.const 2))))))
@@ -1893,18 +1893,20 @@
   ;; section 0→0x20000, 1→0x20100, 2→0x20200, 3→0x20300, 4→0x20400
   (data (i32.const 0x10900) "\00\00\02\00\00\01\02\00\00\02\02\00\00\03\02\00\00\04\02\00")
 
-  ;; Strawberry radius profile: 81 bytes at 0x10A00 (dy=-40..+40)
-  ;; Asymmetric ellipse: center at i=25, top semi-axis=25, bottom semi-axis=55.
-  ;; Elongated egg shape — widest near top, gentle rounded taper at bottom.
+  ;; Strawberry radius profile: 91 bytes at 0x10A00 (dy=-45..+45)
+  ;; Traced from photo reference, smoothed monotonic.
+  ;; Widest belt at dy=-24..-13, smooth taper to point at bottom.
   ;; i: 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19
-  ;; r: 0 11 15 18 21 23 25 26 28 29 30 31 32 33 34 35 35 36 36 37
+  ;; r: 0 15 24 27 28 29 30 31 32 33 34 34 35 35 36 36 36 37 37 37
   ;; i:20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39
-  ;; r:37 38 38 38 38 38 38 38 38 38 38 38 38 38 37 37 37 37 37 37
+  ;; r:37 38 38 38 38 38 38 38 38 38 38 38 38 37 37 37 37 37 36 36
   ;; i:40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59
-  ;; r:37 36 36 36 36 35 35 35 35 34 34 33 33 33 32 32 31 31 30 30
-  ;; i:60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80
-  ;; r:29 29 28 27 27 26 25 25 24 23 22 21 20 19 17 16 14 12 10  7  0
-  (data (i32.const 0x10A00) "\00\0b\0f\12\15\17\19\1a\1c\1d\1e\1f\20\21\22\23\23\24\24\25\25\26\26\26\26\26\26\26\26\26\26\26\26\26\25\25\25\25\25\25\25\24\24\24\24\23\23\23\23\22\22\21\21\21\20\20\1f\1f\1e\1e\1d\1d\1c\1b\1b\1a\19\19\18\17\16\15\14\13\11\10\0e\0c\0a\07\00")
+  ;; r:36 36 35 34 34 34 34 34 33 32 32 31 31 30 30 30 29 29 28 27
+  ;; i:60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79
+  ;; r:27 26 25 25 24 23 23 22 21 21 20 19 19 18 17 17 16 15 15 14
+  ;; i:80 81 82 83 84 85 86 87 88 89 90
+  ;; r:13 12 12 10  9  8  7  6  4  2  0
+  (data (i32.const 0x10A00) "\00\0f\18\1b\1c\1d\1e\1f\20\21\22\22\23\23\24\24\24\25\25\25\25\26\26\26\26\26\26\26\26\26\26\26\26\25\25\25\25\25\24\24\24\24\23\22\22\22\22\22\21\20\20\1f\1f\1e\1e\1e\1d\1d\1c\1b\1b\1a\19\19\18\17\17\16\15\15\14\13\13\12\11\11\10\0f\0f\0e\0d\0c\0c\0a\09\08\07\06\04\02\00")
 
   ;; Strawberry seed positions: 26 pairs of (dx:i8, dy:i8) in screen-space
   ;; Stored at 0x10B00. Read with i32.load8_s for signed values.
