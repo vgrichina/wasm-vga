@@ -108,7 +108,19 @@
     cursor: pointer;
     transition: border-color 0.2s, color 0.2s;
   }
-  #fs-btn:hover, #info-btn:hover { border-color: var(--accent-dim); color: var(--text); }
+  #fs-btn:hover, #info-btn:hover, #src-btn:hover { border-color: var(--accent-dim); color: var(--text); }
+  #src-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 7px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+  }
   #info-btn {
     background: none;
     border: 1px solid var(--border);
@@ -260,6 +272,77 @@
     }
   }
 
+  /* Source viewer modal */
+  #src-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: rgba(0,0,0,0.85);
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+  @media (max-width: 680px) {
+    #src-modal { padding: 4px; }
+    #src-box { max-height: 95vh; max-width: 100%; border-radius: 4px; }
+    #src-content { font-size: 10px; padding: 8px 6px; }
+  }
+  #src-modal.open { display: flex; }
+  #src-box {
+    background: var(--bg);
+    border: 1px solid var(--border-hi);
+    border-radius: 6px;
+    width: 100%;
+    max-width: 720px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 0 60px rgba(0,0,0,0.8), 0 0 40px var(--glow);
+  }
+  #src-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+  #src-header .src-title { color: var(--accent); font-weight: 700; }
+  #src-close {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 2px 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  #src-close:hover { border-color: var(--accent-dim); color: var(--text); }
+  #src-content {
+    overflow: auto;
+    padding: 12px;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre;
+    color: var(--text);
+    tab-size: 2;
+    -moz-tab-size: 2;
+  }
+  #src-content .ln {
+    color: var(--text-dim);
+    display: inline-block;
+    width: 4ch;
+    text-align: right;
+    margin-right: 1.5ch;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
   @media (max-width: 680px) {
     .top-bar { flex-wrap: wrap; gap: 8px; }
     .top-bar .title { font-size: 15px; }
@@ -291,6 +374,7 @@
       <option value="codeover">codeover</option>
     </select>
     <button id="fs-btn" onclick="toggleFullscreen()" title="Fullscreen">[&nbsp;]</button>
+    <button id="src-btn" onclick="toggleSource()" title="View Source">&lt;/&gt;</button>
     <a href="/info.html" id="info-btn" title="About">?</a>
   </div>
 </div>
@@ -311,6 +395,15 @@
     </div>
   </div>
 </div>
+<div id="src-modal" onclick="if(event.target===this)toggleSource()">
+  <div id="src-box">
+    <div id="src-header">
+      <span>┌─ <span class="src-title" id="src-filename">source.wat</span> ─────────────────────┐</span>
+      <button id="src-close" onclick="toggleSource()">[ESC]</button>
+    </div>
+    <div id="src-content"></div>
+  </div>
+</div>
 <div class="bottom-bar">
   <div id="info">fps: --</div>
   <div class="demo-desc">WAT by Claude Code. 320x200 / 256 colors / wabt.js. <a href="/info.html" style="color:var(--text-dim);text-decoration:underline">More info</a></div>
@@ -325,6 +418,36 @@ function toggleFullscreen() {
     (document.exitFullscreen || document.webkitExitFullscreen).call(document);
   }
 }
+function toggleSource() {
+  const modal = document.getElementById('src-modal');
+  if (modal.classList.contains('open')) {
+    modal.classList.remove('open');
+    return;
+  }
+  const name = document.getElementById('demo').value;
+  const file = 'demos/' + name + '.wat';
+  document.getElementById('src-filename').textContent = file;
+  document.getElementById('src-content').textContent = 'loading...';
+  modal.classList.add('open');
+  fetch(file).then(r => r.text()).then(src => {
+    const el = document.getElementById('src-content');
+    el.innerHTML = '';
+    src.split('\n').forEach((line, i) => {
+      const ln = document.createElement('span');
+      ln.className = 'ln';
+      ln.textContent = i + 1;
+      const text = document.createTextNode(line + '\n');
+      el.appendChild(ln);
+      el.appendChild(text);
+    });
+  });
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.getElementById('src-modal').classList.contains('open')) {
+    toggleSource();
+    e.stopPropagation();
+  }
+});
 </script>
 <script src="https://cdn.jsdelivr.net/npm/wabt@1.0.36/index.js"></script>
 <script src="harness.js"></script>
