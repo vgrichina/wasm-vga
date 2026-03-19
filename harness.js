@@ -25,6 +25,108 @@ let memory, memU8, memU32, wasmInstance;
 let animId = null;
 let frameCount = 0, lastFpsTime = 0;
 
+// --- Sound engine ---
+let audioCtx = null, masterGain = null, isMuted = false;
+let noiseBuffer = null;
+let musicInterval = null, musicStep = 0;
+
+function ensureAudio() {
+  if (audioCtx) { if (audioCtx.state === 'suspended') audioCtx.resume(); return; }
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  masterGain = audioCtx.createGain();
+  masterGain.connect(audioCtx.destination);
+  // pre-generate noise buffer
+  noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate / 5, audioCtx.sampleRate);
+  const data = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+}
+
+function playNoise(duration, vol) {
+  const src = audioCtx.createBufferSource();
+  src.buffer = noiseBuffer;
+  const g = audioCtx.createGain();
+  const t = audioCtx.currentTime;
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + duration);
+  src.connect(g); g.connect(masterGain);
+  src.start(t); src.stop(t + duration);
+}
+
+function playTone(type, freq, duration, vol, freqEnd) {
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  const t = audioCtx.currentTime;
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t);
+  if (freqEnd) osc.frequency.exponentialRampToValueAtTime(freqEnd, t + duration);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + duration);
+  osc.connect(g); g.connect(masterGain);
+  osc.start(t); osc.stop(t + duration);
+}
+
+function sfx(id) {
+  ensureAudio();
+  switch (id) {
+    case 0: // laser
+      playTone('square', 880, 0.08, 0.15, 220);
+      break;
+    case 1: // explosion
+      playNoise(0.12, 0.3);
+      playTone('sine', 60, 0.15, 0.2);
+      break;
+    case 2: // pickup
+      playTone('sine', 523, 0.05, 0.15);
+      setTimeout(() => { if (audioCtx) playTone('sine', 659, 0.05, 0.15); }, 50);
+      setTimeout(() => { if (audioCtx) playTone('sine', 784, 0.08, 0.15); }, 100);
+      break;
+    case 3: // hit
+      playNoise(0.04, 0.25);
+      playTone('square', 200, 0.06, 0.2, 80);
+      break;
+    case 4: // boss
+      playTone('sawtooth', 110, 0.2, 0.2);
+      break;
+  }
+}
+
+function note(oscType, freq, durMs, vol255) {
+  ensureAudio();
+  const types = ['sine', 'square', 'sawtooth', 'triangle'];
+  playTone(types[oscType & 3] || 'sine', freq || 440, (durMs || 100) / 1000, (vol255 || 128) / 255 * 0.3);
+}
+
+// BGM pattern — freqs high enough for phone speakers
+const bgmBass = [131, 0, 131, 0, 196, 0, 196, 0, 220, 0, 220, 0, 175, 0, 175, 0]; // C3 G3 A3 F3
+const bgmArp = [523, 659, 784, 1047, 784, 659, 523, 392]; // C5 E5 G5 C6 G4
+
+function music(cmd) {
+  console.log('music() called with cmd=' + cmd, 'audioCtx=' + !!audioCtx, 'musicInterval=' + !!musicInterval);
+  ensureAudio();
+  if (cmd === 0) { if (musicInterval) { clearInterval(musicInterval); musicInterval = null; } return; }
+  if (musicInterval) return; // already playing
+  musicStep = 0;
+  // play an immediate note to confirm music started
+  playTone('square', 440, 0.2, 0.3);
+  musicInterval = setInterval(() => {
+    if (!audioCtx || isMuted) return;
+    const bassFreq = bgmBass[musicStep % bgmBass.length];
+    if (bassFreq) playTone('square', bassFreq, 0.12, 0.25);
+    const arpFreq = bgmArp[musicStep % bgmArp.length];
+    if (arpFreq) playTone('triangle', arpFreq, 0.1, 0.2);
+    musicStep++;
+  }, 125);
+  console.log('music started, interval=' + musicInterval);
+}
+
+function toggleMute() {
+  isMuted = !isMuted;
+  if (masterGain) masterGain.gain.value = isMuted ? 0 : 1;
+  if (isMuted && musicInterval) { clearInterval(musicInterval); musicInterval = null; }
+  const btn = document.getElementById('mute-btn');
+  if (btn) btn.textContent = isMuted ? 'OFF' : 'SND';
+}
+
 // default VGA palette (simplified — 6-bit VGA scaled to 8-bit)
 function defaultPalette() {
   const pal = new Uint8Array(768);
@@ -111,7 +213,7 @@ canvas.addEventListener('mousemove', (e) => {
   setMousePos((e.clientX - rect.left) / rect.width * WIDTH,
               (e.clientY - rect.top) / rect.height * HEIGHT);
 });
-canvas.addEventListener('mousedown', (e) => { setMouseBtn(e.button, true); canvas.focus(); });
+canvas.addEventListener('mousedown', (e) => { ensureAudio(); setMouseBtn(e.button, true); canvas.focus(); });
 canvas.addEventListener('mouseup', (e) => setMouseBtn(e.button, false));
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -123,7 +225,7 @@ function touchToMouse(e) {
   setMousePos((t.clientX - rect.left) / rect.width * WIDTH,
               (t.clientY - rect.top) / rect.height * HEIGHT);
 }
-canvas.addEventListener('touchstart', (e) => { e.preventDefault(); touchToMouse(e); setMouseBtn(0, true); }, { passive: false });
+canvas.addEventListener('touchstart', (e) => { e.preventDefault(); ensureAudio(); touchToMouse(e); setMouseBtn(0, true); }, { passive: false });
 canvas.addEventListener('touchmove', (e) => { e.preventDefault(); touchToMouse(e); }, { passive: false });
 canvas.addEventListener('touchend', (e) => { e.preventDefault(); setMouseBtn(0, false); }, { passive: false });
 canvas.addEventListener('touchcancel', () => setMouseBtn(0, false));
@@ -205,8 +307,16 @@ async function loadDemo() {
   // clear framebuffer
   memU8.fill(0, FB_OFFSET, FB_OFFSET + FB_SIZE);
 
+  // stop any playing music from previous demo
+  if (musicInterval) { clearInterval(musicInterval); musicInterval = null; }
+
   const imports = {
-    env: { memory }
+    env: {
+      memory,
+      sfx: (id) => { console.log('sfx wrapper', id); sfx(id); },
+      note: (a,b,c,d) => note(a,b,c,d),
+      music: (cmd) => { console.log('music wrapper', cmd); music(cmd); }
+    }
   };
 
   try {

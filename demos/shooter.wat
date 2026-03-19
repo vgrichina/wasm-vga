@@ -1,5 +1,8 @@
 (module
   (import "env" "memory" (memory 4))
+  (import "env" "sfx" (func $sfx (param i32)))
+  (import "env" "note" (func $note (param i32 i32 i32 i32)))
+  (import "env" "music" (func $music (param i32)))
 
   ;; ============================================================
   ;; STELLAR ASSAULT — Side-scrolling space shooter
@@ -345,14 +348,13 @@
     (local.set $cd (i32.load8_u (i32.const 0x10364)))
     (if (i32.gt_u (local.get $cd) (i32.const 0))
       (then (local.set $cd (i32.sub (local.get $cd) (i32.const 1)))))
-    ;; auto-fire OR click/space to fire
+    ;; click/space to fire
     (if (i32.and (i32.eqz (local.get $cd))
-          (i32.or (i32.or (i32.and (local.get $btn) (i32.const 1))
-                          (i32.and (local.get $keys) (i32.const 16)))  ;; space
-            ;; auto-fire every 8 frames
-            (i32.eqz (i32.and (i32.load (i32.const 0)) (i32.const 7)))))
+          (i32.or (i32.and (local.get $btn) (i32.const 1))
+                  (i32.and (local.get $keys) (i32.const 16))))  ;; space
       (then
         (call $spawn_player_bullet (local.get $px) (local.get $py))
+        (call $sfx (i32.const 0))
         ;; power level 1+ = double shot
         (if (i32.ge_u (i32.load8_u (i32.const 0x10349)) (i32.const 1))
           (then
@@ -861,6 +863,7 @@
                         ;; enemy destroyed
                         (i32.store8 (local.get $eaddr) (i32.const 0))
                         (call $spawn_explosion (local.get $ex) (local.get $ey) (i32.const 12))
+                        (call $sfx (i32.const 1))
                         ;; score: type+1 * 100
                         (local.set $type (i32.load8_u (i32.add (local.get $eaddr) (i32.const 1))))
                         (local.set $score (i32.load (i32.const 0x10344)))
@@ -920,6 +923,7 @@
               (call $spawn_explosion (local.get $px) (local.get $py) (i32.const 32))
               (call $spawn_explosion (local.get $px) (i32.sub (local.get $py) (i32.const 8)) (i32.const 8))
               (call $spawn_explosion (local.get $px) (i32.add (local.get $py) (i32.const 8)) (i32.const 8))
+              (call $sfx (i32.const 3))
               (i32.store8 (i32.const 0x10365) (i32.const 90))  ;; invuln for 1.5s
               (i32.store8 (i32.const 0x10354) (i32.const 12))  ;; bigger shake
               ;; pick a random hit message (0-2) and store index at 0x10355
@@ -934,6 +938,7 @@
                 )
                 (else
                   ;; game over
+                  (call $music (i32.const 0))
                   (i32.store8 (i32.const 0x10340) (i32.const 6))
                   (i32.store16 (i32.const 0x10342) (i32.const 0))
                 )
@@ -968,6 +973,7 @@
                          (i32.gt_s (i32.sub (local.get $uy) (local.get $py)) (i32.const -10))))
             (then
               (i32.store8 (local.get $addr) (i32.const 0))
+              (call $sfx (i32.const 2))
               ;; power up
               (local.set $pl (i32.load8_u (i32.const 0x10349)))
               (if (i32.lt_u (local.get $pl) (i32.const 3))
@@ -1013,6 +1019,8 @@
               (if (i32.le_s (local.get $hp) (i32.const 0))
                 (then
                   ;; boss destroyed!
+                  (call $sfx (i32.const 4))
+                  (call $sfx (i32.const 1))
                   (i32.store8 (i32.const 0x1034C) (i32.const 0))
                   (call $spawn_explosion (local.get $boss_x) (local.get $boss_y) (i32.const 30))
                   (call $spawn_explosion (i32.add (local.get $boss_x) (i32.const 10)) (i32.sub (local.get $boss_y) (i32.const 8)) (i32.const 20))
@@ -1020,6 +1028,7 @@
                   (i32.store (i32.const 0x10344) (i32.add (i32.load (i32.const 0x10344)) (i32.const 5000)))
                   (i32.store8 (i32.const 0x10354) (i32.const 15))  ;; big shake
                   ;; go to game over (victory)
+                  (call $music (i32.const 0))
                   (i32.store8 (i32.const 0x10340) (i32.const 6))
                   (i32.store16 (i32.const 0x10342) (i32.const 0))
                 )
@@ -1477,6 +1486,7 @@
           (i32.gt_u (local.get $timer) (i32.const 600)))
       (then
         ;; start gameplay
+        (call $music (i32.const 1))
         (i32.store8 (i32.const 0x10340) (i32.const 5))
         (i32.store16 (i32.const 0x10342) (i32.const 0))
         ;; init player
@@ -1848,6 +1858,7 @@
               (i32.and (i32.load8_u (i32.const 0x10)) (i32.const 16)))  ;; space key
           (then
             ;; jump to gameplay
+            (call $music (i32.const 1))
             (i32.store8 (i32.const 0x10340) (i32.const 5))
             (i32.store16 (i32.const 0x10342) (i32.const 0))
             (i32.store16 (i32.const 0x10360) (i32.const 40))
