@@ -23,7 +23,7 @@
   ;;   0x38008 - last_section (4 bytes)
   ;;   0x3800C - prev_input (4 bytes)
   ;;   0x38010 - rain columns: 40 x 4 = 160 bytes
-  ;;   0x38100 - fire buffer: 320x40 = 12800 bytes (ends 0x3B500)
+  ;;   0x38100 - fire buffer: 320x80 = 25600 bytes (ends 0x3E500)
   ;;
   ;; Section timing (elapsed_ms % 52000):
   ;;   0     -  8000  Section 0: Code Rain
@@ -459,21 +459,21 @@
     (call $draw_tombstone (i32.const 275) (i32.const 28) (i32.const 62)
       (local.get $rise) (i32.const 0x108F6) (i32.const 2))
 
-    ;; Doom-style fire simulation in buffer at 0x38100 (320×40, rows 0-39 map to y=160-199)
-    ;; Seed bottom row (row 39) with random hot values
+    ;; Doom-style fire simulation in buffer at 0x38100 (320×80, rows 0-79 map to y=120-199)
+    ;; Seed bottom row (row 79) with random hot values
     (local.set $x (i32.const 0))
     (block $sd (loop $sl
       (br_if $sd (i32.ge_u (local.get $x) (i32.const 320)))
-      (i32.store8 (i32.add (i32.const 0x38100) (i32.add (i32.mul (i32.const 39) (i32.const 320)) (local.get $x)))
+      (i32.store8 (i32.add (i32.const 0x38100) (i32.add (i32.mul (i32.const 79) (i32.const 320)) (local.get $x)))
         (i32.rem_u (i32.and (call $rand) (i32.const 127)) (i32.const 86)))
       (local.set $x (i32.add (local.get $x) (i32.const 1)))
       (br $sl)
     ))
-    ;; Propagate fire upward: for each pixel (x, row) where row < 39
+    ;; Propagate fire upward: for each pixel (x, row) where row < 79
     ;; new[row][x] = avg(old[row+1][x-1], old[row+1][x], old[row+1][x+1], old[row+2][x]) - decay
     (local.set $y (i32.const 0))
     (block $fd (loop $fl
-      (br_if $fd (i32.ge_u (local.get $y) (i32.const 39)))
+      (br_if $fd (i32.ge_u (local.get $y) (i32.const 79)))
       (local.set $x (i32.const 0))
       (block $fxd (loop $fxl
         (br_if $fxd (i32.ge_u (local.get $x) (i32.const 320)))
@@ -496,8 +496,8 @@
             (i32.add (local.get $heat)
               (i32.load8_u (i32.add (i32.const 0x38100)
                 (i32.add (i32.mul
-                  (select (i32.add (local.get $y) (i32.const 2)) (i32.const 39)
-                    (i32.lt_u (local.get $y) (i32.const 38)))
+                  (select (i32.add (local.get $y) (i32.const 2)) (i32.const 79)
+                    (i32.lt_u (local.get $y) (i32.const 78)))
                   (i32.const 320)) (local.get $x))))))
           (i32.const 2)))
         ;; random decay 0-1
@@ -517,10 +517,10 @@
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $fl)
     ))
-    ;; Overlay fire buffer onto framebuffer where intensity > 10
+    ;; Overlay fire buffer onto framebuffer where intensity > 3
     (local.set $y (i32.const 0))
     (block $od (loop $ol
-      (br_if $od (i32.ge_u (local.get $y) (i32.const 40)))
+      (br_if $od (i32.ge_u (local.get $y) (i32.const 80)))
       (local.set $x (i32.const 0))
       (block $oxd (loop $oxl
         (br_if $oxd (i32.ge_u (local.get $x) (i32.const 320)))
@@ -529,7 +529,7 @@
         (if (i32.gt_u (local.get $heat) (i32.const 3))
           (then
             (i32.store8 (i32.add (i32.const 0x0340)
-              (i32.add (i32.mul (i32.add (local.get $y) (i32.const 160)) (i32.const 320)) (local.get $x)))
+              (i32.add (i32.mul (i32.add (local.get $y) (i32.const 120)) (i32.const 320)) (local.get $x)))
               (local.get $heat))))
         (local.set $x (i32.add (local.get $x) (i32.const 1)))
         (br $oxl)
