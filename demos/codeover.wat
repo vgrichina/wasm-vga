@@ -1496,17 +1496,44 @@
                             (i32.add (local.get $seed_cy) (i32.const 45)))))
                           (if (i32.gt_s (local.get $rx) (i32.const 0))
                             (then
-                              ;; cos for seed angle + rotation
+                              ;; sin/cos for seed angle + rotation
+                              ;; $seed_cx has angle; save sin_val in $sdx temporarily
+                              (local.set $sdx (i32.sub (call $sin_tab (i32.and (i32.add (local.get $seed_cx) (local.get $rot)) (i32.const 255))) (i32.const 128)))
                               (local.set $cos_val (i32.sub (call $sin_tab (i32.and (i32.add (i32.add (local.get $seed_cx) (local.get $rot)) (i32.const 64)) (i32.const 255))) (i32.const 128)))
                               (if (i32.gt_s (local.get $cos_val) (i32.const 0))
                                 (then
-                                  ;; Screen x at 128x
+                                  ;; Screen x at 128x: dx*128 - rx*sin_val
                                   (local.set $norm_sq (i32.sub (i32.mul (local.get $dx) (i32.const 128))
-                                    (i32.mul (local.get $rx)
-                                      (i32.sub (call $sin_tab (i32.and (i32.add (local.get $seed_cx) (local.get $rot)) (i32.const 255))) (i32.const 128)))))
+                                    (i32.mul (local.get $rx) (local.get $sdx))))
                                   ;; sdy at 128x
                                   (local.set $guess (i32.mul (i32.sub (local.get $dy) (local.get $seed_cy)) (i32.const 128)))
-                                  ;; Foreshortened ellipse
+
+                                  ;; Profile slope at seed_cy: slope = profile[idx-1] - profile[idx+1]
+                                  ;; Then tilt: sdx_adj = sdx_128 - (sdy_128 * slope * sin_val) >> 7
+                                  (if (i32.and
+                                        (i32.ge_s (local.get $seed_cy) (i32.const -44))
+                                        (i32.le_s (local.get $seed_cy) (i32.const 44)))
+                                    (then
+                                      ;; slope = (profile[idx+1] - profile[idx-1]) / 2
+                                      ;; = d(rx)/d(dy), positive when widening downward
+                                      ;; cross = sdy_128 * slope * sin_val / 128
+                                      ;; = sdy_128 * (prof[idx+1]-prof[idx-1]) * sin_val / 256
+                                      ;; Reuse $seed_cx for (prof[idx+1] - prof[idx-1])
+                                      (local.set $seed_cx (i32.sub
+                                        (i32.load8_u (i32.add (i32.const 0x10A00) (i32.add (local.get $seed_cy) (i32.const 46))))
+                                        (i32.load8_u (i32.add (i32.const 0x10A00) (i32.add (local.get $seed_cy) (i32.const 44))))))
+                                      ;; sdx_adj = norm_sq - (guess * diff * sin_val) >> 8
+                                      ;; Two steps: (guess * diff) >> 4, then * sin_val >> 4
+                                      (local.set $norm_sq (i32.sub (local.get $norm_sq)
+                                        (i32.shr_s
+                                          (i32.mul
+                                            (i32.shr_s (i32.mul (local.get $guess) (local.get $seed_cx)) (i32.const 4))
+                                            (local.get $sdx))
+                                          (i32.const 4))))
+                                    ))
+
+                                  ;; Tilted foreshortened ellipse:
+                                  ;; (sdx_adj)² + (sdy*cos/128)² < (R*cos/128)²
                                   (local.set $seed_cx (i32.add
                                     (i32.mul (local.get $norm_sq) (local.get $norm_sq))
                                     (i32.mul
@@ -1521,7 +1548,7 @@
                                       (local.set $cos_val (i32.div_u (i32.mul (local.get $cos_val) (i32.const 11)) (i32.const 7)))
                                       (if (i32.lt_u (local.get $seed_cx) (i32.mul (local.get $cos_val) (local.get $cos_val)))
                                         (then (local.set $in_leaf (i32.const 3))))))
-                                  ;; sdx/sdy at 2x for bump mapping
+                                  ;; sdx/sdy at 2x for bump mapping (use adjusted sdx for tilt)
                                   (local.set $sdx (i32.shr_s (local.get $norm_sq) (i32.const 6)))
                                   (local.set $sdy (i32.shr_s (local.get $guess) (i32.const 6)))
                                 ))
