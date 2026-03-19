@@ -33,7 +33,8 @@ async function main() {
   const memU32 = new Uint32Array(memory.buffer);
 
   // Instantiate
-  const { instance } = await WebAssembly.instantiate(buffer, { env: { memory } });
+  const noop = () => {};
+  const { instance } = await WebAssembly.instantiate(buffer, { env: { memory, sfx: noop, note: noop, music: noop } });
 
   // Write initial tick_ms before init (so init can capture start_tick)
   memU32[3] = targetMs; // tick_ms at offset 0x0C

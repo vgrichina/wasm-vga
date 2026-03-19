@@ -1,5 +1,6 @@
 (module
   (import "env" "memory" (memory 4))
+  (import "env" "music" (func $music (param i32)))
 
   ;; "CODING IS OVER" — Multi-section demoscene piece
   ;;
@@ -852,6 +853,32 @@
     ))
   )
 
+  ;; Bilinear sample the text texture at fixed-point coords (tx_fp, ty_fp)
+  ;; Returns 0-256 brightness. Samples 4 neighboring integer texels and blends.
+  (func $text_texel_fp (param $tx_fp i32) (param $ty_fp i32) (result i32)
+    (local $tx i32) (local $ty i32) (local $fx i32) (local $fy i32)
+    (local $s00 i32) (local $s10 i32) (local $s01 i32) (local $s11 i32)
+    (local $top i32) (local $bot i32)
+    (local.set $tx (i32.shr_s (local.get $tx_fp) (i32.const 8)))
+    (local.set $ty (i32.shr_s (local.get $ty_fp) (i32.const 8)))
+    (local.set $fx (i32.and (local.get $tx_fp) (i32.const 255)))
+    (local.set $fy (i32.and (local.get $ty_fp) (i32.const 255)))
+    (local.set $s00 (call $text_texel (local.get $tx) (local.get $ty)))
+    (local.set $s10 (call $text_texel (i32.add (local.get $tx) (i32.const 1)) (local.get $ty)))
+    (local.set $s01 (call $text_texel (local.get $tx) (i32.add (local.get $ty) (i32.const 1))))
+    (local.set $s11 (call $text_texel (i32.add (local.get $tx) (i32.const 1)) (i32.add (local.get $ty) (i32.const 1))))
+    (local.set $top (i32.add
+      (i32.mul (local.get $s00) (i32.sub (i32.const 256) (local.get $fx)))
+      (i32.mul (local.get $s10) (local.get $fx))))
+    (local.set $bot (i32.add
+      (i32.mul (local.get $s01) (i32.sub (i32.const 256) (local.get $fx)))
+      (i32.mul (local.get $s11) (local.get $fx))))
+    (i32.shr_u (i32.add
+      (i32.mul (local.get $top) (i32.sub (i32.const 256) (local.get $fy)))
+      (i32.mul (local.get $bot) (local.get $fy)))
+      (i32.const 8))
+  )
+
   ;; Sample the 224×90 virtual text texture at integer coords (tx, ty)
   ;; Returns 0 or 1. Out-of-bounds and inter-line gaps return 0.
   (func $text_texel (param $tx i32) (param $ty i32) (result i32)
@@ -885,10 +912,9 @@
     (local $right i32) (local $color i32)
     ;; Fixed-point 8-bit fraction
     (local $ty_fp i32) (local $tx_fp i32)
-    (local $ty_i i32) (local $tx_i i32) (local $fy i32)
     (local $bright i32) (local $depth_bright i32)
-    (local $step i32) (local $sum i32)
-    (local $ty2_i i32) (local $ty3_i i32) (local $ty4_i i32) (local $vstep i32)
+    (local $step i32) (local $sum i32) (local $vstep i32)
+    (local $left_fp i32)
 
     (local.set $t (i32.sub (local.get $elapsed) (i32.const 44000)))
     (local.set $tick (i32.shr_u (local.get $t) (i32.const 4)))
@@ -941,10 +967,14 @@
       (if (i32.and (i32.ge_s (local.get $ty_fp) (i32.const 0))
                    (i32.lt_s (local.get $ty_fp) (i32.const 23040)))
         (then
-          ;; screen_half = df * 150 / 169 (wider, nearly fills screen at bottom)
+          ;; left_fp in fixed-point: (160 - df*150/169) * 256
+          ;; = 40960 - df*38400/169  (smooth, no integer rounding jumps)
+          (local.set $left_fp (i32.sub (i32.const 40960)
+            (i32.div_u (i32.mul (local.get $df) (i32.const 38400)) (i32.const 169))))
+          ;; Integer left/right for loop bounds only
+          (local.set $left (i32.shr_s (local.get $left_fp) (i32.const 8)))
           (local.set $screen_half (i32.div_u
             (i32.mul (local.get $df) (i32.const 150)) (i32.const 169)))
-          (local.set $left (i32.sub (i32.const 160) (local.get $screen_half)))
           (local.set $right (i32.add (i32.const 160) (local.get $screen_half)))
           (if (i32.lt_s (local.get $left) (i32.const 0))
             (then (local.set $left (i32.const 0))))
@@ -956,8 +986,7 @@
             (select (i32.div_u (local.get $df) (i32.const 11)) (i32.const 15)
               (i32.lt_u (i32.div_u (local.get $df) (i32.const 11)) (i32.const 15))))
 
-          ;; Horizontal step per pixel in texel-fp: 32384 / df
-          ;; Sample 4 points across this footprint, spaced by step/4
+          ;; Horizontal step per pixel in texel-fp: 253*128/df = 32384/df
           (local.set $step (i32.div_u (i32.const 32384) (local.get $df)))
           ;; Vertical step: approximate as 1280000/(df*df) in fp units
           ;; Clamp to avoid huge values at small df
@@ -965,84 +994,43 @@
           (if (i32.gt_u (local.get $vstep) (i32.const 2560))
             (then (local.set $vstep (i32.const 2560))))  ;; cap at 10 texels
 
-          ;; 4 vertical sample rows at -3/8, -1/8, +1/8, +3/8 of vstep from center
-          (local.set $ty_i  (i32.shr_u (i32.sub (local.get $ty_fp) (i32.shr_u (i32.mul (local.get $vstep) (i32.const 3)) (i32.const 3))) (i32.const 8)))
-          (local.set $ty2_i (i32.shr_u (i32.sub (local.get $ty_fp) (i32.shr_u (local.get $vstep) (i32.const 3))) (i32.const 8)))
-          (local.set $ty3_i (i32.shr_u (i32.add (local.get $ty_fp) (i32.shr_u (local.get $vstep) (i32.const 3))) (i32.const 8)))
-          (local.set $ty4_i (i32.shr_u (i32.add (local.get $ty_fp) (i32.shr_u (i32.mul (local.get $vstep) (i32.const 3)) (i32.const 3))) (i32.const 8)))
-
           ;; Iterate screen columns
           (local.set $sx (local.get $left))
           (block $xd (loop $xl
             (br_if $xd (i32.ge_u (local.get $sx) (local.get $right)))
 
-            ;; text_x fixed-point: (sx - left) * 32384 / df
+            ;; text_x fixed-point using left_fp for smooth horizontal mapping
+            ;; tx_fp = (sx*256 - left_fp) * 253 / (df * 2)  [253/2 = 126.5 exact]
             (local.set $tx_fp (i32.div_u
-              (i32.mul (i32.sub (local.get $sx) (local.get $left)) (i32.const 32384))
-              (local.get $df)))
+              (i32.mul (i32.sub (i32.mul (local.get $sx) (i32.const 256)) (local.get $left_fp)) (i32.const 253))
+              (i32.mul (local.get $df) (i32.const 2))))
 
             ;; Check tx_fp < 224*256 = 57344
             (if (i32.lt_u (local.get $tx_fp) (i32.const 57344))
               (then
-                ;; 4×4 area sampling: 4 horizontal × 4 vertical = 16 samples
-                ;; Horizontal offsets: ±step/8, ±3*step/8
-                ;; Vertical rows: ty_i, ty2_i, ty3_i, ty4_i
-                (local.set $sum (i32.const 0))
-                ;; Row 1 (ty_i)
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.sub (local.get $tx_fp) (i32.shr_u (i32.mul (local.get $step) (i32.const 3)) (i32.const 3))) (i32.const 8))
-                  (local.get $ty_i))))
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.sub (local.get $tx_fp) (i32.shr_u (local.get $step) (i32.const 3))) (i32.const 8))
-                  (local.get $ty_i))))
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.add (local.get $tx_fp) (i32.shr_u (local.get $step) (i32.const 3))) (i32.const 8))
-                  (local.get $ty_i))))
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.add (local.get $tx_fp) (i32.shr_u (i32.mul (local.get $step) (i32.const 3)) (i32.const 3))) (i32.const 8))
-                  (local.get $ty_i))))
-                ;; Row 2 (ty2_i)
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.sub (local.get $tx_fp) (i32.shr_u (i32.mul (local.get $step) (i32.const 3)) (i32.const 3))) (i32.const 8))
-                  (local.get $ty2_i))))
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.sub (local.get $tx_fp) (i32.shr_u (local.get $step) (i32.const 3))) (i32.const 8))
-                  (local.get $ty2_i))))
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.add (local.get $tx_fp) (i32.shr_u (local.get $step) (i32.const 3))) (i32.const 8))
-                  (local.get $ty2_i))))
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.add (local.get $tx_fp) (i32.shr_u (i32.mul (local.get $step) (i32.const 3)) (i32.const 3))) (i32.const 8))
-                  (local.get $ty2_i))))
-                ;; Row 3 (ty3_i)
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.sub (local.get $tx_fp) (i32.shr_u (i32.mul (local.get $step) (i32.const 3)) (i32.const 3))) (i32.const 8))
-                  (local.get $ty3_i))))
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.sub (local.get $tx_fp) (i32.shr_u (local.get $step) (i32.const 3))) (i32.const 8))
-                  (local.get $ty3_i))))
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.add (local.get $tx_fp) (i32.shr_u (local.get $step) (i32.const 3))) (i32.const 8))
-                  (local.get $ty3_i))))
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.add (local.get $tx_fp) (i32.shr_u (i32.mul (local.get $step) (i32.const 3)) (i32.const 3))) (i32.const 8))
-                  (local.get $ty3_i))))
-                ;; Row 4 (ty4_i)
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.sub (local.get $tx_fp) (i32.shr_u (i32.mul (local.get $step) (i32.const 3)) (i32.const 3))) (i32.const 8))
-                  (local.get $ty4_i))))
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.sub (local.get $tx_fp) (i32.shr_u (local.get $step) (i32.const 3))) (i32.const 8))
-                  (local.get $ty4_i))))
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.add (local.get $tx_fp) (i32.shr_u (local.get $step) (i32.const 3))) (i32.const 8))
-                  (local.get $ty4_i))))
-                (local.set $sum (i32.add (local.get $sum) (call $text_texel
-                  (i32.shr_u (i32.add (local.get $tx_fp) (i32.shr_u (i32.mul (local.get $step) (i32.const 3)) (i32.const 3))) (i32.const 8))
-                  (local.get $ty4_i))))
-
-                ;; sum is 0-16. Map to brightness: bright = sum * 16 (0-256)
-                (local.set $bright (i32.mul (local.get $sum) (i32.const 16)))
+                ;; Adaptive sampling: single bilinear for close text (step < 256),
+                ;; 2×2 area of bilinears for distant text (step >= 256)
+                (if (i32.lt_u (local.get $step) (i32.const 256))
+                  (then
+                    ;; Close text: pixel < 1 texel, pure bilinear
+                    (local.set $bright (call $text_texel_fp
+                      (local.get $tx_fp) (local.get $ty_fp))))
+                  (else
+                    ;; Distant text: pixel covers multiple texels, area sample
+                    (local.set $sum (i32.const 0))
+                    (local.set $sum (i32.add (local.get $sum) (call $text_texel_fp
+                      (i32.sub (local.get $tx_fp) (i32.shr_u (local.get $step) (i32.const 2)))
+                      (i32.sub (local.get $ty_fp) (i32.shr_u (local.get $vstep) (i32.const 2))))))
+                    (local.set $sum (i32.add (local.get $sum) (call $text_texel_fp
+                      (i32.add (local.get $tx_fp) (i32.shr_u (local.get $step) (i32.const 2)))
+                      (i32.sub (local.get $ty_fp) (i32.shr_u (local.get $vstep) (i32.const 2))))))
+                    (local.set $sum (i32.add (local.get $sum) (call $text_texel_fp
+                      (i32.sub (local.get $tx_fp) (i32.shr_u (local.get $step) (i32.const 2)))
+                      (i32.add (local.get $ty_fp) (i32.shr_u (local.get $vstep) (i32.const 2))))))
+                    (local.set $sum (i32.add (local.get $sum) (call $text_texel_fp
+                      (i32.add (local.get $tx_fp) (i32.shr_u (local.get $step) (i32.const 2)))
+                      (i32.add (local.get $ty_fp) (i32.shr_u (local.get $vstep) (i32.const 2))))))
+                    (local.set $bright (i32.shr_u (local.get $sum) (i32.const 2)))))
 
                 ;; Map to palette 240-255 (240=bg, 255=white)
                 ;; color = 240 + (bright * depth_bright) >> 8
@@ -1382,6 +1370,8 @@
         (if (i32.eq (local.get $section) (i32.const 3)) (then (call $pal_plasma)))
         (if (i32.eq (local.get $section) (i32.const 4)) (then (call $pal_scroll)))
         (if (i32.eq (local.get $section) (i32.const 5)) (then (call $pal_berrry)))
+        ;; start music: section 0→pattern 5, section 1→pattern 6, etc.
+        (call $music (i32.add (local.get $section) (i32.const 5)))
       )
     )
 
