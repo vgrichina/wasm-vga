@@ -86,14 +86,24 @@ function toggleRecord() {
 }
 
 function ensureAudio() {
-  if (audioCtx) { if (audioCtx.state === 'suspended') audioCtx.resume(); return; }
+  if (audioCtx) {
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().then(() => {
+        // re-start music that was requested while suspended
+        if (currentMusicAddr && !musicInterval && !isMuted) music(currentMusicAddr);
+      });
+    }
+    return audioCtx.state === 'running';
+  }
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   masterGain = audioCtx.createGain();
   masterGain.connect(audioCtx.destination);
+  if (isMuted) masterGain.gain.value = 0;
   // pre-generate noise buffer
   noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate / 5, audioCtx.sampleRate);
   const data = noiseBuffer.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  return audioCtx.state === 'running';
 }
 
 function playNoise(duration, vol) {
@@ -135,7 +145,7 @@ function playTone(type, freq, duration, vol, freqEnd) {
 const midiToFreq = n => n ? 440 * Math.pow(2, (n - 69) / 12) : 0;
 
 function sfx(addr) {
-  ensureAudio();
+  if (!ensureAudio()) return;
   if (!addr || !memU8) return;
   const numVoices = Math.min(memU8[addr], 8);
   for (let v = 0; v < numVoices; v++) {
@@ -160,7 +170,7 @@ function sfx(addr) {
 }
 
 function note(oscType, freq, durMs, vol255) {
-  ensureAudio();
+  if (!ensureAudio()) return;
   const types = ['sine', 'square', 'sawtooth', 'triangle'];
   playTone(types[oscType & 3] || 'sine', freq || 440, (durMs || 100) / 1000, (vol255 || 128) / 255 * 0.3);
 }
@@ -178,9 +188,9 @@ let currentMusicAddr = 0;
 const oscTypes = ['sine', 'square', 'sawtooth', 'triangle'];
 
 function music(addr) {
-  ensureAudio();
-  if (musicInterval) { clearInterval(musicInterval); musicInterval = null; }
   currentMusicAddr = addr;
+  if (!ensureAudio()) return;
+  if (musicInterval) { clearInterval(musicInterval); musicInterval = null; }
   if (addr === 0 || !memU8) return;
   // read pattern header from WASM memory
   const bpm = memU8[addr] | (memU8[addr + 1] << 8);
@@ -197,8 +207,10 @@ function music(addr) {
       noteOff: addr + 16 + t * steps,
     });
   }
-  musicStep = 0;
   const interval = 60000 / bpm / 4;
+  // sync to elapsed demo time so late-starting music is in phase
+  const tickMs = memU8 ? (memU8[0x0C] | (memU8[0x0D] << 8) | (memU8[0x0E] << 16) | (memU8[0x0F] << 24)) : 0;
+  musicStep = tickMs > 0 ? Math.floor(tickMs / interval) : 0;
   musicInterval = setInterval(() => {
     if (!audioCtx || isMuted || !memU8) return;
     const s = musicStep % steps;
