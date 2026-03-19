@@ -415,6 +415,52 @@
     )
   )
 
+  ;; Place an ellipse of given tile type on the map
+  (func $place_ellipse (param $cx i32) (param $cy i32) (param $rx i32) (param $ry i32) (param $tile i32)
+    (local $x i32)
+    (local $y i32)
+    (local $dx i32)
+    (local $dy i32)
+    (local $addr i32)
+    (local.set $y (i32.sub (local.get $cy) (local.get $ry)))
+    (block $brk_y
+      (loop $lp_y
+        (br_if $brk_y (i32.gt_s (local.get $y) (i32.add (local.get $cy) (local.get $ry))))
+        (local.set $x (i32.sub (local.get $cx) (local.get $rx)))
+        (block $brk_x
+          (loop $lp_x
+            (br_if $brk_x (i32.gt_s (local.get $x) (i32.add (local.get $cx) (local.get $rx))))
+            (if (i32.and
+                  (i32.and (i32.ge_s (local.get $x) (i32.const 0)) (i32.lt_s (local.get $x) (i32.const 128)))
+                  (i32.and (i32.ge_s (local.get $y) (i32.const 0)) (i32.lt_s (local.get $y) (i32.const 128))))
+              (then
+                ;; Check if inside ellipse: (dx/rx)^2 + (dy/ry)^2 <= 1
+                ;; Multiply out: dx*dx*ry*ry + dy*dy*rx*rx <= rx*rx*ry*ry
+                (local.set $dx (i32.sub (local.get $x) (local.get $cx)))
+                (local.set $dy (i32.sub (local.get $y) (local.get $cy)))
+                (if (i32.le_s
+                      (i32.add
+                        (i32.mul (i32.mul (local.get $dx) (local.get $dx)) (i32.mul (local.get $ry) (local.get $ry)))
+                        (i32.mul (i32.mul (local.get $dy) (local.get $dy)) (i32.mul (local.get $rx) (local.get $rx))))
+                      (i32.mul (i32.mul (local.get $rx) (local.get $rx)) (i32.mul (local.get $ry) (local.get $ry))))
+                  (then
+                    (local.set $addr (i32.add (i32.const 0x10400)
+                      (i32.add (i32.mul (local.get $y) (i32.const 128)) (local.get $x))))
+                    (i32.store8 (local.get $addr) (local.get $tile))
+                  )
+                )
+              )
+            )
+            (local.set $x (i32.add (local.get $x) (i32.const 1)))
+            (br $lp_x)
+          )
+        )
+        (local.set $y (i32.add (local.get $y) (i32.const 1)))
+        (br $lp_y)
+      )
+    )
+  )
+
   ;; ============ MAP GENERATION ============
   (func $generate_map
     (local $x i32)
@@ -461,54 +507,76 @@
       )
     )
 
-    ;; Add water lake (center-ish)
-    (local.set $cx (i32.const 64))
-    (local.set $cy (i32.const 60))
-    (local.set $y (i32.const 50))
-    (block $brk_w1
-      (loop $lp_w1
-        (br_if $brk_w1 (i32.ge_s (local.get $y) (i32.const 72)))
-        (local.set $x (i32.const 54))
-        (block $brk_w2
-          (loop $lp_w2
-            (br_if $brk_w2 (i32.ge_s (local.get $x) (i32.const 76)))
-            (local.set $dx (i32.sub (local.get $x) (local.get $cx)))
-            (local.set $dy (i32.sub (local.get $y) (local.get $cy)))
-            (local.set $dist (i32.add
-              (i32.mul (local.get $dx) (local.get $dx))
-              (i32.mul (local.get $dy) (local.get $dy))))
-            (if (i32.lt_s (local.get $dist) (i32.const 80))
+    ;; === MOUNTAIN RANGE (stone=6) across center, diagonal NW-SE ===
+    ;; Creates a natural barrier with gaps for choke points
+    (local.set $y (i32.const 35))
+    (block $mt_brk
+      (loop $mt_lp
+        (br_if $mt_brk (i32.ge_s (local.get $y) (i32.const 95)))
+        ;; Mountain center follows diagonal: x = 64 + (y-64)*0.5 with noise
+        (local.set $cx (i32.add
+          (i32.add (i32.const 55) (i32.shr_s (i32.sub (local.get $y) (i32.const 64)) (i32.const 1)))
+          (i32.sub (i32.rem_u (call $rng) (i32.const 5)) (i32.const 2))))
+        ;; Width varies: thicker in middle, thinner at edges
+        (local.set $dist (call $abs (i32.sub (local.get $y) (i32.const 64))))
+        (local.set $r (i32.sub (i32.const 6) (i32.shr_u (local.get $dist) (i32.const 3))))
+        (if (i32.lt_s (local.get $r) (i32.const 2)) (then (local.set $r (i32.const 2))))
+        ;; Gap at y=50-54 (north choke) and y=76-80 (south choke)
+        (if (i32.and
+              (i32.or
+                (i32.and (i32.ge_s (local.get $y) (i32.const 48)) (i32.le_s (local.get $y) (i32.const 53)))
+                (i32.and (i32.ge_s (local.get $y) (i32.const 77)) (i32.le_s (local.get $y) (i32.const 82))))
+              (i32.const 1))
+          (then (local.set $r (i32.const 0))) ;; no mountain at choke
+        )
+        (local.set $x (i32.sub (local.get $cx) (local.get $r)))
+        (block $mx_brk
+          (loop $mx_lp
+            (br_if $mx_brk (i32.gt_s (local.get $x) (i32.add (local.get $cx) (local.get $r))))
+            (if (i32.and
+                  (i32.and (i32.ge_s (local.get $x) (i32.const 0)) (i32.lt_s (local.get $x) (i32.const 128)))
+                  (i32.and (i32.ge_s (local.get $y) (i32.const 0)) (i32.lt_s (local.get $y) (i32.const 128))))
               (then
                 (local.set $addr (i32.add (i32.const 0x10400)
                   (i32.add (i32.mul (local.get $y) (i32.const 128)) (local.get $x))))
-                (i32.store8 (local.get $addr) (i32.const 4))
+                (i32.store8 (local.get $addr) (i32.const 6)) ;; stone
               )
             )
             (local.set $x (i32.add (local.get $x) (i32.const 1)))
-            (br $lp_w2)
+            (br $mx_lp)
           )
         )
         (local.set $y (i32.add (local.get $y) (i32.const 1)))
-        (br $lp_w1)
+        (br $mt_lp)
       )
     )
 
-    ;; Add tree clusters
+    ;; === LAKES (water=4) ===
+    ;; Lake 1: west side (30, 70) - blocks flanking
+    (call $place_ellipse (i32.const 25) (i32.const 72) (i32.const 8) (i32.const 5) (i32.const 4))
+    ;; Lake 2: east side (95, 55) - mirror
+    (call $place_ellipse (i32.const 95) (i32.const 52) (i32.const 7) (i32.const 6) (i32.const 4))
+    ;; Lake 3: small pond near player base
+    (call $place_ellipse (i32.const 30) (i32.const 110) (i32.const 4) (i32.const 3) (i32.const 4))
+    ;; Lake 4: small pond near enemy base
+    (call $place_ellipse (i32.const 98) (i32.const 18) (i32.const 4) (i32.const 3) (i32.const 4))
+
+    ;; === FOREST CLUSTERS (tree=5) ===
     (local.set $i (i32.const 0))
     (block $brk_tc
       (loop $lp_tc
-        (br_if $brk_tc (i32.ge_s (local.get $i) (i32.const 12)))
+        (br_if $brk_tc (i32.ge_s (local.get $i) (i32.const 18)))
         (local.set $cx (i32.add (i32.const 10) (i32.rem_u (call $rng) (i32.const 108))))
         (local.set $cy (i32.add (i32.const 10) (i32.rem_u (call $rng) (i32.const 108))))
-        ;; Place 5-8 trees around center
+        ;; Place 8-12 trees around center
         (local.set $x (i32.const 0))
         (block $brk_t
           (loop $lp_t
-            (br_if $brk_t (i32.ge_s (local.get $x) (i32.const 7)))
+            (br_if $brk_t (i32.ge_s (local.get $x) (i32.const 10)))
             (local.set $dx (i32.add (local.get $cx)
-              (i32.sub (i32.rem_u (call $rng) (i32.const 5)) (i32.const 2))))
+              (i32.sub (i32.rem_u (call $rng) (i32.const 7)) (i32.const 3))))
             (local.set $dy (i32.add (local.get $cy)
-              (i32.sub (i32.rem_u (call $rng) (i32.const 5)) (i32.const 2))))
+              (i32.sub (i32.rem_u (call $rng) (i32.const 7)) (i32.const 3))))
             (if (i32.and
                   (i32.and (i32.ge_s (local.get $dx) (i32.const 0)) (i32.lt_s (local.get $dx) (i32.const 128)))
                   (i32.and (i32.ge_s (local.get $dy) (i32.const 0)) (i32.lt_s (local.get $dy) (i32.const 128)))
@@ -782,6 +850,24 @@
               (i32.add (local.get $sy) (i32.const 6)) (i32.const 8))
           )
         )
+      )
+    )
+
+    ;; Stone/mountain detail
+    (if (i32.eq (local.get $tile) (i32.const 6))
+      (then
+        ;; Highlight pixels for rocky texture
+        (call $put_pixel (i32.add (local.get $sx) (i32.const 1))
+          (i32.add (local.get $sy) (i32.const 1)) (i32.const 10))
+        (call $put_pixel (i32.add (local.get $sx) (i32.const 5))
+          (i32.add (local.get $sy) (i32.const 3)) (i32.const 10))
+        (call $put_pixel (i32.add (local.get $sx) (i32.const 3))
+          (i32.add (local.get $sy) (i32.const 6)) (i32.const 10))
+        ;; Dark crevice pixels
+        (call $put_pixel (i32.add (local.get $sx) (i32.const 4))
+          (i32.add (local.get $sy) (i32.const 2)) (i32.const 0))
+        (call $put_pixel (i32.add (local.get $sx) (i32.const 2))
+          (i32.add (local.get $sy) (i32.const 5)) (i32.const 0))
       )
     )
 
@@ -1259,6 +1345,32 @@
     )
   )
 
+  ;; Check if world position (x,y) is on a passable tile
+  ;; Returns 1 if passable, 0 if blocked
+  (func $is_passable (param $wx i32) (param $wy i32) (result i32)
+    (local $tx i32)
+    (local $ty i32)
+    (local $tile i32)
+    ;; Clamp to map bounds
+    (if (result i32) (i32.or
+          (i32.or (i32.lt_s (local.get $wx) (i32.const 0)) (i32.ge_s (local.get $wx) (i32.const 1024)))
+          (i32.or (i32.lt_s (local.get $wy) (i32.const 0)) (i32.ge_s (local.get $wy) (i32.const 1024))))
+      (then (i32.const 0))
+      (else
+        (local.set $tx (i32.shr_u (local.get $wx) (i32.const 3))) ;; /8
+        (local.set $ty (i32.shr_u (local.get $wy) (i32.const 3)))
+        (local.set $tile (i32.load8_u (i32.add (i32.const 0x10400)
+          (i32.add (i32.mul (local.get $ty) (i32.const 128)) (local.get $tx)))))
+        ;; passable: 0,1,2=grass, 3=dirt, 7=gold; blocked: 4=water, 5=tree, 6=stone
+        (i32.and
+          (i32.ne (local.get $tile) (i32.const 4))
+          (i32.and
+            (i32.ne (local.get $tile) (i32.const 5))
+            (i32.ne (local.get $tile) (i32.const 6))))
+      )
+    )
+  )
+
   (func $min (param $a i32) (param $b i32) (result i32)
     (if (result i32) (i32.lt_s (local.get $a) (local.get $b))
       (then (local.get $a)) (else (local.get $b)))
@@ -1359,18 +1471,39 @@
                         )
                       )
                       (else
-                        ;; Move toward target
-                        (if (i32.gt_s (local.get $dx) (i32.const 0))
-                          (then (local.set $ux (i32.add (local.get $ux) (local.get $spd))))
+                        ;; Move toward target with terrain check
+                        (local.set $dx (i32.const 0))
+                        (local.set $dy (i32.const 0))
+                        (if (i32.gt_s (i32.sub (local.get $tx) (local.get $ux)) (i32.const 0))
+                          (then (local.set $dx (local.get $spd)))
                         )
-                        (if (i32.lt_s (local.get $dx) (i32.const 0))
-                          (then (local.set $ux (i32.sub (local.get $ux) (local.get $spd))))
+                        (if (i32.lt_s (i32.sub (local.get $tx) (local.get $ux)) (i32.const 0))
+                          (then (local.set $dx (i32.sub (i32.const 0) (local.get $spd))))
                         )
-                        (if (i32.gt_s (local.get $dy) (i32.const 0))
-                          (then (local.set $uy (i32.add (local.get $uy) (local.get $spd))))
+                        (if (i32.gt_s (i32.sub (local.get $ty) (local.get $uy)) (i32.const 0))
+                          (then (local.set $dy (local.get $spd)))
                         )
-                        (if (i32.lt_s (local.get $dy) (i32.const 0))
-                          (then (local.set $uy (i32.sub (local.get $uy) (local.get $spd))))
+                        (if (i32.lt_s (i32.sub (local.get $ty) (local.get $uy)) (i32.const 0))
+                          (then (local.set $dy (i32.sub (i32.const 0) (local.get $spd))))
+                        )
+                        ;; Try both axes
+                        (if (call $is_passable (i32.add (local.get $ux) (local.get $dx)) (i32.add (local.get $uy) (local.get $dy)))
+                          (then
+                            (local.set $ux (i32.add (local.get $ux) (local.get $dx)))
+                            (local.set $uy (i32.add (local.get $uy) (local.get $dy)))
+                          )
+                          (else
+                            ;; Try x only
+                            (if (i32.and (local.get $dx) (call $is_passable (i32.add (local.get $ux) (local.get $dx)) (local.get $uy)))
+                              (then (local.set $ux (i32.add (local.get $ux) (local.get $dx))))
+                              (else
+                                ;; Try y only
+                                (if (i32.and (local.get $dy) (call $is_passable (local.get $ux) (i32.add (local.get $uy) (local.get $dy))))
+                                  (then (local.set $uy (i32.add (local.get $uy) (local.get $dy))))
+                                )
+                              )
+                            )
+                          )
                         )
                         (i32.store16 (i32.add (local.get $addr) (i32.const 4)) (local.get $ux))
                         (i32.store16 (i32.add (local.get $addr) (i32.const 6)) (local.get $uy))
@@ -1417,18 +1550,36 @@
                         (i32.store8 (i32.add (local.get $addr) (i32.const 22)) (local.get $atk_timer))
                       )
                       (else
-                        ;; Move toward gold
-                        (if (i32.gt_s (local.get $dx) (i32.const 0))
-                          (then (local.set $ux (i32.add (local.get $ux) (local.get $spd))))
+                        ;; Move toward gold with terrain check
+                        (local.set $dx (i32.const 0))
+                        (local.set $dy (i32.const 0))
+                        (if (i32.gt_s (i32.sub (local.get $tx) (local.get $ux)) (i32.const 0))
+                          (then (local.set $dx (local.get $spd)))
                         )
-                        (if (i32.lt_s (local.get $dx) (i32.const 0))
-                          (then (local.set $ux (i32.sub (local.get $ux) (local.get $spd))))
+                        (if (i32.lt_s (i32.sub (local.get $tx) (local.get $ux)) (i32.const 0))
+                          (then (local.set $dx (i32.sub (i32.const 0) (local.get $spd))))
                         )
-                        (if (i32.gt_s (local.get $dy) (i32.const 0))
-                          (then (local.set $uy (i32.add (local.get $uy) (local.get $spd))))
+                        (if (i32.gt_s (i32.sub (local.get $ty) (local.get $uy)) (i32.const 0))
+                          (then (local.set $dy (local.get $spd)))
                         )
-                        (if (i32.lt_s (local.get $dy) (i32.const 0))
-                          (then (local.set $uy (i32.sub (local.get $uy) (local.get $spd))))
+                        (if (i32.lt_s (i32.sub (local.get $ty) (local.get $uy)) (i32.const 0))
+                          (then (local.set $dy (i32.sub (i32.const 0) (local.get $spd))))
+                        )
+                        (if (call $is_passable (i32.add (local.get $ux) (local.get $dx)) (i32.add (local.get $uy) (local.get $dy)))
+                          (then
+                            (local.set $ux (i32.add (local.get $ux) (local.get $dx)))
+                            (local.set $uy (i32.add (local.get $uy) (local.get $dy)))
+                          )
+                          (else
+                            (if (i32.and (local.get $dx) (call $is_passable (i32.add (local.get $ux) (local.get $dx)) (local.get $uy)))
+                              (then (local.set $ux (i32.add (local.get $ux) (local.get $dx))))
+                              (else
+                                (if (i32.and (local.get $dy) (call $is_passable (local.get $ux) (i32.add (local.get $uy) (local.get $dy))))
+                                  (then (local.set $uy (i32.add (local.get $uy) (local.get $dy))))
+                                )
+                              )
+                            )
+                          )
                         )
                         (i32.store16 (i32.add (local.get $addr) (i32.const 4)) (local.get $ux))
                         (i32.store16 (i32.add (local.get $addr) (i32.const 6)) (local.get $uy))
@@ -1487,18 +1638,40 @@
                                 (i32.store8 (i32.add (local.get $addr) (i32.const 22)) (local.get $atk_timer))
                               )
                               (else
-                                ;; Move toward target
-                                (if (i32.gt_s (local.get $dx) (i32.const 0))
-                                  (then (local.set $ux (i32.add (local.get $ux) (local.get $spd))))
+                                ;; Move toward target with terrain check
+                                (local.set $dx (i32.const 0))
+                                (local.set $dy (i32.const 0))
+                                (if (i32.gt_s (i32.sub
+                                    (i32.load16_s (i32.add (local.get $taddr) (i32.const 4))) (local.get $ux)) (i32.const 0))
+                                  (then (local.set $dx (local.get $spd)))
                                 )
-                                (if (i32.lt_s (local.get $dx) (i32.const 0))
-                                  (then (local.set $ux (i32.sub (local.get $ux) (local.get $spd))))
+                                (if (i32.lt_s (i32.sub
+                                    (i32.load16_s (i32.add (local.get $taddr) (i32.const 4))) (local.get $ux)) (i32.const 0))
+                                  (then (local.set $dx (i32.sub (i32.const 0) (local.get $spd))))
                                 )
-                                (if (i32.gt_s (local.get $dy) (i32.const 0))
-                                  (then (local.set $uy (i32.add (local.get $uy) (local.get $spd))))
+                                (if (i32.gt_s (i32.sub
+                                    (i32.load16_s (i32.add (local.get $taddr) (i32.const 6))) (local.get $uy)) (i32.const 0))
+                                  (then (local.set $dy (local.get $spd)))
                                 )
-                                (if (i32.lt_s (local.get $dy) (i32.const 0))
-                                  (then (local.set $uy (i32.sub (local.get $uy) (local.get $spd))))
+                                (if (i32.lt_s (i32.sub
+                                    (i32.load16_s (i32.add (local.get $taddr) (i32.const 6))) (local.get $uy)) (i32.const 0))
+                                  (then (local.set $dy (i32.sub (i32.const 0) (local.get $spd))))
+                                )
+                                (if (call $is_passable (i32.add (local.get $ux) (local.get $dx)) (i32.add (local.get $uy) (local.get $dy)))
+                                  (then
+                                    (local.set $ux (i32.add (local.get $ux) (local.get $dx)))
+                                    (local.set $uy (i32.add (local.get $uy) (local.get $dy)))
+                                  )
+                                  (else
+                                    (if (i32.and (local.get $dx) (call $is_passable (i32.add (local.get $ux) (local.get $dx)) (local.get $uy)))
+                                      (then (local.set $ux (i32.add (local.get $ux) (local.get $dx))))
+                                      (else
+                                        (if (i32.and (local.get $dy) (call $is_passable (local.get $ux) (i32.add (local.get $uy) (local.get $dy))))
+                                          (then (local.set $uy (i32.add (local.get $uy) (local.get $dy))))
+                                        )
+                                      )
+                                    )
+                                  )
                                 )
                                 (i32.store16 (i32.add (local.get $addr) (i32.const 4)) (local.get $ux))
                                 (i32.store16 (i32.add (local.get $addr) (i32.const 6)) (local.get $uy))
@@ -2307,6 +2480,7 @@
             (local.set $col (i32.const 2)) ;; default green
             (if (i32.eq (local.get $tile) (i32.const 4)) (then (local.set $col (i32.const 7)))) ;; water
             (if (i32.eq (local.get $tile) (i32.const 5)) (then (local.set $col (i32.const 33)))) ;; tree
+            (if (i32.eq (local.get $tile) (i32.const 6)) (then (local.set $col (i32.const 9)))) ;; stone/mountain
             (if (i32.eq (local.get $tile) (i32.const 7)) (then (local.set $col (i32.const 40)))) ;; gold
 
             (call $put_pixel
