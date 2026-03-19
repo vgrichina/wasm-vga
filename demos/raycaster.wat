@@ -13,16 +13,28 @@
 
   (func $sin_approx (param $x f64) (result f64)
     (local $x2 f64) (local $x3 f64) (local $x5 f64) (local $x7 f64)
+    (local $sign f64)
+    (local.set $sign (f64.const 1.0))
+    ;; Reduce to [0, 2pi)
     (local.set $x (f64.sub (local.get $x)
-      (f64.mul (f64.floor (f64.div (local.get $x) (f64.const 6.283185307))) (f64.const 6.283185307))))
-    (if (f64.gt (local.get $x) (f64.const 3.141592653))
-      (then (local.set $x (f64.sub (local.get $x) (f64.const 6.283185307)))))
+      (f64.mul (f64.floor (f64.div (local.get $x) (f64.const 6.283185307179586))) (f64.const 6.283185307179586))))
+    ;; Reduce to [0, pi) by using sin(x) = -sin(x - pi) for x in [pi, 2pi)
+    (if (f64.ge (local.get $x) (f64.const 3.141592653589793))
+      (then
+        (local.set $x (f64.sub (local.get $x) (f64.const 3.141592653589793)))
+        (local.set $sign (f64.const -1.0))))
+    ;; Reduce to [-pi/4, pi/4] by using sin(x) = cos(pi/2 - x) for x in (pi/4, 3pi/4]
+    ;; Actually, simpler: reduce to [0, pi/2] using sin(x) = sin(pi - x) for x in (pi/2, pi)
+    (if (f64.gt (local.get $x) (f64.const 1.5707963267948966))
+      (then (local.set $x (f64.sub (f64.const 3.141592653589793) (local.get $x)))))
+    ;; Now x is in [0, pi/2], Taylor series is accurate here
     (local.set $x2 (f64.mul (local.get $x) (local.get $x)))
     (local.set $x3 (f64.mul (local.get $x2) (local.get $x)))
     (local.set $x5 (f64.mul (local.get $x3) (local.get $x2)))
     (local.set $x7 (f64.mul (local.get $x5) (local.get $x2)))
-    (f64.sub (f64.add (local.get $x) (f64.div (local.get $x5) (f64.const 120.0)))
-      (f64.add (f64.div (local.get $x3) (f64.const 6.0)) (f64.div (local.get $x7) (f64.const 5040.0))))
+    (f64.mul (local.get $sign)
+      (f64.sub (f64.add (local.get $x) (f64.div (local.get $x5) (f64.const 120.0)))
+        (f64.add (f64.div (local.get $x3) (f64.const 6.0)) (f64.div (local.get $x7) (f64.const 5040.0)))))
   )
 
   (func $cos_approx (param $x f64) (result f64)
@@ -580,8 +592,8 @@
           (local.set $perp_dist (f64.sub (local.get $side_dist_y) (local.get $delta_dist_y)))
         )
       )
-      (if (f64.lt (local.get $perp_dist) (f64.const 0.05))
-        (then (local.set $perp_dist (f64.const 0.05))))
+      (if (f64.lt (local.get $perp_dist) (f64.const 0.001))
+        (then (local.set $perp_dist (f64.const 0.001))))
 
       ;; Wall strip height
       (local.set $wall_h (i32.trunc_f64_s (f64.div (f64.const 200.0) (local.get $perp_dist))))

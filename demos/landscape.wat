@@ -225,14 +225,18 @@
     ;; Any keyboard direction key pressed?
     (if (i32.and (local.get $keys) (i32.const 0x0F))  ;; bits 0-3: up/down/left/right
       (then (local.set $has_input (i32.const 1))))
-    ;; Check mouse movement (delta > 3 pixels)
-    (local.set $mdx (i32.sub (local.get $mouse_x) (i32.load (i32.const 0x3F028))))
-    (local.set $mdy (i32.sub (local.get $mouse_y) (i32.load (i32.const 0x3F02C))))
-    ;; abs(dx) > 3 or abs(dy) > 3
-    (if (i32.or
-      (i32.gt_u (select (i32.sub (i32.const 0) (local.get $mdx)) (local.get $mdx) (i32.lt_s (local.get $mdx) (i32.const 0))) (i32.const 3))
-      (i32.gt_u (select (i32.sub (i32.const 0) (local.get $mdy)) (local.get $mdy) (i32.lt_s (local.get $mdy) (i32.const 0))) (i32.const 3)))
-      (then (local.set $has_input (i32.const 1))))
+    ;; Check mouse movement (delta > 5 pixels), but only if we have a previous reading
+    (if (i32.or (i32.load (i32.const 0x3F028)) (i32.load (i32.const 0x3F02C)))
+      (then
+        (local.set $mdx (i32.sub (local.get $mouse_x) (i32.load (i32.const 0x3F028))))
+        (local.set $mdy (i32.sub (local.get $mouse_y) (i32.load (i32.const 0x3F02C))))
+        ;; abs(dx) > 5 or abs(dy) > 5
+        (if (i32.or
+          (i32.gt_u (select (i32.sub (i32.const 0) (local.get $mdx)) (local.get $mdx) (i32.lt_s (local.get $mdx) (i32.const 0))) (i32.const 5))
+          (i32.gt_u (select (i32.sub (i32.const 0) (local.get $mdy)) (local.get $mdy) (i32.lt_s (local.get $mdy) (i32.const 0))) (i32.const 5)))
+          (then (local.set $has_input (i32.const 1))))
+      )
+    )
     ;; Store current mouse pos for next frame comparison
     (i32.store (i32.const 0x3F028) (local.get $mouse_x))
     (i32.store (i32.const 0x3F02C) (local.get $mouse_y))
@@ -273,9 +277,11 @@
             (if (i32.and (local.get $keys) (i32.const 2))
               (then (local.set $speed (f64.max (f64.sub (local.get $speed) (f64.const 0.03)) (f64.const 0.0))))
               (else
-                ;; No up/down: drift toward base speed
+                ;; No up/down: drift toward base speed 0.3
                 (if (f64.gt (local.get $speed) (f64.const 0.3))
-                  (then (local.set $speed (f64.sub (local.get $speed) (f64.const 0.005)))))
+                  (then (local.set $speed (f64.sub (local.get $speed) (f64.const 0.005))))
+                  (else (if (f64.lt (local.get $speed) (f64.const 0.3))
+                    (then (local.set $speed (f64.add (local.get $speed) (f64.const 0.005)))))))
               )
             )
           )
