@@ -1109,7 +1109,10 @@
     (local $u_raw i32) (local $v_raw i32) (local $u7 i32) (local $v7 i32)
     (local $ddx i32) (local $ddy i32)
     (local $rx i32)
-    (local $seed_cx i32) (local $seed_cy i32) (local $si i32)
+    (local $seed_cx i32) (local $seed_cy i32) (local $si i32) (local $rot i32) (local $cos_val i32)
+
+    ;; Seed rotation offset: slow spin, full revolution in ~4096 frames
+    (local.set $rot (i32.and (i32.shr_u (local.get $t) (i32.const 4)) (i32.const 255)))
 
     ;; Orbiting light: circles around berry to showcase Phong
     ;; lx128 = -200 * sin(t), ly128 = -200 * cos(t), lz128 = 180 (front)
@@ -1433,41 +1436,49 @@
                             (i32.add (local.get $seed_cy) (i32.const 40)))))
                           ;; 8 seeds per row, angular step = 32 (out of 256 = full circle)
                           ;; Stagger odd rows by half step (16)
-                          ;; angle_idx goes 0,32,64,...,224 (or 16,48,...,240 for odd rows)
-                          ;; screen_x = rx * (sin_tab[angle] - 128) / 128
-                          ;; Only draw if cos > 0 (front face): angle in [0..64] or [192..255]
+                          ;; 16 seeds per row (step 16), stagger odd rows by 8
+                          ;; With rotation, ~8 are front-facing at any angle
                           (local.set $si (i32.mul
                             (i32.and
                               (i32.div_u (i32.add (local.get $seed_cy) (i32.const 30)) (i32.const 7))
                               (i32.const 1))
-                            (i32.const 16)))  ;; stagger offset: 0 or 16
+                            (i32.const 8)))  ;; stagger offset: 0 or 8
                           (block $cdone (loop $clp
                             (br_if $cdone (i32.or
                               (i32.ge_u (local.get $si) (i32.const 256))
                               (i32.gt_s (local.get $in_leaf) (i32.const 0))))
-                            ;; Sub-pixel seed centers: keep 1 extra bit of fraction (2x scale)
-                            ;; seed_cx_2x = rx * sin_val >> 6 (instead of >>7)
-                            (local.set $seed_cx (i32.shr_s
-                              (i32.mul (local.get $rx)
-                                (i32.sub (call $sin_tab (local.get $si)) (i32.const 128)))
-                              (i32.const 6)))
-                            ;; cos check: front face only
-                            (if (i32.gt_s
-                                  (i32.sub (call $sin_tab (i32.and (i32.add (local.get $si) (i32.const 64)) (i32.const 255))) (i32.const 128))
-                                  (i32.const 30))
+                            ;; Seed center at full 128x precision
+                            (local.set $seed_cx (i32.mul (local.get $rx)
+                              (i32.sub (call $sin_tab (i32.and (i32.add (local.get $si) (local.get $rot)) (i32.const 255))) (i32.const 128))))
+                            ;; cos value for this seed angle (0-128)
+                            (local.set $cos_val (i32.sub (call $sin_tab (i32.and (i32.add (i32.add (local.get $si) (local.get $rot)) (i32.const 64)) (i32.const 255))) (i32.const 128)))
+                            (if (i32.gt_s (local.get $cos_val) (i32.const 0))
                               (then
-                                ;; Scale pixel coords to 2x to match seed_cx precision
-                                (local.set $sdx (i32.sub (i32.shl (local.get $dx) (i32.const 1)) (local.get $seed_cx)))
-                                (local.set $sdy (i32.sub (i32.shl (local.get $dy) (i32.const 1))
-                                  (i32.shl (local.get $seed_cy) (i32.const 1))))
-                                (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                                ;; Thresholds x4: seed < 20, groove < 48
-                                (if (i32.lt_s (local.get $sdsq) (i32.const 20))
+                                ;; Distance at 128x precision
+                                ;; sdx_128 in $norm_sq, sdy_128 in $guess (temp reuse)
+                                (local.set $norm_sq (i32.sub (i32.mul (local.get $dx) (i32.const 128)) (local.get $seed_cx)))
+                                (local.set $guess (i32.mul (i32.sub (local.get $dy) (local.get $seed_cy)) (i32.const 128)))
+                                ;; Foreshortened ellipse: sdx² + (sdy*cos/128)² < (R*cos/128)²
+                                ;; sdy_cos = sdy_128 * cos_val >> 7
+                                (local.set $sdsq (i32.add
+                                  (i32.mul (local.get $norm_sq) (local.get $norm_sq))
+                                  (i32.mul
+                                    (i32.shr_s (i32.mul (local.get $guess) (local.get $cos_val)) (i32.const 7))
+                                    (i32.shr_s (i32.mul (local.get $guess) (local.get $cos_val)) (i32.const 7)))))
+                                ;; R_seed=280 (~2.2px*128), R_groove=440 (~3.4px*128)
+                                ;; r_scaled = R * cos_val >> 7
+                                (local.set $seed_cx (i32.shr_s (i32.mul (i32.const 280) (local.get $cos_val)) (i32.const 7)))
+                                (if (i32.lt_u (local.get $sdsq) (i32.mul (local.get $seed_cx) (local.get $seed_cx)))
                                   (then (local.set $in_leaf (i32.const 1)))
-                                  (else (if (i32.lt_s (local.get $sdsq) (i32.const 48))
-                                    (then (local.set $in_leaf (i32.const 3))))))
+                                  (else
+                                    (local.set $seed_cx (i32.shr_s (i32.mul (i32.const 440) (local.get $cos_val)) (i32.const 7)))
+                                    (if (i32.lt_u (local.get $sdsq) (i32.mul (local.get $seed_cx) (local.get $seed_cx)))
+                                      (then (local.set $in_leaf (i32.const 3))))))
+                                ;; Store sdx/sdy at 2x scale for bump mapping
+                                (local.set $sdx (i32.shr_s (local.get $norm_sq) (i32.const 6)))
+                                (local.set $sdy (i32.shr_s (local.get $guess) (i32.const 6)))
                               ))
-                            (local.set $si (i32.add (local.get $si) (i32.const 32)))
+                            (local.set $si (i32.add (local.get $si) (i32.const 16)))
                             (br $clp)
                           ))
                         ))
