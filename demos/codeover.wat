@@ -1602,20 +1602,24 @@
                   ))
                 ))
 
-                ;; Ambient occlusion under calyx: darken berry body pixels near top edge
+                ;; Ambient occlusion under calyx: smooth gradient darkening
+                ;; dy -44 to -36: darken by (44+dy) inverted, so -44→4, -43→3, -42→2, ..., -37→1, -36→0
                 (if (i32.and
                       (i32.gt_s (local.get $in_body) (i32.const 0))
                       (i32.and
                         (i32.eqz (local.get $in_leaf))
                         (i32.and
-                          (i32.ge_s (local.get $dy) (i32.const -42))
-                          (i32.le_s (local.get $dy) (i32.const -38)))))
+                          (i32.ge_s (local.get $dy) (i32.const -44))
+                          (i32.le_s (local.get $dy) (i32.const -37)))))
                   (then
-                    ;; Darken by 2 steps in the red ramp
+                    ;; darken = (-37 - dy) / 2  → -44→3, -43→3, -42→2, -41→2, -40→1, -39→1, -38→0, -37→0
+                    (local.set $shade (i32.shr_u (i32.sub (i32.const -37) (local.get $dy)) (i32.const 1)))
                     (if (i32.and
-                          (i32.ge_s (local.get $col) (i32.const 12))
-                          (i32.le_s (local.get $col) (i32.const 25)))
-                      (then (local.set $col (i32.sub (local.get $col) (i32.const 2)))))))
+                          (i32.gt_s (local.get $shade) (i32.const 0))
+                          (i32.and
+                            (i32.ge_s (local.get $col) (i32.add (i32.const 10) (local.get $shade)))
+                            (i32.le_s (local.get $col) (i32.const 25))))
+                      (then (local.set $col (i32.sub (local.get $col) (local.get $shade)))))))
 
                 ;; Write pixel
                 (i32.store8
