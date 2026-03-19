@@ -82,54 +82,43 @@
 
   (func (export "frame")
     (local $x i32) (local $y i32) (local $src i32) (local $val i32)
-    (local $below i32) (local $belowL i32) (local $belowR i32) (local $below2 i32)
-    (local $avg i32) (local $dst i32) (local $rnd i32)
+    (local $dst i32) (local $rnd i32)
     ;; seed PRNG if zero
     (if (i32.eqz (i32.load (i32.const 0x10000)))
       (then (i32.store (i32.const 0x10000) (i32.const 12345))))
-    ;; propagate fire upward: for each pixel (x,y) where y < 199
-    ;; new[y][x] = avg(old[y+1][x-1], old[y+1][x], old[y+1][x+1], old[y+2][x]) - decay
-    (local.set $y (i32.const 0))
+    ;; Classic DOOM fire: for each pixel (x,y) where y > 0,
+    ;; sample fire[y][x], apply random decay, write to fire[y-1][x + wind]
+    (local.set $y (i32.const 1))
     (block $ydone
       (loop $yloop
-        (br_if $ydone (i32.ge_u (local.get $y) (i32.const 199)))
+        (br_if $ydone (i32.ge_u (local.get $y) (i32.const 200)))
         (local.set $x (i32.const 0))
         (block $xdone
           (loop $xloop
             (br_if $xdone (i32.ge_u (local.get $x) (i32.const 320)))
-            ;; below = fire[y+1][x]
-            (local.set $below (i32.load8_u (i32.add (i32.const 0x10040)
-              (i32.add (i32.mul (i32.add (local.get $y) (i32.const 1)) (i32.const 320)) (local.get $x)))))
-            ;; belowL = fire[y+1][max(x-1,0)]
-            (local.set $belowL (i32.load8_u (i32.add (i32.const 0x10040)
-              (i32.add (i32.mul (i32.add (local.get $y) (i32.const 1)) (i32.const 320))
-                (select (i32.sub (local.get $x) (i32.const 1)) (i32.const 0)
-                  (i32.gt_u (local.get $x) (i32.const 0)))))))
-            ;; belowR = fire[y+1][min(x+1,319)]
-            (local.set $belowR (i32.load8_u (i32.add (i32.const 0x10040)
-              (i32.add (i32.mul (i32.add (local.get $y) (i32.const 1)) (i32.const 320))
-                (select (i32.add (local.get $x) (i32.const 1)) (i32.const 319)
-                  (i32.lt_u (local.get $x) (i32.const 319)))))))
-            ;; below2 = fire[min(y+2,199)][x]
-            (local.set $below2 (i32.load8_u (i32.add (i32.const 0x10040)
-              (i32.add (i32.mul
-                (select (i32.add (local.get $y) (i32.const 2)) (i32.const 199)
-                  (i32.lt_u (local.get $y) (i32.const 198)))
-                (i32.const 320)) (local.get $x)))))
-            ;; avg
-            (local.set $avg (i32.shr_u
-              (i32.add (i32.add (local.get $below) (local.get $belowL))
-                (i32.add (local.get $belowR) (local.get $below2)))
-              (i32.const 2)))
-            ;; random decay 0-1
-            (local.set $rnd (i32.and (call $rand) (i32.const 1)))
-            (local.set $avg (i32.sub (local.get $avg) (local.get $rnd)))
-            (if (i32.lt_s (local.get $avg) (i32.const 0))
-              (then (local.set $avg (i32.const 0))))
-            ;; random horizontal wind
-            (local.set $dst (i32.add (i32.const 0x10040)
+            ;; read source pixel fire[y][x]
+            (local.set $src (i32.add (i32.const 0x10040)
               (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x))))
-            (i32.store8 (local.get $dst) (local.get $avg))
+            (local.set $val (i32.load8_u (local.get $src)))
+            ;; decay = rand & 3
+            (local.set $rnd (i32.and (call $rand) (i32.const 3)))
+            (local.set $val (i32.sub (local.get $val) (local.get $rnd)))
+            (if (i32.lt_s (local.get $val) (i32.const 0))
+              (then (local.set $val (i32.const 0))))
+            ;; wind offset: rand & 3 gives 0,1,2,3; subtract 1 for range -1..2
+            (local.set $dst (i32.add (local.get $x)
+              (i32.sub (i32.and (call $rand) (i32.const 3)) (i32.const 1))))
+            ;; clamp x to [0, 319]
+            (if (i32.lt_s (local.get $dst) (i32.const 0))
+              (then (local.set $dst (i32.const 0))))
+            (if (i32.gt_s (local.get $dst) (i32.const 319))
+              (then (local.set $dst (i32.const 319))))
+            ;; write to fire[y-1][dst_x]
+            (i32.store8
+              (i32.add (i32.const 0x10040)
+                (i32.add (i32.mul (i32.sub (local.get $y) (i32.const 1)) (i32.const 320))
+                  (local.get $dst)))
+              (local.get $val))
             (local.set $x (i32.add (local.get $x) (i32.const 1)))
             (br $xloop)
           )
