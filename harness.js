@@ -32,6 +32,8 @@ let musicInterval = null, musicStep = 0;
 
 // --- Recording ---
 let recorder = null, recordChunks = [];
+const REC_SCALE = 4;
+let recCanvas = null, recCtx = null;
 
 function startRecording() {
   ensureAudio();
@@ -39,8 +41,15 @@ function startRecording() {
     audioDest = audioCtx.createMediaStreamDestination();
     masterGain.connect(audioDest);
   }
+  if (!recCanvas) {
+    recCanvas = document.createElement('canvas');
+    recCanvas.width = WIDTH * REC_SCALE;
+    recCanvas.height = HEIGHT * REC_SCALE;
+    recCtx = recCanvas.getContext('2d');
+    recCtx.imageSmoothingEnabled = false;
+  }
   const stream = new MediaStream([
-    ...canvas.captureStream(30).getVideoTracks(),
+    ...recCanvas.captureStream(30).getVideoTracks(),
     ...audioDest.stream.getAudioTracks()
   ]);
   const types = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
@@ -257,6 +266,7 @@ function blitFramebuffer() {
     rgba[o + 3] = 255;
   }
   ctx.putImageData(imgData, 0, 0);
+  if (recorder) recCtx.drawImage(canvas, 0, 0, recCanvas.width, recCanvas.height);
 }
 
 function loop(ts) {
