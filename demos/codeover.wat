@@ -37,16 +37,23 @@
   ;; =========================================================
   (func $sin_approx (param $x f64) (result f64)
     (local $x2 f64) (local $x3 f64) (local $x5 f64) (local $x7 f64)
+    (local $sign f64)
+    (local.set $sign (f64.const 1.0))
     (local.set $x (f64.sub (local.get $x)
-      (f64.mul (f64.floor (f64.div (local.get $x) (f64.const 6.283185307))) (f64.const 6.283185307))))
-    (if (f64.gt (local.get $x) (f64.const 3.141592653))
-      (then (local.set $x (f64.sub (local.get $x) (f64.const 6.283185307)))))
+      (f64.mul (f64.floor (f64.div (local.get $x) (f64.const 6.283185307179586))) (f64.const 6.283185307179586))))
+    (if (f64.ge (local.get $x) (f64.const 3.141592653589793))
+      (then
+        (local.set $x (f64.sub (local.get $x) (f64.const 3.141592653589793)))
+        (local.set $sign (f64.const -1.0))))
+    (if (f64.gt (local.get $x) (f64.const 1.5707963267948966))
+      (then (local.set $x (f64.sub (f64.const 3.141592653589793) (local.get $x)))))
     (local.set $x2 (f64.mul (local.get $x) (local.get $x)))
     (local.set $x3 (f64.mul (local.get $x2) (local.get $x)))
     (local.set $x5 (f64.mul (local.get $x3) (local.get $x2)))
     (local.set $x7 (f64.mul (local.get $x5) (local.get $x2)))
-    (f64.sub (f64.add (local.get $x) (f64.div (local.get $x5) (f64.const 120.0)))
-      (f64.add (f64.div (local.get $x3) (f64.const 6.0)) (f64.div (local.get $x7) (f64.const 5040.0))))
+    (f64.mul (local.get $sign)
+      (f64.sub (f64.add (local.get $x) (f64.div (local.get $x5) (f64.const 120.0)))
+        (f64.add (f64.div (local.get $x3) (f64.const 6.0)) (f64.div (local.get $x7) (f64.const 5040.0)))))
   )
 
   ;; =========================================================
@@ -1351,15 +1358,26 @@
                       ;; Inner seed (yellow dot)
                       (if (i32.lt_s (local.get $sdsq) (i32.const 5))
                         (then (local.set $in_leaf (i32.const 1)))
-                        (else (if (i32.lt_s (local.get $sdsq) (i32.const 12))
-                          (then (local.set $in_leaf (i32.const 3))))))
+                        (else
+                          ;; Shadow dimple: offset by light dir for recessed look
+                          ;; Check dist from seed center offset by (lx128>>5, ly128>>5)
+                          (if (i32.lt_s
+                            (i32.add
+                              (i32.mul
+                                (i32.sub (local.get $sdx) (i32.shr_s (local.get $lx128) (i32.const 5)))
+                                (i32.sub (local.get $sdx) (i32.shr_s (local.get $lx128) (i32.const 5))))
+                              (i32.mul
+                                (i32.sub (local.get $sdy) (i32.shr_s (local.get $ly128) (i32.const 5)))
+                                (i32.sub (local.get $sdy) (i32.shr_s (local.get $ly128) (i32.const 5)))))
+                            (i32.const 14))
+                            (then (local.set $in_leaf (i32.const 3))))))
                       (local.set $si (i32.add (local.get $si) (i32.const 1)))
                       (br $slp)
                     ))
                   ))
 
                 ;; ---- Color determination ----
-                ;; Priority: leaf/calyx (2,5) > stem (4) > seed-inner (1) > seed-shadow (3) > rim (nz<35) > specular > red ramp
+                ;; Priority: leaf/calyx (2,5) > stem (4) > seed-spec > seed-inner (1) > seed-shadow (3) > rim glow > specular > red ramp
                 (local.set $col (i32.const 10))
 
                 (if (i32.or (i32.eq (local.get $in_leaf) (i32.const 2)) (i32.eq (local.get $in_leaf) (i32.const 5)))
@@ -1368,6 +1386,7 @@
                     (if (i32.eq (local.get $in_leaf) (i32.const 5))
                       (then (local.set $col (i32.const 29)))
                       (else
+                        ;; Leaf with ambient occlusion: darken leaf pixels near berry edge (dy > -48)
                         (if (i32.gt_s (local.get $dot_diff) (i32.const 200))
                           (then (local.set $col (i32.const 28)))
                           (else (if (i32.gt_s (local.get $dot_diff) (i32.const 80))
@@ -1381,36 +1400,84 @@
                     )
                     (else (if (i32.eq (local.get $in_leaf) (i32.const 1))
                       (then
-                        ;; Seed: tiny yellow-green dot, shaded by surface diffuse
-                        (if (i32.gt_s (local.get $dot_diff) (i32.const 100))
-                          (then (local.set $col (i32.const 30)))
-                          (else (local.set $col (i32.const 31))))
+                        ;; Seed inner: check for specular highlight on light-facing side
+                        ;; Seed specular: tiny bright dot when light-facing (sdx*lx + sdy*ly > 0 and close to center)
+                        (if (i32.and
+                              (i32.lt_s (local.get $sdsq) (i32.const 3))
+                              (i32.gt_s
+                                (i32.add
+                                  (i32.mul (i32.sub (local.get $dx) (local.get $seed_cx)) (local.get $lx128))
+                                  (i32.mul (i32.sub (local.get $dy) (local.get $seed_cy)) (local.get $ly128)))
+                                (i32.const 0)))
+                          (then (local.set $col (i32.const 1)))  ;; white specular on seed
+                          (else
+                            ;; Normal seed shading
+                            (if (i32.gt_s (local.get $dot_diff) (i32.const 100))
+                              (then (local.set $col (i32.const 30)))
+                              (else (local.set $col (i32.const 31))))))
                       )
                       (else (if (i32.eq (local.get $in_leaf) (i32.const 3))
                         (then
-                          ;; Seed shadow ring: dark red dimple
+                          ;; Seed shadow: offset toward light for recessed look
+                          ;; Darken more on the side away from light
                           (local.set $col (i32.const 32))
                         )
                         (else
-                          ;; Berry body: specular or red ramp
-                          (if (i32.gt_s (local.get $dot_spec) (i32.const 160))
-                            (then (local.set $col (i32.const 1)))
-                            (else (if (i32.gt_s (local.get $dot_spec) (i32.const 80))
-                              (then (local.set $col (i32.const 4)))
-                              (else
-                                ;; Red ramp 10-25
-                                (local.set $shade (i32.div_s (local.get $dot_diff) (i32.const 16)))
-                                (if (i32.gt_s (local.get $shade) (i32.const 15))
-                                  (then (local.set $shade (i32.const 15))))
-                                (if (i32.lt_s (local.get $shade) (i32.const 0))
-                                  (then (local.set $shade (i32.const 0))))
-                                (local.set $col (i32.add (i32.const 10) (local.get $shade)))
-                              ))
-                          )))
+                          ;; Berry body: rim glow → specular → red ramp
+                          ;; Rim glow: low nz means edge of berry → pink translucent glow
+                          (if (i32.lt_s (local.get $nz128) (i32.const 35))
+                            (then (local.set $col (i32.const 3)))
+                            (else (if (i32.gt_s (local.get $dot_spec) (i32.const 160))
+                              (then (local.set $col (i32.const 1)))
+                              (else (if (i32.gt_s (local.get $dot_spec) (i32.const 80))
+                                (then (local.set $col (i32.const 4)))
+                                (else
+                                  ;; Red ramp 10-25 with subtle texture noise
+                                  ;; noise = ((px*7 ^ py*13) >> 2) & 1  — adds ±1 dither
+                                  (local.set $shade (i32.div_s (local.get $dot_diff) (i32.const 16)))
+                                  ;; Add pixel-coord based dither: ±1 variation
+                                  (local.set $shade (i32.add (local.get $shade)
+                                    (i32.sub
+                                      (i32.and
+                                        (i32.shr_u
+                                          (i32.xor
+                                            (i32.mul (local.get $px) (i32.const 7))
+                                            (i32.mul (local.get $py) (i32.const 13)))
+                                          (i32.const 2))
+                                        (i32.const 1))
+                                      (i32.and
+                                        (i32.shr_u
+                                          (i32.xor
+                                            (i32.mul (local.get $px) (i32.const 11))
+                                            (i32.mul (local.get $py) (i32.const 3)))
+                                          (i32.const 1))
+                                        (i32.const 1)))))
+                                  (if (i32.gt_s (local.get $shade) (i32.const 15))
+                                    (then (local.set $shade (i32.const 15))))
+                                  (if (i32.lt_s (local.get $shade) (i32.const 0))
+                                    (then (local.set $shade (i32.const 0))))
+                                  (local.set $col (i32.add (i32.const 10) (local.get $shade)))
+                                ))
+                            ))))
                       ))
                     ))
+                  ))
                 ))
-                )
+
+                ;; Ambient occlusion under calyx: darken berry body pixels near top edge
+                (if (i32.and
+                      (i32.gt_s (local.get $in_body) (i32.const 0))
+                      (i32.and
+                        (i32.eqz (local.get $in_leaf))
+                        (i32.and
+                          (i32.ge_s (local.get $dy) (i32.const -42))
+                          (i32.le_s (local.get $dy) (i32.const -38)))))
+                  (then
+                    ;; Darken by 2 steps in the red ramp
+                    (if (i32.and
+                          (i32.ge_s (local.get $col) (i32.const 12))
+                          (i32.le_s (local.get $col) (i32.const 25)))
+                      (then (local.set $col (i32.sub (local.get $col) (i32.const 2)))))))
 
                 ;; Write pixel
                 (i32.store8
