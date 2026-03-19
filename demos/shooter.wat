@@ -557,8 +557,9 @@
   (func $update_enemies
     (local $i i32) (local $addr i32) (local $x i32) (local $y i32) (local $type i32)
     (local $base_y i32) (local $phase i32) (local $wave_y i32) (local $ft i32)
-    (local $frame i32)
+    (local $frame i32) (local $py i32) (local $diff i32)
     (local.set $frame (i32.load (i32.const 0)))
+    (local.set $py (i32.load16_u (i32.const 0x10362)))  ;; player y for tracking
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
@@ -567,19 +568,54 @@
         (then
           (local.set $type (i32.load8_u (i32.add (local.get $addr) (i32.const 1))))
           (local.set $x (i32.load16_u (i32.add (local.get $addr) (i32.const 4))))
+          (local.set $y (i32.load16_u (i32.add (local.get $addr) (i32.const 6))))
           (local.set $base_y (i32.load16_u (i32.add (local.get $addr) (i32.const 8))))
           (local.set $phase (i32.load16_u (i32.add (local.get $addr) (i32.const 10))))
-          ;; move left: type 0=1px, type 1=2px, type 2=1px (heavy)
-          (local.set $x (i32.sub (local.get $x)
-            (select (i32.const 2) (i32.const 1) (i32.eq (local.get $type) (i32.const 1)))))
-          ;; sine wave y
-          (local.set $wave_y (i32.sub
-            (i32.shr_u (call $sin_tab (i32.add (local.get $phase) (i32.mul (local.get $frame) (i32.const 2)))) (i32.const 2))
-            (i32.const 32)))
-          (local.set $y (i32.add (local.get $base_y) (local.get $wave_y)))
+
+          ;; === MOVEMENT (per-type) ===
+          (if (i32.eqz (local.get $type))
+            (then
+              ;; Type 0 — Red Scout: speed 1, tight fast sine wave
+              (local.set $x (i32.sub (local.get $x) (i32.const 1)))
+              (local.set $wave_y (i32.sub
+                (i32.shr_u (call $sin_tab (i32.add (local.get $phase) (i32.mul (local.get $frame) (i32.const 3)))) (i32.const 3))
+                (i32.const 16)))
+              (local.set $y (i32.add (local.get $base_y) (local.get $wave_y)))
+            )
+          )
+          (if (i32.eq (local.get $type) (i32.const 1))
+            (then
+              ;; Type 1 — Green Interceptor: speed 2, tracks player y
+              (local.set $x (i32.sub (local.get $x) (i32.const 2)))
+              ;; lerp y toward player: y += (py - y) / 8
+              (local.set $diff (i32.shr_s (i32.sub (local.get $py) (local.get $y)) (i32.const 3)))
+              ;; ensure at least ±1 movement when diff is non-zero
+              (if (i32.and (i32.gt_s (i32.sub (local.get $py) (local.get $y)) (i32.const 0))
+                           (i32.eqz (local.get $diff)))
+                (then (local.set $diff (i32.const 1))))
+              (if (i32.and (i32.lt_s (i32.sub (local.get $py) (local.get $y)) (i32.const 0))
+                           (i32.eqz (local.get $diff)))
+                (then (local.set $diff (i32.const -1))))
+              (local.set $y (i32.add (local.get $y) (local.get $diff)))
+            )
+          )
+          (if (i32.eq (local.get $type) (i32.const 2))
+            (then
+              ;; Type 2 — Purple Cruiser: speed 1, gentle slow drift
+              (local.set $x (i32.sub (local.get $x) (i32.const 1)))
+              (local.set $wave_y (i32.sub
+                (i32.shr_u (call $sin_tab (i32.add (local.get $phase) (local.get $frame))) (i32.const 4))
+                (i32.const 8)))
+              (local.set $y (i32.add (local.get $base_y) (local.get $wave_y)))
+            )
+          )
+
           ;; clamp y
           (if (i32.lt_s (local.get $y) (i32.const 10)) (then (local.set $y (i32.const 10))))
           (if (i32.gt_s (local.get $y) (i32.const 190)) (then (local.set $y (i32.const 190))))
+          ;; update base_y for type 1 (tracker) so it persists
+          (if (i32.eq (local.get $type) (i32.const 1))
+            (then (i32.store16 (i32.add (local.get $addr) (i32.const 8)) (local.get $y))))
           ;; deactivate if off screen left
           (if (i32.lt_s (local.get $x) (i32.const -16))
             (then (i32.store8 (local.get $addr) (i32.const 0)))
@@ -593,11 +629,33 @@
                   (i32.store8 (i32.add (local.get $addr) (i32.const 12)) (i32.sub (local.get $ft) (i32.const 1)))
                 )
                 (else
-                  ;; fire!
+                  ;; === FIRING (per-type) ===
                   (if (i32.and (i32.ge_s (local.get $x) (i32.const 0)) (i32.lt_s (local.get $x) (i32.const 320)))
-                    (then (call $spawn_enemy_bullet (local.get $x) (local.get $y))))
-                  (i32.store8 (i32.add (local.get $addr) (i32.const 12))
-                    (i32.add (i32.const 40) (i32.and (call $rand) (i32.const 31))))
+                    (then
+                      (if (i32.eq (local.get $type) (i32.const 2))
+                        (then
+                          ;; Cruiser: 3-bullet spread (straight, up, down)
+                          (call $spawn_bullet_raw (local.get $x) (local.get $y) (i32.const 253) (i32.const 0))
+                          (call $spawn_bullet_raw (local.get $x) (local.get $y) (i32.const 253) (i32.const 254))
+                          (call $spawn_bullet_raw (local.get $x) (local.get $y) (i32.const 253) (i32.const 2))
+                        )
+                        (else
+                          ;; Scout/Interceptor: aimed single shot
+                          (call $spawn_enemy_bullet (local.get $x) (local.get $y))
+                        )
+                      )
+                    )
+                  )
+                  ;; fire cooldown: type 0=long, type 1=short, type 2=very long
+                  (if (i32.eqz (local.get $type))
+                    (then (i32.store8 (i32.add (local.get $addr) (i32.const 12))
+                      (i32.add (i32.const 50) (i32.and (call $rand) (i32.const 31))))))
+                  (if (i32.eq (local.get $type) (i32.const 1))
+                    (then (i32.store8 (i32.add (local.get $addr) (i32.const 12))
+                      (i32.add (i32.const 25) (i32.and (call $rand) (i32.const 15))))))
+                  (if (i32.eq (local.get $type) (i32.const 2))
+                    (then (i32.store8 (i32.add (local.get $addr) (i32.const 12))
+                      (i32.add (i32.const 70) (i32.and (call $rand) (i32.const 31))))))
                 )
               )
             )
@@ -695,12 +753,9 @@
   ;; ============================================================
   ;; 48 entries at 0x10670, each 8 bytes: active(u8), pad(u8), x(u16), y(u16), dx(i8), dy(i8)
 
-  (func $spawn_enemy_bullet (param $x i32) (param $y i32)
-    (local $i i32) (local $addr i32) (local $dy i32)
-    ;; aim slightly toward player
-    (local.set $dy (i32.shr_s (i32.sub (i32.load16_u (i32.const 0x10362)) (local.get $y)) (i32.const 4)))
-    (if (i32.gt_s (local.get $dy) (i32.const 3)) (then (local.set $dy (i32.const 3))))
-    (if (i32.lt_s (local.get $dy) (i32.const -3)) (then (local.set $dy (i32.const -3))))
+  ;; Spawn bullet with explicit dx/dy
+  (func $spawn_bullet_raw (param $x i32) (param $y i32) (param $dx i32) (param $dy i32)
+    (local $i i32) (local $addr i32)
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (i32.const 48)))
@@ -710,13 +765,23 @@
           (i32.store8 (local.get $addr) (i32.const 1))
           (i32.store16 (i32.add (local.get $addr) (i32.const 2)) (local.get $x))
           (i32.store16 (i32.add (local.get $addr) (i32.const 4)) (local.get $y))
-          (i32.store8 (i32.add (local.get $addr) (i32.const 6)) (i32.const 252))  ;; dx = -4 (signed byte)
+          (i32.store8 (i32.add (local.get $addr) (i32.const 6)) (local.get $dx))
           (i32.store8 (i32.add (local.get $addr) (i32.const 7)) (local.get $dy))
           (return)
         )
       )
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
+  )
+
+  ;; Spawn aimed bullet (original behavior)
+  (func $spawn_enemy_bullet (param $x i32) (param $y i32)
+    (local $dy i32)
+    ;; aim slightly toward player
+    (local.set $dy (i32.shr_s (i32.sub (i32.load16_u (i32.const 0x10362)) (local.get $y)) (i32.const 4)))
+    (if (i32.gt_s (local.get $dy) (i32.const 3)) (then (local.set $dy (i32.const 3))))
+    (if (i32.lt_s (local.get $dy) (i32.const -3)) (then (local.set $dy (i32.const -3))))
+    (call $spawn_bullet_raw (local.get $x) (local.get $y) (i32.const 252) (local.get $dy))
   )
 
   (func $update_enemy_bullets
