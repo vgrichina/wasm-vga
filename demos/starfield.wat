@@ -68,6 +68,18 @@
     (local $sx i32) (local $sy i32) (local $sz i32)
     (local $px i32) (local $py i32) (local $brightness i32)
     (local $fb_addr i32)
+    (local $mx i32) (local $my i32)
+
+    ;; Read mouse position as vanishing point
+    (local.set $mx (i32.load16_u (i32.const 0x04)))
+    (local.set $my (i32.load16_u (i32.const 0x06)))
+    ;; Default to center if mouse is at 0,0 (not yet moved)
+    (if (i32.and (i32.eqz (local.get $mx)) (i32.eqz (local.get $my)))
+      (then
+        (local.set $mx (i32.const 160))
+        (local.set $my (i32.const 100))
+      )
+    )
 
     ;; Clear framebuffer to black
     (local.set $i (i32.const 0))
@@ -106,9 +118,9 @@
         ;; Save new z
         (i32.store16 (i32.add (local.get $addr) (i32.const 4)) (local.get $sz))
 
-        ;; Project: px = sx * 160 / sz + 160, py = sy * 100 / sz + 100
-        (local.set $px (i32.add (i32.div_s (i32.mul (local.get $sx) (i32.const 160)) (local.get $sz)) (i32.const 160)))
-        (local.set $py (i32.add (i32.div_s (i32.mul (local.get $sy) (i32.const 100)) (local.get $sz)) (i32.const 100)))
+        ;; Project: px = sx * 160 / sz + mx, py = sy * 100 / sz + my
+        (local.set $px (i32.add (i32.div_s (i32.mul (local.get $sx) (i32.const 160)) (local.get $sz)) (local.get $mx)))
+        (local.set $py (i32.add (i32.div_s (i32.mul (local.get $sy) (i32.const 100)) (local.get $sz)) (local.get $my)))
 
         ;; Brightness based on distance (closer = brighter)
         (local.set $brightness (i32.sub (i32.const 255) (i32.shr_u (local.get $sz) (i32.const 2))))

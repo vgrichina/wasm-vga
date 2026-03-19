@@ -129,23 +129,66 @@
   )
 
   (func (export "frame")
-    (local $i i32) (local $angle i32) (local $dist i32) (local $tick i32)
+    (local $x i32) (local $y i32) (local $tick i32)
+    (local $ox i32) (local $oy i32)
+    (local $sx i32) (local $sy i32)
+    (local $src_idx i32) (local $dst_idx i32)
+    (local $angle i32) (local $dist i32)
     (local $u i32) (local $v i32) (local $color i32)
+
     (local.set $tick (i32.shr_u (i32.load (i32.const 12)) (i32.const 4)))
-    (local.set $i (i32.const 0))
-    (block $done
-      (loop $lp
-        (br_if $done (i32.ge_u (local.get $i) (i32.const 64000)))
-        (local.set $angle (i32.load8_u (i32.add (i32.const 0x10040) (local.get $i))))
-        (local.set $dist  (i32.load8_u (i32.add (i32.const 0x20040) (local.get $i))))
-        ;; texture coords with time offset
-        (local.set $u (i32.and (i32.add (local.get $angle) (local.get $tick)) (i32.const 255)))
-        (local.set $v (i32.and (i32.add (local.get $dist) (i32.mul (local.get $tick) (i32.const 2))) (i32.const 255)))
-        ;; XOR texture
-        (local.set $color (i32.and (i32.xor (local.get $u) (local.get $v)) (i32.const 255)))
-        (i32.store8 (i32.add (i32.const 0x0340) (local.get $i)) (local.get $color))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $lp)
+
+    ;; Mouse offset: map mouse (0..319, 0..199) to offset (-80..+80, -50..+50)
+    ;; ox = (mouse_x - 160) / 2,  oy = (mouse_y - 100) / 2
+    (local.set $ox (i32.shr_s
+      (i32.sub (i32.and (i32.load16_u (i32.const 0x04)) (i32.const 0xFFFF)) (i32.const 160))
+      (i32.const 1)))
+    (local.set $oy (i32.shr_s
+      (i32.sub (i32.and (i32.load16_u (i32.const 0x06)) (i32.const 0xFFFF)) (i32.const 100))
+      (i32.const 1)))
+
+    (local.set $y (i32.const 0))
+    (block $ydone
+      (loop $yloop
+        (br_if $ydone (i32.ge_u (local.get $y) (i32.const 200)))
+        (local.set $x (i32.const 0))
+        (block $xdone
+          (loop $xloop
+            (br_if $xdone (i32.ge_u (local.get $x) (i32.const 320)))
+
+            ;; source pixel = (x - ox, y - oy) in the precomputed table
+            (local.set $sx (i32.sub (local.get $x) (local.get $ox)))
+            (local.set $sy (i32.sub (local.get $y) (local.get $oy)))
+
+            ;; clamp to 0..319 and 0..199
+            (if (i32.lt_s (local.get $sx) (i32.const 0))
+              (then (local.set $sx (i32.const 0))))
+            (if (i32.ge_s (local.get $sx) (i32.const 320))
+              (then (local.set $sx (i32.const 319))))
+            (if (i32.lt_s (local.get $sy) (i32.const 0))
+              (then (local.set $sy (i32.const 0))))
+            (if (i32.ge_s (local.get $sy) (i32.const 200))
+              (then (local.set $sy (i32.const 199))))
+
+            (local.set $src_idx (i32.add (i32.mul (local.get $sy) (i32.const 320)) (local.get $sx)))
+            (local.set $dst_idx (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x)))
+
+            (local.set $angle (i32.load8_u (i32.add (i32.const 0x10040) (local.get $src_idx))))
+            (local.set $dist  (i32.load8_u (i32.add (i32.const 0x20040) (local.get $src_idx))))
+
+            ;; texture coords with time offset
+            (local.set $u (i32.and (i32.add (local.get $angle) (local.get $tick)) (i32.const 255)))
+            (local.set $v (i32.and (i32.add (local.get $dist) (i32.mul (local.get $tick) (i32.const 2))) (i32.const 255)))
+            ;; XOR texture
+            (local.set $color (i32.and (i32.xor (local.get $u) (local.get $v)) (i32.const 255)))
+            (i32.store8 (i32.add (i32.const 0x0340) (local.get $dst_idx)) (local.get $color))
+
+            (local.set $x (i32.add (local.get $x) (i32.const 1)))
+            (br $xloop)
+          )
+        )
+        (local.set $y (i32.add (local.get $y) (i32.const 1)))
+        (br $yloop)
       )
     )
   )

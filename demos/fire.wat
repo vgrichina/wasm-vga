@@ -127,6 +127,43 @@
         (br $yloop)
       )
     )
+    ;; Mouse interaction: paint fire when left button held
+    ;; Reuse $x/$y for mouse coords, $src as brush_y, $dst as brush_x
+    (if (i32.and (i32.load8_u (i32.const 0x08)) (i32.const 1))
+      (then
+        (local.set $val (i32.load16_u (i32.const 0x04)))  ;; mouse x (stash in $val)
+        (local.set $rnd (i32.load16_u (i32.const 0x06)))  ;; mouse y (stash in $rnd)
+        ;; Paint a 7x7 brush of hot pixels around mouse position
+        (local.set $src (i32.sub (local.get $rnd) (i32.const 3)))  ;; brush_y start
+        (block $bydone
+          (loop $byloop
+            (br_if $bydone (i32.gt_s (local.get $src) (i32.add (local.get $rnd) (i32.const 3))))
+            (if (i32.and (i32.ge_s (local.get $src) (i32.const 0)) (i32.lt_s (local.get $src) (i32.const 200)))
+              (then
+                (local.set $dst (i32.sub (local.get $val) (i32.const 3)))  ;; brush_x start
+                (block $bxdone
+                  (loop $bxloop
+                    (br_if $bxdone (i32.gt_s (local.get $dst) (i32.add (local.get $val) (i32.const 3))))
+                    (if (i32.and (i32.ge_s (local.get $dst) (i32.const 0)) (i32.lt_s (local.get $dst) (i32.const 320)))
+                      (then
+                        (i32.store8
+                          (i32.add (i32.const 0x10040)
+                            (i32.add (i32.mul (local.get $src) (i32.const 320)) (local.get $dst)))
+                          (i32.sub (i32.const 255) (i32.and (call $rand) (i32.const 31))))
+                      )
+                    )
+                    (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
+                    (br $bxloop)
+                  )
+                )
+              )
+            )
+            (local.set $src (i32.add (local.get $src) (i32.const 1)))
+            (br $byloop)
+          )
+        )
+      )
+    )
     ;; Copy fire buffer to framebuffer
     (local.set $y (i32.const 0))
     (block $cdone

@@ -118,6 +118,9 @@
     (local $i i32) (local $j i32) (local $idx i32)
     (local $baddr i32) (local $taddr i32)
     (local $tick i32)
+    ;; mouse input
+    (local $mx i32) (local $my i32)
+    (local $mouse_dx f64) (local $mouse_dy f64)
     ;; rotation angles
     (local $ax f64) (local $ay f64) (local $az f64)
     (local $cax f64) (local $sax f64) (local $cay f64) (local $say f64) (local $caz f64) (local $saz f64)
@@ -136,9 +139,21 @@
 
     (local.set $tick (i32.shr_u (i32.load (i32.const 12)) (i32.const 4)))
 
-    ;; Rotation angles
-    (local.set $ax (f64.mul (f64.convert_i32_u (local.get $tick)) (f64.const 0.03)))
-    (local.set $ay (f64.mul (f64.convert_i32_u (local.get $tick)) (f64.const 0.02)))
+    ;; Read mouse position and compute offset from screen center
+    (local.set $mx (i32.load16_u (i32.const 0x04)))
+    (local.set $my (i32.load16_u (i32.const 0x06)))
+    ;; mouse_dx = (mx - 160) / 160.0 => range [-1, 1], scaled to radians
+    (local.set $mouse_dx (f64.mul
+      (f64.div (f64.convert_i32_s (i32.sub (local.get $mx) (i32.const 160))) (f64.const 160.0))
+      (f64.const 3.14159)))
+    ;; mouse_dy = (my - 100) / 100.0 => range [-1, 1], scaled to radians
+    (local.set $mouse_dy (f64.mul
+      (f64.div (f64.convert_i32_s (i32.sub (local.get $my) (i32.const 100))) (f64.const 100.0))
+      (f64.const 3.14159)))
+
+    ;; Rotation angles: time-based + mouse offset
+    (local.set $ax (f64.add (f64.mul (f64.convert_i32_u (local.get $tick)) (f64.const 0.03)) (local.get $mouse_dy)))
+    (local.set $ay (f64.add (f64.mul (f64.convert_i32_u (local.get $tick)) (f64.const 0.02)) (local.get $mouse_dx)))
     (local.set $az (f64.mul (f64.convert_i32_u (local.get $tick)) (f64.const 0.01)))
     (local.set $cax (call $cos_a (local.get $ax)))
     (local.set $sax (call $sin_a (local.get $ax)))

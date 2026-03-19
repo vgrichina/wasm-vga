@@ -94,7 +94,11 @@
   (func (export "frame")
     (local $x i32) (local $y i32) (local $addr i32) (local $tick i32)
     (local $v1 i32) (local $v2 i32) (local $v3 i32) (local $v4 i32) (local $color i32)
+    (local $mx i32) (local $my i32)
     (local.set $tick (i32.shr_u (i32.load (i32.const 12)) (i32.const 4)))
+    ;; Read mouse position from control block
+    (local.set $mx (i32.load16_u (i32.const 0x04)))
+    (local.set $my (i32.load16_u (i32.const 0x06)))
     (local.set $y (i32.const 0))
     (block $ydone
       (loop $yloop
@@ -103,13 +107,17 @@
         (block $xdone
           (loop $xloop
             (br_if $xdone (i32.ge_u (local.get $x) (i32.const 320)))
-            ;; plasma = sum of several sin lookups
-            (local.set $v1 (call $sin_tab (i32.add (local.get $x) (local.get $tick))))
-            (local.set $v2 (call $sin_tab (i32.add (local.get $y) (i32.shl (local.get $tick) (i32.const 1)))))
-            (local.set $v3 (call $sin_tab (i32.add (i32.add (local.get $x) (local.get $y)) (local.get $tick))))
+            ;; plasma = sum of several sin lookups, mouse shifts offsets
+            (local.set $v1 (call $sin_tab (i32.add (i32.add (local.get $x) (local.get $tick))
+              (i32.shr_u (local.get $mx) (i32.const 2)))))
+            (local.set $v2 (call $sin_tab (i32.add (i32.add (local.get $y) (i32.shl (local.get $tick) (i32.const 1)))
+              (i32.shr_u (local.get $my) (i32.const 2)))))
+            (local.set $v3 (call $sin_tab (i32.add (i32.add (local.get $x) (local.get $y))
+              (i32.add (local.get $tick) (i32.shr_u (i32.add (local.get $mx) (local.get $my)) (i32.const 3))))))
             (local.set $v4 (call $sin_tab (i32.add
               (i32.add (i32.mul (local.get $x) (i32.const 2)) (i32.mul (local.get $y) (i32.const 3)))
-              (i32.mul (local.get $tick) (i32.const 3)))))
+              (i32.add (i32.mul (local.get $tick) (i32.const 3))
+                (i32.shr_u (i32.mul (local.get $mx) (local.get $my)) (i32.const 8))))))
             (local.set $color (i32.and
               (i32.shr_u (i32.add (i32.add (local.get $v1) (local.get $v2))
                 (i32.add (local.get $v3) (local.get $v4))) (i32.const 2))

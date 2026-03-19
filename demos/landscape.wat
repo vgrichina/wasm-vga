@@ -108,11 +108,23 @@
     (i32.store8 (i32.add (local.get $addr) (i32.const 2)) (local.get $b))
   )
 
+  ;; Dynamic camera state (top of guest area)
+  ;; 0x3F000: cam_x (f64)
+  ;; 0x3F008: cam_y (f64)
+  ;; 0x3F010: cam_angle (f64)
+  ;; 0x3F018: speed (f64)
+
   (func (export "init")
     (local $i i32) (local $x i32) (local $y i32) (local $pass i32)
     (local $h i32) (local $avg i32)
 
     (i32.store (i32.const 0x18040) (i32.const 314159))
+
+    ;; Initialize camera state
+    (f64.store (i32.const 0x3F000) (f64.const 64.0))   ;; cam_x = center
+    (f64.store (i32.const 0x3F008) (f64.const 64.0))   ;; cam_y = center
+    (f64.store (i32.const 0x3F010) (f64.const 0.0))    ;; cam_angle = 0
+    (f64.store (i32.const 0x3F018) (f64.const 0.3))    ;; speed = base forward speed
 
     ;; Setup palette
     (local.set $i (i32.const 0))
@@ -178,18 +190,60 @@
     (local $rx f64) (local $ry f64)
     (local $angle_offset f64)
     (local $sky_r i32) (local $sky_g i32) (local $sky_b i32)
+    (local $keys i32) (local $mouse_y i32) (local $speed f64)
 
     (local.set $tick (i32.load (i32.const 12)))
 
-    ;; Camera: fly in a circle
-    (local.set $cam_angle (f64.mul (f64.convert_i32_u (local.get $tick)) (f64.const 0.0004)))
-    (local.set $cam_x (f64.add (f64.const 64.0)
-      (f64.mul (call $cos_approx (f64.mul (local.get $cam_angle) (f64.const 0.5))) (f64.const 40.0))))
-    (local.set $cam_y (f64.add (f64.const 64.0)
-      (f64.mul (call $sin_approx (f64.mul (local.get $cam_angle) (f64.const 0.5))) (f64.const 40.0))))
-    ;; Camera height well above terrain
-    (local.set $cam_h (f64.add (f64.const 180.0)
-      (f64.mul (call $sin_approx (f64.mul (local.get $cam_angle) (f64.const 1.5))) (f64.const 40.0))))
+    ;; Read keyboard state (0x10): bit0=Up, bit1=Down, bit2=Left, bit3=Right
+    (local.set $keys (i32.load8_u (i32.const 0x10)))
+    ;; Read mouse y (u16 at 0x06)
+    (local.set $mouse_y (i32.load16_u (i32.const 0x06)))
+
+    ;; Load camera state from memory
+    (local.set $cam_x (f64.load (i32.const 0x3F000)))
+    (local.set $cam_y (f64.load (i32.const 0x3F008)))
+    (local.set $cam_angle (f64.load (i32.const 0x3F010)))
+    (local.set $speed (f64.load (i32.const 0x3F018)))
+
+    ;; Left arrow (bit2): turn left
+    (if (i32.and (local.get $keys) (i32.const 4))
+      (then (local.set $cam_angle (f64.sub (local.get $cam_angle) (f64.const 0.03)))))
+    ;; Right arrow (bit3): turn right
+    (if (i32.and (local.get $keys) (i32.const 8))
+      (then (local.set $cam_angle (f64.add (local.get $cam_angle) (f64.const 0.03)))))
+
+    ;; Up arrow (bit0): accelerate forward
+    (if (i32.and (local.get $keys) (i32.const 1))
+      (then (local.set $speed (f64.min (f64.add (local.get $speed) (f64.const 0.02)) (f64.const 1.5))))
+      (else
+        ;; Down arrow (bit1): brake/slow down
+        (if (i32.and (local.get $keys) (i32.const 2))
+          (then (local.set $speed (f64.max (f64.sub (local.get $speed) (f64.const 0.03)) (f64.const 0.0))))
+          (else
+            ;; No up/down: drift toward base speed
+            (if (f64.gt (local.get $speed) (f64.const 0.3))
+              (then (local.set $speed (f64.sub (local.get $speed) (f64.const 0.005)))))
+          )
+        )
+      )
+    )
+
+    ;; Move camera forward based on angle and speed
+    (local.set $cam_x (f64.add (local.get $cam_x)
+      (f64.mul (call $cos_approx (local.get $cam_angle)) (local.get $speed))))
+    (local.set $cam_y (f64.add (local.get $cam_y)
+      (f64.mul (call $sin_approx (local.get $cam_angle)) (local.get $speed))))
+
+    ;; Store updated camera state
+    (f64.store (i32.const 0x3F000) (local.get $cam_x))
+    (f64.store (i32.const 0x3F008) (local.get $cam_y))
+    (f64.store (i32.const 0x3F010) (local.get $cam_angle))
+    (f64.store (i32.const 0x3F018) (local.get $speed))
+
+    ;; Camera height from mouse y: mouse_y 0..199 maps to height 280..100
+    ;; height = 280 - mouse_y * 0.9
+    (local.set $cam_h (f64.sub (f64.const 280.0)
+      (f64.mul (f64.convert_i32_u (local.get $mouse_y)) (f64.const 0.9))))
 
     ;; Look direction
     (local.set $cos_a (call $cos_approx (local.get $cam_angle)))

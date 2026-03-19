@@ -5,6 +5,7 @@
   ;; Memory layout:
   ;;   0x10040  Map 16x16 (256 bytes)
   ;;   0x10140  Player: px(f32), py(f32), angle(f32)
+  ;;   0x1014C  Prev mouse X (i32, for relative mouse turning)
   ;;   0x10200  Textures: 4 * 64*64 = 16384 bytes (indexed color 0-255)
   ;;   0x14200  PRNG state (4 bytes)
 
@@ -298,13 +299,86 @@
     (local $tick i32)
     (local $shade f64) (local $shaded_color i32)
     (local $ceil_color i32) (local $floor_color i32)
+    (local $keys i32) (local $mouse_x i32) (local $prev_mouse_x i32)
+    (local $move_dx f64) (local $move_dy f64)
+    (local $new_px f64) (local $new_py f64)
+    (local $cos_a f64) (local $sin_a f64)
+    (local $move_speed f64) (local $turn_speed f64)
 
     (local.set $tick (i32.shr_u (i32.load (i32.const 12)) (i32.const 4)))
 
-    ;; Auto-rotate and orbit
-    (local.set $player_angle (f64.mul (f64.convert_i32_u (local.get $tick)) (f64.const 0.02)))
-    (local.set $px (f64.add (f64.const 8.0) (f64.mul (call $cos_approx (f64.mul (local.get $player_angle) (f64.const 0.3))) (f64.const 4.5))))
-    (local.set $py (f64.add (f64.const 8.0) (f64.mul (call $sin_approx (f64.mul (local.get $player_angle) (f64.const 0.3))) (f64.const 4.5))))
+    ;; Load player state from memory
+    (local.set $px (f64.promote_f32 (f32.load (i32.const 0x10140))))
+    (local.set $py (f64.promote_f32 (f32.load (i32.const 0x10144))))
+    (local.set $player_angle (f64.promote_f32 (f32.load (i32.const 0x10148))))
+
+    ;; Read input
+    (local.set $keys (i32.load8_u (i32.const 0x10)))
+    (local.set $mouse_x (i32.load16_u (i32.const 0x04)))
+    (local.set $prev_mouse_x (i32.load (i32.const 0x1014C)))
+
+    ;; Movement/turn speeds
+    (local.set $move_speed (f64.const 0.06))
+    (local.set $turn_speed (f64.const 0.04))
+
+    ;; Precompute direction
+    (local.set $cos_a (call $cos_approx (local.get $player_angle)))
+    (local.set $sin_a (call $sin_approx (local.get $player_angle)))
+
+    ;; --- Turning: Left/Right keys (bits 2,3) ---
+    ;; bit2 = Left/A = turn left
+    (if (i32.and (local.get $keys) (i32.const 4))
+      (then (local.set $player_angle (f64.sub (local.get $player_angle) (local.get $turn_speed)))))
+    ;; bit3 = Right/D = turn right
+    (if (i32.and (local.get $keys) (i32.const 8))
+      (then (local.set $player_angle (f64.add (local.get $player_angle) (local.get $turn_speed)))))
+
+    ;; --- Mouse turning: relative mouse_x movement ---
+    ;; Only apply if prev_mouse_x is valid (non-zero, meaning not first frame)
+    (if (local.get $prev_mouse_x)
+      (then
+        (local.set $player_angle (f64.add (local.get $player_angle)
+          (f64.mul (f64.convert_i32_s (i32.sub (local.get $mouse_x) (local.get $prev_mouse_x)))
+                   (f64.const 0.01))))))
+    ;; Store current mouse_x as prev
+    (i32.store (i32.const 0x1014C) (local.get $mouse_x))
+
+    ;; Recompute direction after turning
+    (local.set $cos_a (call $cos_approx (local.get $player_angle)))
+    (local.set $sin_a (call $sin_approx (local.get $player_angle)))
+
+    ;; --- Movement: Forward/Back (bits 0,1) ---
+    (local.set $move_dx (f64.const 0.0))
+    (local.set $move_dy (f64.const 0.0))
+    ;; bit0 = Up/W = forward
+    (if (i32.and (local.get $keys) (i32.const 1))
+      (then
+        (local.set $move_dx (f64.add (local.get $move_dx) (f64.mul (local.get $cos_a) (local.get $move_speed))))
+        (local.set $move_dy (f64.add (local.get $move_dy) (f64.mul (local.get $sin_a) (local.get $move_speed))))))
+    ;; bit1 = Down/S = backward
+    (if (i32.and (local.get $keys) (i32.const 2))
+      (then
+        (local.set $move_dx (f64.sub (local.get $move_dx) (f64.mul (local.get $cos_a) (local.get $move_speed))))
+        (local.set $move_dy (f64.sub (local.get $move_dy) (f64.mul (local.get $sin_a) (local.get $move_speed))))))
+
+    ;; --- Collision detection: try X and Y independently with 0.2 margin ---
+    ;; Try X movement
+    (local.set $new_px (f64.add (local.get $px) (local.get $move_dx)))
+    (if (i32.eqz (call $map_get
+          (i32.trunc_f64_s (f64.add (local.get $new_px) (select (f64.const 0.2) (f64.const -0.2) (f64.gt (local.get $move_dx) (f64.const 0.0)))))
+          (i32.trunc_f64_s (local.get $py))))
+      (then (local.set $px (local.get $new_px))))
+    ;; Try Y movement
+    (local.set $new_py (f64.add (local.get $py) (local.get $move_dy)))
+    (if (i32.eqz (call $map_get
+          (i32.trunc_f64_s (local.get $px))
+          (i32.trunc_f64_s (f64.add (local.get $new_py) (select (f64.const 0.2) (f64.const -0.2) (f64.gt (local.get $move_dy) (f64.const 0.0)))))))
+      (then (local.set $py (local.get $new_py))))
+
+    ;; Store updated player state
+    (f32.store (i32.const 0x10140) (f32.demote_f64 (local.get $px)))
+    (f32.store (i32.const 0x10144) (f32.demote_f64 (local.get $py)))
+    (f32.store (i32.const 0x10148) (f32.demote_f64 (local.get $player_angle)))
 
     ;; Clear framebuffer: gradient ceiling and floor
     (local.set $row (i32.const 0))
