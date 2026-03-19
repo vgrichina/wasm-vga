@@ -160,8 +160,19 @@ Music patterns are defined in `harness.js` as multi-track sequencers (bass + arp
 - `duration_ms`: length in milliseconds
 - `volume`: 0-255
 
+## sin_approx
+
+Must reduce to [0, π/2] before Taylor polynomial (3 steps: mod 2π, sign-flip at π, reflect at π/2). The old 2-step version (reduce to [-π, π]) has ~0.075 error at boundaries — causes wall gaps, wrong positions. Copy from `demos/raycaster.wat:$sin_approx` as the reference implementation.
+
+## Autopilot Convention
+
+Interactive demos must self-demo when idle. Idle counter pattern: start in autopilot, switch to manual on input, revert after ~60 idle frames. Skip mouse delta check when previous reading is (0,0) (first-frame jump). See `demos/raycaster.wat` for reference (autopilot + manual + idle detection).
+
 ## Adding a New Demo
 
 1. Create `demos/newdemo.wat` implementing `init` and `frame` exports
 2. Add `<option value="newdemo">newdemo</option>` to the select in `index.html`
-3. Deploy both files
+3. Add entry to `info.html` demo list
+4. If interactive: implement autopilot (see above)
+5. Copy `$sin_approx` from `raycaster.wat` — not the old 2-step version
+6. Deploy all changed files
