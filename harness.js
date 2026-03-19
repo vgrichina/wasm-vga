@@ -26,9 +26,55 @@ let animId = null;
 let frameCount = 0, lastFpsTime = 0;
 
 // --- Sound engine ---
-let audioCtx = null, masterGain = null, isMuted = false;
+let audioCtx = null, masterGain = null, isMuted = false, audioDest = null;
 let noiseBuffer = null;
 let musicInterval = null, musicStep = 0;
+
+// --- Recording ---
+let recorder = null, recordChunks = [];
+
+function startRecording() {
+  ensureAudio();
+  if (!audioDest) {
+    audioDest = audioCtx.createMediaStreamDestination();
+    masterGain.connect(audioDest);
+  }
+  const stream = new MediaStream([
+    ...canvas.captureStream(30).getVideoTracks(),
+    ...audioDest.stream.getAudioTracks()
+  ]);
+  const types = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
+  const mimeType = types.find(t => MediaRecorder.isTypeSupported(t));
+  const opts = mimeType ? { mimeType } : {};
+  recorder = new MediaRecorder(stream, opts);
+  recordChunks = [];
+  const recMime = recorder.mimeType;
+  const recName = document.getElementById('demo').value;
+  recorder.ondataavailable = e => { if (e.data.size) recordChunks.push(e.data); };
+  recorder.onstop = () => {
+    const blob = new Blob(recordChunks, { type: recMime });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const ext = recMime.includes('mp4') ? 'mp4' : 'webm';
+    a.download = `${recName}-${Date.now()}.${ext}`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  recorder.start(1000);
+  document.getElementById('rec-btn').classList.add('recording');
+  document.getElementById('rec-btn').textContent = 'STOP';
+}
+
+function stopRecording() {
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+  recorder = null;
+  document.getElementById('rec-btn').classList.remove('recording');
+  document.getElementById('rec-btn').textContent = 'REC';
+}
+
+function toggleRecord() {
+  if (recorder) stopRecording(); else startRecording();
+}
 
 function ensureAudio() {
   if (audioCtx) { if (audioCtx.state === 'suspended') audioCtx.resume(); return; }
@@ -334,6 +380,7 @@ function setupVirtualControls() {
 }
 
 async function loadDemo() {
+  if (recorder) stopRecording();
   if (animId) { cancelAnimationFrame(animId); animId = null; }
 
   const name = document.getElementById('demo').value;

@@ -108,7 +108,20 @@
     cursor: pointer;
     transition: border-color 0.2s, color 0.2s;
   }
-  #fs-btn:hover, #info-btn:hover, #src-btn:hover, #mute-btn:hover { border-color: var(--accent-dim); color: var(--text); }
+  #fs-btn:hover, #info-btn:hover, #src-btn:hover, #mute-btn:hover, #rec-btn:hover { border-color: var(--accent-dim); color: var(--text); }
+  #rec-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 7px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  #rec-btn.recording { color: #ff4444; border-color: #ff4444; }
   #src-btn {
     background: none;
     border: 1px solid var(--border);
@@ -374,6 +387,7 @@
       <option value="codeover">codeover</option>
     </select>
     <button id="mute-btn" onclick="toggleMute()" title="Toggle Sound" style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:4px 7px;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;border-radius:4px;cursor:pointer;transition:border-color 0.2s,color 0.2s;">SND</button>
+    <button id="rec-btn" onclick="toggleRecord()" title="Record Video">REC</button>
     <button id="fs-btn" onclick="toggleFullscreen()" title="Fullscreen">[&nbsp;]</button>
     <button id="src-btn" onclick="toggleSource()" title="View Source">&lt;/&gt;</button>
     <a href="/info.html" id="info-btn" title="About">?</a>
