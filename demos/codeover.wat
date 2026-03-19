@@ -164,6 +164,66 @@
   )
 
   ;; =========================================================
+  ;; UTILITY: draw starfield (120 static stars, palette-based twinkle)
+  ;; max_y: stars only placed in rows 0..max_y-1
+  ;; tick: time value for palette animation
+  ;; Stars use shared palette indices 1-6 (all sections keep these free)
+  ;; 6 entries with different phase offsets = desynchronized twinkle
+  ;; Call AFTER clear_fb, BEFORE other rendering
+  ;; =========================================================
+  (func $draw_stars (param $max_y i32) (param $tick i32)
+    (local $i i32) (local $x i32) (local $y i32) (local $layer i32)
+    (local $wave i32) (local $base i32) (local $bright i32)
+
+    ;; Animate palette entries 1-6 with phase-shifted sin waves
+    ;; Pairs (0,1), (2,3), (4,5) share a brightness tier but differ in phase
+    (local.set $i (i32.const 0))
+    (block $pd (loop $pl
+      (br_if $pd (i32.ge_u (local.get $i) (i32.const 6)))
+      ;; wave = sin_tab((tick>>3) + i*43) => 0-255, 43≈256/6
+      (local.set $wave (call $sin_tab (i32.add
+        (i32.shr_u (local.get $tick) (i32.const 3))
+        (i32.mul (local.get $i) (i32.const 43)))))
+      ;; base brightness per tier: dim(60), med(130), bright(210)
+      ;; tier = i/2 (0,1→dim, 2,3→med, 4,5→bright)
+      (local.set $base (i32.add (i32.const 60)
+        (i32.mul (i32.div_u (local.get $i) (i32.const 2)) (i32.const 75))))
+      ;; bright = base + (wave-128)>>2, clamped 30-255
+      (local.set $bright (i32.add (local.get $base)
+        (i32.shr_s (i32.sub (local.get $wave) (i32.const 128)) (i32.const 2))))
+      (if (i32.lt_s (local.get $bright) (i32.const 30))
+        (then (local.set $bright (i32.const 30))))
+      (if (i32.gt_s (local.get $bright) (i32.const 255))
+        (then (local.set $bright (i32.const 255))))
+      ;; Set palette: slight blue tint (+20 on B channel)
+      (call $set_pal (i32.add (local.get $i) (i32.const 1))
+        (local.get $bright) (local.get $bright)
+        (select (i32.const 255)
+          (i32.add (local.get $bright) (i32.const 20))
+          (i32.gt_s (i32.add (local.get $bright) (i32.const 20)) (i32.const 255))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $pl)
+    ))
+
+    ;; Plot 120 stars at deterministic positions
+    (local.set $i (i32.const 0))
+    (block $sd (loop $sl
+      (br_if $sd (i32.ge_u (local.get $i) (i32.const 120)))
+      (local.set $x (i32.rem_u (i32.add
+        (i32.mul (local.get $i) (i32.const 197)) (i32.const 53)) (i32.const 320)))
+      (local.set $y (i32.rem_u (i32.add
+        (i32.mul (local.get $i) (i32.const 53)) (i32.const 71)) (local.get $max_y)))
+      ;; layer = 1 + (i % 6)
+      (local.set $layer (i32.add (i32.rem_u (local.get $i) (i32.const 6)) (i32.const 1)))
+      (i32.store8 (i32.add (i32.const 0x0340)
+        (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x)))
+        (local.get $layer))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $sl)
+    ))
+  )
+
+  ;; =========================================================
   ;; UTILITY: clear framebuffer to palette index 0
   ;; =========================================================
   (func $clear_fb
@@ -195,24 +255,25 @@
     (local $i i32) (local $g i32)
     ;; 0 = black
     (call $set_pal (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    ;; 1-20: long green trail ramp (dark → bright green)
+    ;; 10-29: long green trail ramp (dark → bright green)
+    ;; Loop i=1..20, palette index = i+9
     (local.set $i (i32.const 1))
     (block $done (loop $lp
       (br_if $done (i32.gt_u (local.get $i) (i32.const 20)))
       (local.set $g (i32.div_u (i32.mul (local.get $i) (i32.const 220)) (i32.const 20)))
-      (call $set_pal (local.get $i)
+      (call $set_pal (i32.add (local.get $i) (i32.const 9))
         (i32.div_u (local.get $g) (i32.const 6))
         (local.get $g)
         (i32.div_u (local.get $g) (i32.const 8)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)
     ))
-    ;; 21 = bright white-green head
-    (call $set_pal (i32.const 21) (i32.const 180) (i32.const 255) (i32.const 180))
-    ;; 22 = white flash (brand new char)
-    (call $set_pal (i32.const 22) (i32.const 255) (i32.const 255) (i32.const 255))
-    ;; 15 = berrry green for reveal text
-    (call $set_pal (i32.const 15) (i32.const 0) (i32.const 221) (i32.const 136))
+    ;; 30 = bright white-green head
+    (call $set_pal (i32.const 30) (i32.const 180) (i32.const 255) (i32.const 180))
+    ;; 31 = white flash (brand new char)
+    (call $set_pal (i32.const 31) (i32.const 255) (i32.const 255) (i32.const 255))
+    ;; 32 = berrry green for reveal text
+    (call $set_pal (i32.const 32) (i32.const 0) (i32.const 221) (i32.const 136))
   )
 
   ;; Draw a single 8x8 char at pixel (px, py) with given color
@@ -326,13 +387,13 @@
                     (i32.const 94))
                   (i32.const 33)))
 
-                ;; Color: head=22(white), next 2=21(bright), rest fade 20→5
+                ;; Color: head=31(white), next 2=30(bright), rest fade 29→10
                 (local.set $trail_color
-                  (select (i32.const 22)
-                    (select (i32.const 21)
+                  (select (i32.const 31)
+                    (select (i32.const 30)
                       (select
-                        (i32.sub (i32.const 20) (local.get $trail_i))
-                        (i32.const 1)
+                        (i32.sub (i32.const 29) (local.get $trail_i))
+                        (i32.const 10)
                         (i32.lt_u (local.get $trail_i) (i32.const 19)))
                       (i32.lt_u (local.get $trail_i) (i32.const 3)))
                     (i32.eqz (local.get $trail_i))))
@@ -368,7 +429,7 @@
           (local.set $target_ch (i32.load8_u (i32.add (i32.const 0x10750) (local.get $ri))))
           (local.set $target_x (i32.add (i32.const 115)
             (i32.mul (local.get $ri) (i32.const 9))))
-          (call $draw_char_at (local.get $target_ch) (local.get $target_x) (i32.const 96) (i32.const 15))
+          (call $draw_char_at (local.get $target_ch) (local.get $target_x) (i32.const 96) (i32.const 32))
           (local.set $ri (i32.add (local.get $ri) (i32.const 1)))
           (br $rvl)
         ))
@@ -382,39 +443,40 @@
     (local $i i32)
     ;; 0 = dark purple sky
     (call $set_pal (i32.const 0) (i32.const 15) (i32.const 8) (i32.const 30))
-    ;; 1-85: fire palette (black → red → yellow → white)
-    (local.set $i (i32.const 1))
+    ;; 1-3: stars (set by $draw_stars each frame)
+    ;; 10-94: fire palette (black → red → yellow → white)
+    ;; Loop i=0..84, palette index = i+10
+    (local.set $i (i32.const 0))
     (block $done (loop $lp
-      (br_if $done (i32.gt_u (local.get $i) (i32.const 85)))
-      (if (i32.lt_u (local.get $i) (i32.const 29))
+      (br_if $done (i32.gt_u (local.get $i) (i32.const 84)))
+      (if (i32.lt_u (local.get $i) (i32.const 28))
         (then ;; black to red
-          (call $set_pal (local.get $i) (i32.mul (local.get $i) (i32.const 9)) (i32.const 0) (i32.const 0)))
-        (else (if (i32.lt_u (local.get $i) (i32.const 57))
+          (call $set_pal (i32.add (local.get $i) (i32.const 10))
+            (i32.mul (local.get $i) (i32.const 9)) (i32.const 0) (i32.const 0)))
+        (else (if (i32.lt_u (local.get $i) (i32.const 56))
           (then ;; red to yellow
-            (call $set_pal (local.get $i) (i32.const 255)
-              (i32.mul (i32.sub (local.get $i) (i32.const 29)) (i32.const 9)) (i32.const 0)))
+            (call $set_pal (i32.add (local.get $i) (i32.const 10)) (i32.const 255)
+              (i32.mul (i32.sub (local.get $i) (i32.const 28)) (i32.const 9)) (i32.const 0)))
           (else ;; yellow to white
-            (call $set_pal (local.get $i) (i32.const 255) (i32.const 255)
-              (i32.mul (i32.sub (local.get $i) (i32.const 57)) (i32.const 9)))))))
+            (call $set_pal (i32.add (local.get $i) (i32.const 10)) (i32.const 255) (i32.const 255)
+              (i32.mul (i32.sub (local.get $i) (i32.const 56)) (i32.const 9)))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)
     ))
-    ;; 86 = dark brown ground
-    (call $set_pal (i32.const 86) (i32.const 50) (i32.const 28) (i32.const 10))
-    ;; 87 = gray tombstone
-    (call $set_pal (i32.const 87) (i32.const 70) (i32.const 70) (i32.const 80))
-    ;; 88 = lighter tombstone edge
-    (call $set_pal (i32.const 88) (i32.const 110) (i32.const 110) (i32.const 120))
-    ;; 89 = white for text/stars
-    (call $set_pal (i32.const 89) (i32.const 255) (i32.const 255) (i32.const 255))
-    ;; 90 = berrry green
-    (call $set_pal (i32.const 90) (i32.const 0) (i32.const 221) (i32.const 136))
-    ;; 91 = dim star
-    (call $set_pal (i32.const 91) (i32.const 100) (i32.const 100) (i32.const 140))
+    ;; 95 = dark brown ground
+    (call $set_pal (i32.const 95) (i32.const 50) (i32.const 28) (i32.const 10))
+    ;; 96 = gray tombstone
+    (call $set_pal (i32.const 96) (i32.const 70) (i32.const 70) (i32.const 80))
+    ;; 97 = lighter tombstone edge
+    (call $set_pal (i32.const 97) (i32.const 110) (i32.const 110) (i32.const 120))
+    ;; 98 = white for text
+    (call $set_pal (i32.const 98) (i32.const 255) (i32.const 255) (i32.const 255))
+    ;; 99 = berrry green
+    (call $set_pal (i32.const 99) (i32.const 0) (i32.const 221) (i32.const 136))
   )
 
   (func $render_grave (param $elapsed i32)
-    (local $t i32) (local $i i32) (local $x i32) (local $y i32) (local $fb i32)
+    (local $t i32) (local $i i32) (local $x i32) (local $y i32)
     (local $rise i32) (local $tx i32) (local $ty i32) (local $tw i32) (local $th i32)
     (local $ti i32) (local $heat i32) (local $v1 i32) (local $v2 i32)
 
@@ -424,22 +486,8 @@
     ;; Fill screen with sky color (0)
     (call $clear_fb)
 
-    ;; Draw stars (deterministic from position)
-    (local.set $i (i32.const 0))
-    (block $sd (loop $sl
-      (br_if $sd (i32.ge_u (local.get $i) (i32.const 60)))
-      ;; pseudo-random star positions from seed
-      (local.set $x (i32.rem_u (i32.mul (local.get $i) (i32.const 197)) (i32.const 320)))
-      (local.set $y (i32.rem_u (i32.mul (local.get $i) (i32.const 53)) (i32.const 130)))
-      ;; twinkle: alternate between bright and dim based on tick
-      (local.set $fb (i32.add (i32.const 0x0340)
-        (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x))))
-      (i32.store8 (local.get $fb)
-        (select (i32.const 89) (i32.const 91)
-          (i32.and (i32.add (local.get $i) (i32.shr_u (local.get $t) (i32.const 9))) (i32.const 1))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $sl)
-    ))
+    ;; Draw stars (static positions, palette-animated twinkle)
+    (call $draw_stars (i32.const 130) (local.get $t))
 
     ;; Draw 6 tombstones rising from bottom
     ;; Rise: over first 4s of section, from y=200 to target y
@@ -472,7 +520,7 @@
     (block $sd (loop $sl
       (br_if $sd (i32.ge_u (local.get $x) (i32.const 320)))
       (i32.store8 (i32.add (i32.const 0x38100) (i32.add (i32.mul (i32.const 79) (i32.const 320)) (local.get $x)))
-        (i32.rem_u (i32.and (call $rand) (i32.const 127)) (i32.const 86)))
+        (i32.add (i32.rem_u (i32.and (call $rand) (i32.const 127)) (i32.const 85)) (i32.const 10)))
       (local.set $x (i32.add (local.get $x) (i32.const 1)))
       (br $sl)
     ))
@@ -524,7 +572,7 @@
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $fl)
     ))
-    ;; Overlay fire buffer onto framebuffer where intensity > 3
+    ;; Overlay fire buffer onto framebuffer where intensity > 12 (fire palette starts at 10)
     (local.set $y (i32.const 0))
     (block $od (loop $ol
       (br_if $od (i32.ge_u (local.get $y) (i32.const 80)))
@@ -533,7 +581,7 @@
         (br_if $oxd (i32.ge_u (local.get $x) (i32.const 320)))
         (local.set $heat (i32.load8_u (i32.add (i32.const 0x38100)
           (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x)))))
-        (if (i32.gt_u (local.get $heat) (i32.const 3))
+        (if (i32.gt_u (local.get $heat) (i32.const 12))
           (then
             (i32.store8 (i32.add (i32.const 0x0340)
               (i32.add (i32.mul (i32.add (local.get $y) (i32.const 120)) (i32.const 320)) (local.get $x)))
@@ -551,14 +599,14 @@
     (if (i32.gt_u (local.get $t) (i32.const 3000))
       (then
         (call $draw_text (i32.const 0x10740) (i32.const 14)
-          (i32.const 34) (i32.const 55) (i32.const 2) (i32.const 89))))
+          (i32.const 34) (i32.const 55) (i32.const 2) (i32.const 98))))
 
     ;; "BERRRY.APP PRESENTS" at top center, 1x scale
     ;; 19 chars * 9px = 171px. centered: (320-171)/2 = 74
     (if (i32.gt_u (local.get $t) (i32.const 2000))
       (then
         (call $draw_text (i32.const 0x10760) (i32.const 19)
-          (i32.const 74) (i32.const 8) (i32.const 1) (i32.const 90))))
+          (i32.const 74) (i32.const 8) (i32.const 1) (i32.const 99))))
   )
 
   ;; Helper: draw a tombstone rectangle with text
@@ -588,7 +636,7 @@
                   (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x))))
                 ;; Edge pixels lighter
                 (i32.store8 (local.get $fb)
-                  (select (i32.const 88) (i32.const 87)
+                  (select (i32.const 97) (i32.const 96)
                     (i32.or
                       (i32.eq (local.get $x) (local.get $tx))
                       (i32.or
@@ -610,7 +658,7 @@
     (if (i32.ge_s (local.get $text_y) (i32.const 0))
       (then
         (call $draw_text (local.get $str) (local.get $slen)
-          (local.get $text_x) (local.get $text_y) (i32.const 1) (i32.const 89))))
+          (local.get $text_x) (local.get $text_y) (i32.const 1) (i32.const 98))))
   )
 
   ;; =========================================================
@@ -619,16 +667,16 @@
   (func $pal_plasma
     ;; 0 = black
     (call $set_pal (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    ;; 1 = white text
-    (call $set_pal (i32.const 1) (i32.const 255) (i32.const 255) (i32.const 255))
-    ;; 2 = berrry green
-    (call $set_pal (i32.const 2) (i32.const 0) (i32.const 221) (i32.const 136))
-    ;; 3 = glitch bright
-    (call $set_pal (i32.const 3) (i32.const 200) (i32.const 200) (i32.const 220))
-    ;; 4 = dim pulse
-    (call $set_pal (i32.const 4) (i32.const 40) (i32.const 40) (i32.const 50))
-    ;; 5 = red accent
-    (call $set_pal (i32.const 5) (i32.const 200) (i32.const 30) (i32.const 30))
+    ;; 10 = white text
+    (call $set_pal (i32.const 10) (i32.const 255) (i32.const 255) (i32.const 255))
+    ;; 11 = berrry green
+    (call $set_pal (i32.const 11) (i32.const 0) (i32.const 221) (i32.const 136))
+    ;; 12 = glitch bright
+    (call $set_pal (i32.const 12) (i32.const 200) (i32.const 200) (i32.const 220))
+    ;; 13 = dim pulse
+    (call $set_pal (i32.const 13) (i32.const 40) (i32.const 40) (i32.const 50))
+    ;; 14 = red accent
+    (call $set_pal (i32.const 14) (i32.const 200) (i32.const 30) (i32.const 30))
   )
 
   (func $render_plasma (param $elapsed i32)
@@ -661,7 +709,7 @@
               (then
                 (i32.store8 (i32.add (i32.const 0x0340)
                   (i32.add (i32.mul (local.get $glitch_y) (i32.const 320)) (local.get $x)))
-                  (select (i32.const 3) (i32.const 4)
+                  (select (i32.const 12) (i32.const 13)
                     (i32.lt_u (i32.and (call $rand) (i32.const 3)) (i32.const 2))))))
             (local.set $x (i32.add (local.get $x) (i32.const 1)))
             (br $gwl)
@@ -679,12 +727,12 @@
         (local.set $pulse (i32.div_u
           (i32.mul (i32.sub (i32.const 1200) (local.get $t)) (i32.const 255))
           (i32.const 400)))
-        (call $set_pal (i32.const 4) (local.get $pulse) (local.get $pulse) (local.get $pulse))
+        (call $set_pal (i32.const 13) (local.get $pulse) (local.get $pulse) (local.get $pulse))
         ;; Fill with flash color
         (local.set $y (i32.const 0))
         (block $fd (loop $fl
           (br_if $fd (i32.ge_u (local.get $y) (i32.const 64000)))
-          (i32.store8 (i32.add (i32.const 0x0340) (local.get $y)) (i32.const 4))
+          (i32.store8 (i32.add (i32.const 0x0340) (local.get $y)) (i32.const 13))
           (local.set $y (i32.add (local.get $y) (i32.const 1)))
           (br $fl)
         ))
@@ -707,7 +755,7 @@
         (call $draw_text (i32.const 0x10780) (i32.const 17)
           (i32.add (i32.const 7) (local.get $shake_x))
           (i32.add (i32.const 88) (local.get $shake_y))
-          (i32.const 2) (i32.const 1))
+          (i32.const 2) (i32.const 10))
 
         ;; Occasional glitch bars
         (if (i32.lt_u (i32.and (local.get $t) (i32.const 255)) (i32.const 12))
@@ -722,7 +770,7 @@
                 (br_if $hxd (i32.ge_u (local.get $x) (i32.const 320)))
                 (i32.store8 (i32.add (i32.const 0x0340)
                   (i32.add (i32.mul (local.get $glitch_y) (i32.const 320)) (local.get $x)))
-                  (select (i32.const 3) (i32.const 0)
+                  (select (i32.const 12) (i32.const 0)
                     (i32.lt_u (i32.and (call $rand) (i32.const 7)) (i32.const 2))))
                 (local.set $x (i32.add (local.get $x) (i32.const 1)))
                 (br $hxl)
@@ -741,23 +789,18 @@
     (local $i i32)
     ;; 0 = deep blue-black
     (call $set_pal (i32.const 0) (i32.const 4) (i32.const 4) (i32.const 16))
-    ;; 1 = dim star
-    (call $set_pal (i32.const 1) (i32.const 60) (i32.const 60) (i32.const 100))
-    ;; 2 = medium star
-    (call $set_pal (i32.const 2) (i32.const 140) (i32.const 140) (i32.const 180))
-    ;; 3 = bright star
-    (call $set_pal (i32.const 3) (i32.const 255) (i32.const 255) (i32.const 255))
+    ;; Stars at 1-3 set by $draw_stars (no conflict)
     ;; 240-255: text brightness ramp from background (4,4,16) to white (255,255,255)
     ;; index 240 = background, 255 = full white
     (local.set $i (i32.const 0))
     (block $td (loop $tl
       (br_if $td (i32.gt_u (local.get $i) (i32.const 15)))
       (call $set_pal (i32.add (i32.const 240) (local.get $i))
-        ;; R: 4 + i * (255-4) / 15 = 4 + i * 251 / 15
+        ;; R: 4 + i * 251 / 15
         (i32.add (i32.const 4) (i32.div_u (i32.mul (local.get $i) (i32.const 251)) (i32.const 15)))
         ;; G: 4 + i * 251 / 15
         (i32.add (i32.const 4) (i32.div_u (i32.mul (local.get $i) (i32.const 251)) (i32.const 15)))
-        ;; B: 16 + i * (255-16) / 15 = 16 + i * 239 / 15
+        ;; B: 16 + i * 239 / 15
         (i32.add (i32.const 16) (i32.div_u (i32.mul (local.get $i) (i32.const 239)) (i32.const 15))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $tl)
@@ -816,8 +859,7 @@
                     (i32.rem_u (local.get $tx) (i32.const 8))))))))))))
 
   (func $render_scroll (param $elapsed i32)
-    (local $t i32) (local $tick i32) (local $i i32)
-    (local $star_x i32) (local $star_y i32) (local $star_speed i32)
+    (local $t i32) (local $i i32)
     (local $sy i32) (local $sx i32) (local $df i32)
     (local $scroll i32) (local $screen_half i32) (local $left i32)
     (local $right i32) (local $color i32)
@@ -828,27 +870,12 @@
     (local $left_fp i32)
 
     (local.set $t (i32.sub (local.get $elapsed) (i32.const 32000)))
-    (local.set $tick (i32.shr_u (local.get $t) (i32.const 4)))
 
     ;; Clear to background
     (call $clear_fb)
 
-    ;; Draw starfield (3 layers with parallax)
-    (local.set $i (i32.const 0))
-    (block $sd (loop $sl
-      (br_if $sd (i32.ge_u (local.get $i) (i32.const 80)))
-      (local.set $star_x (i32.rem_u (i32.add
-        (i32.rem_u (i32.mul (local.get $i) (i32.const 197)) (i32.const 320))
-        (i32.mul (local.get $tick) (i32.add (i32.rem_u (local.get $i) (i32.const 3)) (i32.const 1))))
-        (i32.const 320)))
-      (local.set $star_y (i32.rem_u (i32.mul (local.get $i) (i32.const 53)) (i32.const 200)))
-      (local.set $star_speed (i32.add (i32.rem_u (local.get $i) (i32.const 3)) (i32.const 1)))
-      (i32.store8 (i32.add (i32.const 0x0340)
-        (i32.add (i32.mul (local.get $star_y) (i32.const 320)) (local.get $star_x)))
-        (local.get $star_speed))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $sl)
-    ))
+    ;; Draw starfield (static positions, palette-animated twinkle)
+    (call $draw_stars (i32.const 200) (local.get $t))
 
     ;; Star Wars perspective crawl with bilinear interpolation
     ;; Virtual texture: 224×90 (28 chars × 8px wide, 9 lines × 10px tall)
@@ -973,20 +1000,21 @@
   (func $pal_berrry
     ;; 0 = black background
     (call $set_pal (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    ;; 1 = white (specular highlight)
-    (call $set_pal (i32.const 1) (i32.const 255) (i32.const 255) (i32.const 255))
-    ;; 2 = berrry brand green
-    (call $set_pal (i32.const 2) (i32.const 0) (i32.const 221) (i32.const 136))
-    ;; 3 = pink rim glow
-    (call $set_pal (i32.const 3) (i32.const 255) (i32.const 180) (i32.const 190))
-    ;; 4 = pink specular highlight
-    (call $set_pal (i32.const 4) (i32.const 255) (i32.const 200) (i32.const 210))
-    ;; 5 = stem brown
-    (call $set_pal (i32.const 5) (i32.const 80) (i32.const 50) (i32.const 20))
-    ;; 6 = sparkle
-    (call $set_pal (i32.const 6) (i32.const 200) (i32.const 200) (i32.const 255))
-    ;; 7 = dim text
-    (call $set_pal (i32.const 7) (i32.const 100) (i32.const 100) (i32.const 100))
+    ;; 1-3 = stars (set by $draw_stars)
+    ;; 33 = white (specular highlight)
+    (call $set_pal (i32.const 33) (i32.const 255) (i32.const 255) (i32.const 255))
+    ;; 34 = berrry brand green
+    (call $set_pal (i32.const 34) (i32.const 0) (i32.const 221) (i32.const 136))
+    ;; 35 = pink rim glow
+    (call $set_pal (i32.const 35) (i32.const 255) (i32.const 180) (i32.const 190))
+    ;; 36 = pink specular highlight
+    (call $set_pal (i32.const 36) (i32.const 255) (i32.const 200) (i32.const 210))
+    ;; 37 = stem brown
+    (call $set_pal (i32.const 37) (i32.const 80) (i32.const 50) (i32.const 20))
+    ;; 38 = sparkle
+    (call $set_pal (i32.const 38) (i32.const 200) (i32.const 200) (i32.const 255))
+    ;; 39 = dim text
+    (call $set_pal (i32.const 39) (i32.const 100) (i32.const 100) (i32.const 100))
     ;; 10-25 = red shading ramp: very dark (40,2,5) to bright pinkish-red (252,150,140)
     (call $set_pal (i32.const 10) (i32.const 40)  (i32.const 2)   (i32.const 5))
     (call $set_pal (i32.const 11) (i32.const 60)  (i32.const 4)   (i32.const 8))
@@ -1021,8 +1049,7 @@
   )
 
   (func $render_berrry (param $elapsed i32)
-    (local $t i32) (local $i i32) (local $x i32) (local $y i32)
-    (local $text_color i32) (local $bob i32)
+    (local $t i32) (local $text_color i32) (local $bob i32)
 
     (local.set $t (i32.sub (local.get $elapsed) (i32.const 44000)))
 
@@ -1030,32 +1057,14 @@
     (call $clear_fb)
 
     ;; Fade in/out text color
-    (local.set $text_color (i32.const 2))
+    (local.set $text_color (i32.const 34))
     (if (i32.lt_u (local.get $t) (i32.const 1000))
-      (then (local.set $text_color (i32.const 7)))
+      (then (local.set $text_color (i32.const 39)))
       (else (if (i32.gt_u (local.get $t) (i32.const 13769))
-        (then (local.set $text_color (i32.const 7))))))
+        (then (local.set $text_color (i32.const 39))))))
 
-    ;; Sparkle particles in background
-    (local.set $i (i32.const 0))
-    (block $spd (loop $spl
-      (br_if $spd (i32.ge_u (local.get $i) (i32.const 60)))
-      (local.set $x (i32.rem_u (i32.add
-        (i32.mul (local.get $i) (i32.const 197))
-        (i32.mul (i32.shr_u (local.get $t) (i32.const 5)) (i32.add (local.get $i) (i32.const 1))))
-        (i32.const 320)))
-      (local.set $y (i32.rem_u (i32.add
-        (i32.mul (local.get $i) (i32.const 53))
-        (i32.shr_u (local.get $t) (i32.const 6)))
-        (i32.const 200)))
-      (if (i32.and (i32.add (local.get $i) (i32.shr_u (local.get $t) (i32.const 7))) (i32.const 1))
-        (then
-          (i32.store8 (i32.add (i32.const 0x0340)
-            (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x)))
-            (i32.const 6))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $spl)
-    ))
+    ;; Starfield background (behind strawberry)
+    (call $draw_stars (i32.const 200) (local.get $t))
 
     ;; Bob: sin_tab gives 0-255; subtract 128 → -128..127; >>4 → ±8 pixels
     (local.set $bob (i32.shr_s
@@ -1072,7 +1081,7 @@
 
     ;; "WASMVGA-DEMOS.BERRRY.APP" at 1x below
     (call $draw_text (i32.const 0x108C0) (i32.const 24)
-      (i32.const 52) (i32.const 75) (i32.const 1) (i32.const 1))
+      (i32.const 52) (i32.const 75) (i32.const 1) (i32.const 33))
   )
 
   ;; Proper strawberry shape: two-part profile + elongated petals + seeds with dimples + rim glow
@@ -1486,7 +1495,7 @@
                   (else (if (i32.eq (local.get $in_leaf) (i32.const 4))
                     (then
                       ;; Stem: brown
-                      (local.set $col (i32.const 5))
+                      (local.set $col (i32.const 37))
                     )
                     (else (if (i32.eq (local.get $in_leaf) (i32.const 1))
                       (then
@@ -1500,9 +1509,9 @@
                       (else
                           ;; Berry body (including bump-mapped grooves): specular → red ramp
                           (if (i32.gt_s (local.get $dot_spec) (i32.const 160))
-                            (then (local.set $col (i32.const 1)))
+                            (then (local.set $col (i32.const 33)))
                             (else (if (i32.gt_s (local.get $dot_spec) (i32.const 80))
-                              (then (local.set $col (i32.const 4)))
+                              (then (local.set $col (i32.const 36)))
                               (else
                                   ;; Red ramp 10-25 with subtle texture noise
                                   ;; noise = ((px*7 ^ py*13) >> 2) & 1  — adds ±1 dither
