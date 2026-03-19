@@ -1063,16 +1063,16 @@
       (i32.const 4)))
 
     ;; Draw 3D Phong-shaded strawberry first (behind text)
-    (call $draw_strawberry (i32.const 160) (i32.add (i32.const 130) (local.get $bob)) (local.get $t))
+    (call $draw_strawberry (i32.const 160) (i32.add (i32.const 120) (local.get $bob)) (local.get $t))
 
     ;; Text drawn on top of berry
     ;; "BERRRY.APP" at 3x scale, centered
     (call $draw_text (i32.const 0x10750) (i32.const 10)
-      (i32.const 25) (i32.const 55) (i32.const 3) (local.get $text_color))
+      (i32.const 25) (i32.const 40) (i32.const 3) (local.get $text_color))
 
     ;; "WASMVGA-DEMOS.BERRRY.APP" at 1x below
     (call $draw_text (i32.const 0x108C0) (i32.const 24)
-      (i32.const 52) (i32.const 90) (i32.const 1) (i32.const 1))
+      (i32.const 52) (i32.const 75) (i32.const 1) (i32.const 1))
   )
 
   ;; Proper strawberry shape: two-part profile + elongated petals + seeds with dimples + rim glow
@@ -1377,25 +1377,26 @@
                             (br_if $cdone (i32.or
                               (i32.ge_u (local.get $si) (i32.const 256))
                               (i32.gt_s (local.get $in_leaf) (i32.const 0))))
-                            ;; sin_val = sin_tab[si] - 128 → range -128..127
-                            ;; screen_x = rx * sin_val / 128
+                            ;; Sub-pixel seed centers: keep 1 extra bit of fraction (2x scale)
+                            ;; seed_cx_2x = rx * sin_val >> 6 (instead of >>7)
                             (local.set $seed_cx (i32.shr_s
                               (i32.mul (local.get $rx)
                                 (i32.sub (call $sin_tab (local.get $si)) (i32.const 128)))
-                              (i32.const 7)))
-                            ;; cos check: front face only. cos_val = sin_tab[si+64]-128
-                            ;; Only render if cos > 30 (skip seeds near silhouette edge)
+                              (i32.const 6)))
+                            ;; cos check: front face only
                             (if (i32.gt_s
                                   (i32.sub (call $sin_tab (i32.and (i32.add (local.get $si) (i32.const 64)) (i32.const 255))) (i32.const 128))
                                   (i32.const 30))
                               (then
-                                (local.set $sdx (i32.sub (local.get $dx) (local.get $seed_cx)))
-                                (local.set $sdy (i32.sub (local.get $dy) (local.get $seed_cy)))
+                                ;; Scale pixel coords to 2x to match seed_cx precision
+                                (local.set $sdx (i32.sub (i32.shl (local.get $dx) (i32.const 1)) (local.get $seed_cx)))
+                                (local.set $sdy (i32.sub (i32.shl (local.get $dy) (i32.const 1))
+                                  (i32.shl (local.get $seed_cy) (i32.const 1))))
                                 (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                                ;; Inner seed: dist²<5, groove: 5..12
-                                (if (i32.lt_s (local.get $sdsq) (i32.const 5))
+                                ;; Thresholds x4: seed < 20, groove < 48
+                                (if (i32.lt_s (local.get $sdsq) (i32.const 20))
                                   (then (local.set $in_leaf (i32.const 1)))
-                                  (else (if (i32.lt_s (local.get $sdsq) (i32.const 12))
+                                  (else (if (i32.lt_s (local.get $sdsq) (i32.const 48))
                                     (then (local.set $in_leaf (i32.const 3))))))
                               ))
                             (local.set $si (i32.add (local.get $si) (i32.const 32)))
@@ -1416,17 +1417,17 @@
                     ;; Groove: -sdx (inward=pit), Seed: +sdx (outward=bump)
                     (if (i32.eq (local.get $in_leaf) (i32.const 3))
                       (then
-                        ;; Depression: normals tilt toward center (subtract sdx/sdy)
+                        ;; Depression: normals tilt toward center (sdx/sdy are 2x scaled)
                         (local.set $nx128 (i32.sub (local.get $nx128)
-                          (i32.mul (local.get $sdx) (i32.const 28))))
+                          (i32.mul (local.get $sdx) (i32.const 14))))
                         (local.set $ny128 (i32.sub (local.get $ny128)
-                          (i32.mul (local.get $sdy) (i32.const 28)))))
+                          (i32.mul (local.get $sdy) (i32.const 14)))))
                       (else
-                        ;; Raised seed: normals tilt away from center (add sdx/sdy)
+                        ;; Raised seed: subtle outward tilt
                         (local.set $nx128 (i32.add (local.get $nx128)
-                          (i32.mul (local.get $sdx) (i32.const 40))))
+                          (i32.mul (local.get $sdx) (i32.const 10))))
                         (local.set $ny128 (i32.add (local.get $ny128)
-                          (i32.mul (local.get $sdy) (i32.const 40))))))
+                          (i32.mul (local.get $sdy) (i32.const 10))))))
                     ;; Clamp
                     (if (i32.gt_s (local.get $nx128) (i32.const 127))
                       (then (local.set $nx128 (i32.const 127))))
@@ -1491,19 +1492,10 @@
                       (then
                         ;; Seed inner: check for specular highlight on light-facing side
                         ;; Seed specular: tiny bright dot when light-facing (sdx*lx + sdy*ly > 0 and close to center)
-                        (if (i32.and
-                              (i32.lt_s (local.get $sdsq) (i32.const 3))
-                              (i32.gt_s
-                                (i32.add
-                                  (i32.mul (i32.sub (local.get $dx) (local.get $seed_cx)) (local.get $lx128))
-                                  (i32.mul (i32.sub (local.get $dy) (local.get $seed_cy)) (local.get $ly128)))
-                                (i32.const 0)))
-                          (then (local.set $col (i32.const 1)))  ;; white specular on seed
-                          (else
-                            ;; Normal seed shading
-                            (if (i32.gt_s (local.get $dot_diff) (i32.const 100))
-                              (then (local.set $col (i32.const 30)))
-                              (else (local.set $col (i32.const 31))))))
+                        ;; Seed shading: use surface diffuse, spec only on lit side
+                        (if (i32.gt_s (local.get $dot_diff) (i32.const 100))
+                          (then (local.set $col (i32.const 30)))
+                          (else (local.set $col (i32.const 31))))
                       )
                       (else
                           ;; Berry body (including bump-mapped grooves): specular → red ramp
