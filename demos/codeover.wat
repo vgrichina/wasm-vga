@@ -1723,10 +1723,9 @@
     ;; Read current tick
     (local.set $tick_ms (i32.load (i32.const 0x0C)))
 
-    ;; Compute elapsed time since init, modulo 52000 for looping
-    (local.set $elapsed (i32.rem_u
-      (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x38004)))
-      (i32.const 52000)))
+    ;; Compute elapsed time since init (no modulo — last scene stays forever)
+    (local.set $elapsed
+      (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x38004))))
 
     ;; Determine section from elapsed time
     (local.set $section (i32.const 0))
@@ -1764,14 +1763,13 @@
         (if (i32.ge_u (local.get $elapsed) (i32.const 32000))
           (then (local.set $next_boundary (i32.const 44000))))
         (if (i32.ge_u (local.get $elapsed) (i32.const 44000))
-          (then (local.set $next_boundary (i32.const 52000))))
+          (then (local.set $next_boundary (i32.const 0))))  ;; section 4: restart to beginning
         ;; Shift start_tick backward so elapsed jumps to next_boundary
         (i32.store (i32.const 0x38004)
           (i32.sub (local.get $tick_ms) (local.get $next_boundary)))
         ;; Recompute elapsed and section
-        (local.set $elapsed (i32.rem_u
-          (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x38004)))
-          (i32.const 52000)))
+        (local.set $elapsed
+          (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x38004))))
         (local.set $section (i32.const 0))
         (if (i32.ge_u (local.get $elapsed) (i32.const 8000))
           (then (local.set $section (i32.const 1))))
@@ -1802,9 +1800,8 @@
         (i32.store (i32.const 0x38004)
           (i32.sub (local.get $tick_ms) (local.get $next_boundary)))
         ;; Recompute elapsed and section
-        (local.set $elapsed (i32.rem_u
-          (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x38004)))
-          (i32.const 52000)))
+        (local.set $elapsed
+          (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x38004))))
         (local.set $section (i32.const 0))
         (if (i32.ge_u (local.get $elapsed) (i32.const 8000))
           (then (local.set $section (i32.const 1))))
@@ -1850,7 +1847,7 @@
     (if (i32.ge_u (local.get $section) (i32.const 3))
       (then (local.set $sec_start (i32.const 32000)) (local.set $sec_end (i32.const 44000))))
     (if (i32.ge_u (local.get $section) (i32.const 4))
-      (then (local.set $sec_start (i32.const 44000)) (local.set $sec_end (i32.const 52000))))
+      (then (local.set $sec_start (i32.const 44000)) (local.set $sec_end (i32.const 0x7FFFFFFF))))
 
     (local.set $t_in (i32.sub (local.get $elapsed) (local.get $sec_start)))
     (local.set $t_left (i32.sub (local.get $sec_end) (local.get $elapsed)))
