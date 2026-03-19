@@ -23,7 +23,7 @@ const rgba = imgData.data;
 
 let memory, memU8, memU32, wasmInstance;
 let animId = null;
-let frameCount = 0, lastFpsTime = 0;
+let frameCount = 0, fpsFrames = 0, lastFpsTime = 0;
 
 // --- Sound engine ---
 let audioCtx = null, masterGain = null, isMuted = false, audioDest = null;
@@ -271,7 +271,8 @@ function blitFramebuffer() {
 
 function loop(ts) {
   // write control block
-  memU32[0] = frameCount++;         // frame counter
+  memU32[0] = frameCount++;         // frame counter (monotonic)
+  fpsFrames++;
   memU32[3] = (ts | 0);            // tick_ms
 
   // call guest frame
@@ -283,8 +284,8 @@ function loop(ts) {
 
   // fps
   if (ts - lastFpsTime > 1000) {
-    document.getElementById('info').textContent = `fps: ${frameCount} | frame: ${memU32[0]}`;
-    frameCount = 0;
+    document.getElementById('info').textContent = `fps: ${fpsFrames} | frame: ${memU32[0]}`;
+    fpsFrames = 0;
     lastFpsTime = ts;
   }
 
@@ -434,6 +435,7 @@ async function loadDemo() {
     }
 
     frameCount = 0;
+    fpsFrames = 0;
     lastFpsTime = performance.now();
     animId = requestAnimationFrame(loop);
     document.getElementById('screen').focus();

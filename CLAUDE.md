@@ -13,7 +13,7 @@ All demos are WAT files compiled in-browser via wabt.js. No server-side compilat
 ## Memory Layout (harness-owned)
 
 - `0x0000-0x003F` — Control block:
-  - `0x00`: frame counter (u32)
+  - `0x00`: frame counter (u32, monotonic — never resets during a demo session, use for time-based animation)
   - `0x04`: mouse x (u16), `0x06`: mouse y (u16)
   - `0x08`: mouse buttons (u8, bit0=left, bit1=right, bit2=middle)
   - `0x0C`: tick_ms (u32)
