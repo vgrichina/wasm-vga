@@ -1336,31 +1336,73 @@
                     (if (i32.eqz (local.get $in_leaf))
                       (then (local.set $in_leaf (i32.const 2))))))
 
-                ;; Seeds: 26 positions from data table at 0x10B00, tiny (r≈2px)
-                ;; Inner: dist²<5, Shadow dimple: 5..12
+                ;; Seeds: procedural staggered grid wrapped around berry surface
+                ;; Place N seeds per row evenly spaced in angle around circumference.
+                ;; screen_x = rx * sin(angle), only draw front-facing (|angle| < ~70°)
+                ;; Rows every 7px, ~8 seeds per row (angular spacing ≈ 45° = 360/8)
                 (local.set $seed_cx (i32.const 0))
                 (local.set $seed_cy (i32.const 0))
                 (if (i32.and
                       (i32.gt_s (local.get $in_body) (i32.const 0))
                       (i32.eqz (local.get $in_leaf)))
                   (then
-                    (local.set $si (i32.const 0))
+                    ;; Iterate seed rows: dy from -30 to 34, step 7
+                    (local.set $seed_cy (i32.const -30))
                     (block $sdone (loop $slp
                       (br_if $sdone (i32.or
-                        (i32.ge_u (local.get $si) (i32.const 26))
+                        (i32.gt_s (local.get $seed_cy) (i32.const 34))
                         (i32.gt_s (local.get $in_leaf) (i32.const 0))))
-                      ;; Read seed (dx, dy) as signed bytes
-                      (local.set $seed_cx (i32.load8_s (i32.add (i32.const 0x10B00) (i32.mul (local.get $si) (i32.const 2)))))
-                      (local.set $seed_cy (i32.load8_s (i32.add (i32.const 0x10B01) (i32.mul (local.get $si) (i32.const 2)))))
-                      (local.set $sdx (i32.sub (local.get $dx) (local.get $seed_cx)))
-                      (local.set $sdy (i32.sub (local.get $dy) (local.get $seed_cy)))
-                      (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                      ;; Inner seed (yellow dot)
-                      (if (i32.lt_s (local.get $sdsq) (i32.const 5))
-                        (then (local.set $in_leaf (i32.const 1)))
-                        (else (if (i32.lt_s (local.get $sdsq) (i32.const 12))
-                          (then (local.set $in_leaf (i32.const 3))))))
-                      (local.set $si (i32.add (local.get $si) (i32.const 1)))
+                      ;; Skip row if pixel dy is far from this seed row
+                      (if (i32.le_s
+                            (select
+                              (i32.sub (local.get $dy) (local.get $seed_cy))
+                              (i32.sub (local.get $seed_cy) (local.get $dy))
+                              (i32.ge_s (local.get $dy) (local.get $seed_cy)))
+                            (i32.const 4))
+                        (then
+                          ;; Get full radius at this row
+                          (local.set $rx (i32.load8_u (i32.add (i32.const 0x10A00)
+                            (i32.add (local.get $seed_cy) (i32.const 40)))))
+                          ;; 8 seeds per row, angular step = 32 (out of 256 = full circle)
+                          ;; Stagger odd rows by half step (16)
+                          ;; angle_idx goes 0,32,64,...,224 (or 16,48,...,240 for odd rows)
+                          ;; screen_x = rx * (sin_tab[angle] - 128) / 128
+                          ;; Only draw if cos > 0 (front face): angle in [0..64] or [192..255]
+                          (local.set $si (i32.mul
+                            (i32.and
+                              (i32.div_u (i32.add (local.get $seed_cy) (i32.const 30)) (i32.const 7))
+                              (i32.const 1))
+                            (i32.const 16)))  ;; stagger offset: 0 or 16
+                          (block $cdone (loop $clp
+                            (br_if $cdone (i32.or
+                              (i32.ge_u (local.get $si) (i32.const 256))
+                              (i32.gt_s (local.get $in_leaf) (i32.const 0))))
+                            ;; sin_val = sin_tab[si] - 128 → range -128..127
+                            ;; screen_x = rx * sin_val / 128
+                            (local.set $seed_cx (i32.shr_s
+                              (i32.mul (local.get $rx)
+                                (i32.sub (call $sin_tab (local.get $si)) (i32.const 128)))
+                              (i32.const 7)))
+                            ;; cos check: front face only. cos_val = sin_tab[si+64]-128
+                            ;; Only render if cos > 30 (skip seeds near silhouette edge)
+                            (if (i32.gt_s
+                                  (i32.sub (call $sin_tab (i32.and (i32.add (local.get $si) (i32.const 64)) (i32.const 255))) (i32.const 128))
+                                  (i32.const 30))
+                              (then
+                                (local.set $sdx (i32.sub (local.get $dx) (local.get $seed_cx)))
+                                (local.set $sdy (i32.sub (local.get $dy) (local.get $seed_cy)))
+                                (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
+                                ;; Inner seed: dist²<5, groove: 5..12
+                                (if (i32.lt_s (local.get $sdsq) (i32.const 5))
+                                  (then (local.set $in_leaf (i32.const 1)))
+                                  (else (if (i32.lt_s (local.get $sdsq) (i32.const 12))
+                                    (then (local.set $in_leaf (i32.const 3))))))
+                              ))
+                            (local.set $si (i32.add (local.get $si) (i32.const 32)))
+                            (br $clp)
+                          ))
+                        ))
+                      (local.set $seed_cy (i32.add (local.get $seed_cy) (i32.const 7)))
                       (br $slp)
                     ))
                   ))
