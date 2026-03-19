@@ -1032,14 +1032,22 @@
     (call $set_pal (i32.const 23) (i32.const 244) (i32.const 120) (i32.const 112))
     (call $set_pal (i32.const 24) (i32.const 249) (i32.const 135) (i32.const 126))
     (call $set_pal (i32.const 25) (i32.const 252) (i32.const 150) (i32.const 140))
-    ;; 26 = dark green leaf
+    ;; 26-28 = green leaf ramp (8 shades: 40-47)
+    ;; Keep 26-28 as before for backward compat, actual ramp at 40-47
     (call $set_pal (i32.const 26) (i32.const 20)  (i32.const 70)  (i32.const 15))
-    ;; 27 = mid green leaf
     (call $set_pal (i32.const 27) (i32.const 40)  (i32.const 130) (i32.const 30))
-    ;; 28 = bright green leaf
     (call $set_pal (i32.const 28) (i32.const 70)  (i32.const 190) (i32.const 60))
     ;; 29 = leaf vein dark
     (call $set_pal (i32.const 29) (i32.const 15)  (i32.const 50)  (i32.const 10))
+    ;; 40-47 = 8-shade green leaf ramp (dark to bright)
+    (call $set_pal (i32.const 40) (i32.const 12)  (i32.const 42)  (i32.const 8))
+    (call $set_pal (i32.const 41) (i32.const 20)  (i32.const 65)  (i32.const 14))
+    (call $set_pal (i32.const 42) (i32.const 30)  (i32.const 90)  (i32.const 22))
+    (call $set_pal (i32.const 43) (i32.const 42)  (i32.const 118) (i32.const 30))
+    (call $set_pal (i32.const 44) (i32.const 55)  (i32.const 148) (i32.const 40))
+    (call $set_pal (i32.const 45) (i32.const 70)  (i32.const 178) (i32.const 52))
+    (call $set_pal (i32.const 46) (i32.const 90)  (i32.const 210) (i32.const 68))
+    (call $set_pal (i32.const 47) (i32.const 115) (i32.const 235) (i32.const 88))
     ;; 30 = seed yellow bright
     (call $set_pal (i32.const 30) (i32.const 235) (i32.const 215) (i32.const 90))
     ;; 31 = seed yellow dark
@@ -1071,17 +1079,18 @@
       (i32.sub (call $sin_tab (i32.shr_u (local.get $t) (i32.const 4))) (i32.const 128))
       (i32.const 4)))
 
-    ;; Draw 3D Phong-shaded strawberry first (behind text)
-    (call $draw_strawberry (i32.const 160) (i32.add (i32.const 120) (local.get $bob)) (local.get $t))
-
-    ;; Text drawn on top of berry
-    ;; "BERRRY.APP" at 3x scale, centered
+    ;; "BERRRY.APP" at 3x scale, centered at top
+    ;; 10 chars * 8px * 3 = 240px, x = (320-240)/2 = 40
     (call $draw_text (i32.const 0x10750) (i32.const 10)
-      (i32.const 25) (i32.const 40) (i32.const 3) (local.get $text_color))
+      (i32.const 40) (i32.const 10) (i32.const 3) (local.get $text_color))
 
-    ;; "WASMVGA-DEMOS.BERRRY.APP" at 1x below
+    ;; Draw 3D Phong-shaded strawberry in middle
+    (call $draw_strawberry (i32.const 160) (i32.add (i32.const 105) (local.get $bob)) (local.get $t))
+
+    ;; "WASMVGA-DEMOS.BERRRY.APP" at 1x, centered at bottom
+    ;; 24 chars * 8px = 192px, x = (320-192)/2 = 64
     (call $draw_text (i32.const 0x108C0) (i32.const 24)
-      (i32.const 52) (i32.const 75) (i32.const 1) (i32.const 33))
+      (i32.const 64) (i32.const 180) (i32.const 1) (i32.const 33))
   )
 
   ;; Proper strawberry shape: two-part profile + elongated petals + seeds with dimples + rim glow
@@ -1098,6 +1107,8 @@
     (local $shade i32)
     ;; for upper/lower body test
     (local $in_body i32)
+    ;; Saved petal sin/cos for per-petal leaf normals
+    (local $leaf_sin128 i32) (local $leaf_cos128 i32)
     ;; petal locals
     (local $u_raw i32) (local $v_raw i32) (local $u7 i32) (local $v7 i32)
     (local $ddx i32) (local $ddy i32)
@@ -1160,6 +1171,8 @@
               (i32.const 3136))
           (then
             (local.set $in_leaf (i32.const 2))
+            (local.set $leaf_sin128 (i32.const 0))
+            (local.set $leaf_cos128 (i32.const 128))
             ;; Vein: |v7|<=1 and |u7|>3
             (if (i32.and
                   (i32.le_s (select (local.get $v7) (i32.sub (i32.const 0) (local.get $v7)) (i32.ge_s (local.get $v7) (i32.const 0))) (i32.const 1))
@@ -1179,7 +1192,10 @@
               (i32.const 3136))
           (then
             (if (i32.eqz (local.get $in_leaf))
-              (then (local.set $in_leaf (i32.const 2))))
+              (then
+                (local.set $in_leaf (i32.const 2))
+                (local.set $leaf_sin128 (i32.const 64))
+                (local.set $leaf_cos128 (i32.const 111))))
             (if (i32.and
                   (i32.le_s (select (local.get $v7) (i32.sub (i32.const 0) (local.get $v7)) (i32.ge_s (local.get $v7) (i32.const 0))) (i32.const 1))
                   (i32.gt_s (select (local.get $u7) (i32.sub (i32.const 0) (local.get $u7)) (i32.ge_s (local.get $u7) (i32.const 0))) (i32.const 3)))
@@ -1198,7 +1214,10 @@
               (i32.const 3136))
           (then
             (if (i32.eqz (local.get $in_leaf))
-              (then (local.set $in_leaf (i32.const 2))))
+              (then
+                (local.set $in_leaf (i32.const 2))
+                (local.set $leaf_sin128 (i32.const -64))
+                (local.set $leaf_cos128 (i32.const 111))))
             (if (i32.and
                   (i32.le_s (select (local.get $v7) (i32.sub (i32.const 0) (local.get $v7)) (i32.ge_s (local.get $v7) (i32.const 0))) (i32.const 1))
                   (i32.gt_s (select (local.get $u7) (i32.sub (i32.const 0) (local.get $u7)) (i32.ge_s (local.get $u7) (i32.const 0))) (i32.const 3)))
@@ -1217,7 +1236,10 @@
               (i32.const 3136))
           (then
             (if (i32.eqz (local.get $in_leaf))
-              (then (local.set $in_leaf (i32.const 2))))
+              (then
+                (local.set $in_leaf (i32.const 2))
+                (local.set $leaf_sin128 (i32.const 105))
+                (local.set $leaf_cos128 (i32.const 73))))
             (if (i32.and
                   (i32.le_s (select (local.get $v7) (i32.sub (i32.const 0) (local.get $v7)) (i32.ge_s (local.get $v7) (i32.const 0))) (i32.const 1))
                   (i32.gt_s (select (local.get $u7) (i32.sub (i32.const 0) (local.get $u7)) (i32.ge_s (local.get $u7) (i32.const 0))) (i32.const 3)))
@@ -1236,7 +1258,10 @@
               (i32.const 3136))
           (then
             (if (i32.eqz (local.get $in_leaf))
-              (then (local.set $in_leaf (i32.const 2))))
+              (then
+                (local.set $in_leaf (i32.const 2))
+                (local.set $leaf_sin128 (i32.const -105))
+                (local.set $leaf_cos128 (i32.const 73))))
             (if (i32.and
                   (i32.le_s (select (local.get $v7) (i32.sub (i32.const 0) (local.get $v7)) (i32.ge_s (local.get $v7) (i32.const 0))) (i32.const 1))
                   (i32.gt_s (select (local.get $u7) (i32.sub (i32.const 0) (local.get $u7)) (i32.ge_s (local.get $u7) (i32.const 0))) (i32.const 3)))
@@ -1309,6 +1334,44 @@
                 (local.set $guess (i32.shr_u (i32.add (local.get $guess) (i32.div_u (local.get $norm_sq) (local.get $guess))) (i32.const 1)))
                 (local.set $guess (i32.shr_u (i32.add (local.get $guess) (i32.div_u (local.get $norm_sq) (local.get $guess))) (i32.const 1)))
                 (local.set $nz128 (local.get $guess))
+
+                ;; Override normals for leaf/calyx: each petal tilts in its own direction
+                ;; Petal u-axis in world = (sin128, -cos128), so normal tilts that way
+                ;; nx = leaf_sin128 * 60 >> 7  (tilt outward along petal axis)
+                ;;    + dx * 4                  (cross-petal curvature)
+                ;; ny = -leaf_cos128 * 60 >> 7  (tilt outward along petal axis)
+                ;;    + (dy+50) * 2             (base-to-tip variation)
+                (if (i32.or (i32.eq (local.get $in_leaf) (i32.const 2))
+                            (i32.eq (local.get $in_leaf) (i32.const 5)))
+                  (then
+                    (local.set $nx128 (i32.add
+                      (i32.shr_s (i32.mul (local.get $leaf_sin128) (i32.const 60)) (i32.const 7))
+                      (i32.mul (local.get $dx) (i32.const 4))))
+                    (local.set $ny128 (i32.add
+                      (i32.shr_s (i32.mul (i32.sub (i32.const 0) (local.get $leaf_cos128)) (i32.const 60)) (i32.const 7))
+                      (i32.mul (i32.add (local.get $dy) (i32.const 50)) (i32.const 2))))
+                    ;; Clamp ±127
+                    (if (i32.gt_s (local.get $nx128) (i32.const 127))
+                      (then (local.set $nx128 (i32.const 127))))
+                    (if (i32.lt_s (local.get $nx128) (i32.const -127))
+                      (then (local.set $nx128 (i32.const -127))))
+                    (if (i32.gt_s (local.get $ny128) (i32.const 127))
+                      (then (local.set $ny128 (i32.const 127))))
+                    (if (i32.lt_s (local.get $ny128) (i32.const -127))
+                      (then (local.set $ny128 (i32.const -127))))
+                    ;; Recompute nz
+                    (local.set $norm_sq
+                      (i32.sub (i32.const 16384)
+                        (i32.add
+                          (i32.mul (local.get $nx128) (local.get $nx128))
+                          (i32.mul (local.get $ny128) (local.get $ny128)))))
+                    (if (i32.lt_s (local.get $norm_sq) (i32.const 1))
+                      (then (local.set $norm_sq (i32.const 1))))
+                    (local.set $guess (i32.const 64))
+                    (local.set $guess (i32.shr_u (i32.add (local.get $guess) (i32.div_u (local.get $norm_sq) (local.get $guess))) (i32.const 1)))
+                    (local.set $guess (i32.shr_u (i32.add (local.get $guess) (i32.div_u (local.get $norm_sq) (local.get $guess))) (i32.const 1)))
+                    (local.set $guess (i32.shr_u (i32.add (local.get $guess) (i32.div_u (local.get $norm_sq) (local.get $guess))) (i32.const 1)))
+                    (local.set $nz128 (local.get $guess))))
 
                 ;; Diffuse: dot(N, L) >> 7
                 (local.set $dot_diff
@@ -1485,13 +1548,12 @@
                     (if (i32.eq (local.get $in_leaf) (i32.const 5))
                       (then (local.set $col (i32.const 29)))
                       (else
-                        ;; Leaf with ambient occlusion: darken leaf pixels near berry edge (dy > -48)
-                        (if (i32.gt_s (local.get $dot_diff) (i32.const 200))
-                          (then (local.set $col (i32.const 28)))
-                          (else (if (i32.gt_s (local.get $dot_diff) (i32.const 80))
-                            (then (local.set $col (i32.const 27)))
-                            (else (local.set $col (i32.const 26))))))))
-                  )
+                        ;; Smooth 8-shade green ramp (pal 40-47) from dot_diff
+                        ;; shade = dot_diff / 32, clamped 0-7
+                        (local.set $shade (i32.shr_u (local.get $dot_diff) (i32.const 5)))
+                        (if (i32.gt_s (local.get $shade) (i32.const 7))
+                          (then (local.set $shade (i32.const 7))))
+                        (local.set $col (i32.add (i32.const 40) (local.get $shade))))))
                   (else (if (i32.eq (local.get $in_leaf) (i32.const 4))
                     (then
                       ;; Stem: brown
