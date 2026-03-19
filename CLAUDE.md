@@ -7,6 +7,7 @@ All demos are WAT files compiled in-browser via wabt.js. No server-side compilat
 
 - `index.html` — UI with demo picker, fullscreen, responsive layout
 - `harness.js` — VGA harness: memory layout, palette, framebuffer blit, mouse/keyboard/touch input, virtual controls, animation loop, sound engine
+- `tools/screenshot.js` — Headless screenshot tool: `node tools/screenshot.js <demo> <ms> [output.png]`
 - `demos/*.wat` — WAT source files (WebAssembly Text format)
 - `demos/*.wasm` — Compiled binaries (gitignored, built by `build.sh`)
 

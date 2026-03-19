@@ -434,22 +434,6 @@
       (br $sl)
     ))
 
-    ;; Draw ground (brown) from y=170 to 199
-    (local.set $y (i32.const 170))
-    (block $gd (loop $gl
-      (br_if $gd (i32.ge_u (local.get $y) (i32.const 200)))
-      (local.set $x (i32.const 0))
-      (block $gxd (loop $gxl
-        (br_if $gxd (i32.ge_u (local.get $x) (i32.const 320)))
-        (i32.store8 (i32.add (i32.const 0x0340)
-          (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x))) (i32.const 86))
-        (local.set $x (i32.add (local.get $x) (i32.const 1)))
-        (br $gxl)
-      ))
-      (local.set $y (i32.add (local.get $y) (i32.const 1)))
-      (br $gl)
-    ))
-
     ;; Draw 6 tombstones rising from bottom
     ;; Rise: over first 4s of section, from y=200 to target y
     (local.set $rise (i32.div_u (local.get $t) (i32.const 40)))
@@ -542,7 +526,7 @@
         (br_if $oxd (i32.ge_u (local.get $x) (i32.const 320)))
         (local.set $heat (i32.load8_u (i32.add (i32.const 0x38100)
           (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x)))))
-        (if (i32.gt_u (local.get $heat) (i32.const 25))
+        (if (i32.gt_u (local.get $heat) (i32.const 3))
           (then
             (i32.store8 (i32.add (i32.const 0x0340)
               (i32.add (i32.mul (i32.add (local.get $y) (i32.const 160)) (i32.const 320)) (local.get $x)))
@@ -560,7 +544,7 @@
     (if (i32.gt_u (local.get $t) (i32.const 3000))
       (then
         (call $draw_text (i32.const 0x10740) (i32.const 14)
-          (i32.const 34) (i32.const 20) (i32.const 2) (i32.const 89))))
+          (i32.const 34) (i32.const 55) (i32.const 2) (i32.const 89))))
 
     ;; "BERRRY.APP PRESENTS" at top center, 1x scale
     ;; 19 chars * 9px = 171px. centered: (320-171)/2 = 74
