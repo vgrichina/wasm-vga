@@ -2387,6 +2387,9 @@
     (local $dx i32)
     (local $dy i32)
 
+    ;; Only run every 4th frame to prevent flicker
+    (if (i32.and (i32.load (i32.const 0)) (i32.const 3)) (then (return)))
+
     (local.set $i (i32.const 0))
     (block $brk_i
       (loop $lp_i
@@ -2424,30 +2427,26 @@
                             (local.set $dy (i32.const 1))
                           )
                         )
-                        ;; Push along the larger axis
+                        ;; Only push unit j away from i (asymmetric to prevent oscillation)
                         (if (i32.ge_s (call $abs (local.get $dx)) (call $abs (local.get $dy)))
                           (then
-                            ;; Push horizontally
+                            ;; Push j horizontally away from i
                             (if (i32.gt_s (local.get $dx) (i32.const 0))
                               (then
-                                (i32.store16 (i32.add (local.get $addr_i) (i32.const 4)) (i32.add (local.get $ix) (i32.const 1)))
                                 (i32.store16 (i32.add (local.get $addr_j) (i32.const 4)) (i32.sub (local.get $jx) (i32.const 1)))
                               )
                               (else
-                                (i32.store16 (i32.add (local.get $addr_i) (i32.const 4)) (i32.sub (local.get $ix) (i32.const 1)))
                                 (i32.store16 (i32.add (local.get $addr_j) (i32.const 4)) (i32.add (local.get $jx) (i32.const 1)))
                               )
                             )
                           )
                           (else
-                            ;; Push vertically
+                            ;; Push j vertically away from i
                             (if (i32.gt_s (local.get $dy) (i32.const 0))
                               (then
-                                (i32.store16 (i32.add (local.get $addr_i) (i32.const 6)) (i32.add (local.get $iy) (i32.const 1)))
                                 (i32.store16 (i32.add (local.get $addr_j) (i32.const 6)) (i32.sub (local.get $jy) (i32.const 1)))
                               )
                               (else
-                                (i32.store16 (i32.add (local.get $addr_i) (i32.const 6)) (i32.sub (local.get $iy) (i32.const 1)))
                                 (i32.store16 (i32.add (local.get $addr_j) (i32.const 6)) (i32.add (local.get $jy) (i32.const 1)))
                               )
                             )
