@@ -25,12 +25,12 @@
   ;;   0x38010 - rain columns: 40 x 4 = 160 bytes
   ;;   0x38100 - fire buffer: 320x80 = 25600 bytes (ends 0x3E500)
   ;;
-  ;; Section timing (elapsed_ms % 70491):
-  ;;   0     - 10667  Section 0: Code Rain        (90 BPM, 1 loop)
-  ;;   10667 - 25436  Section 1: Graveyard         (65 BPM, 1 loop)
-  ;;   25436 - 37436  Section 2: Plasma + "INTENT" (80 BPM, 1 loop)
-  ;;   37436 - 55722  Section 3: Scroller          (105 BPM, 2 loops)
-  ;;   55722 - 70491  Section 4: Berrry Finale     (130 BPM, 2 loops)
+  ;; Section timing (elapsed_ms % 52000):
+  ;;   0     -  8000  Section 0: Code Rain
+  ;;   8000  - 20000  Section 1: Graveyard + "CODING IS OVER"
+  ;;   20000 - 32000  Section 2: Plasma + "INTENT NOT SYNTAX"
+  ;;   32000 - 44000  Section 3: Scroller
+  ;;   44000 - 52000  Section 4: Berrry Finale
 
   ;; =========================================================
   ;; UTILITY: sin approximation (Taylor series)
@@ -412,7 +412,7 @@
     (local $ti i32) (local $heat i32) (local $v1 i32) (local $v2 i32)
 
     ;; t = ms into this section
-    (local.set $t (i32.sub (local.get $elapsed) (i32.const 10667)))
+    (local.set $t (i32.sub (local.get $elapsed) (i32.const 8000)))
 
     ;; Fill screen with sky color (0)
     (call $clear_fb)
@@ -629,7 +629,7 @@
     (local $glitch_y i32) (local $gx i32) (local $glitch_w i32)
     (local $shake_x i32) (local $shake_y i32) (local $pulse i32)
 
-    (local.set $t (i32.sub (local.get $elapsed) (i32.const 25436)))
+    (local.set $t (i32.sub (local.get $elapsed) (i32.const 20000)))
 
     (call $clear_fb)
 
@@ -820,7 +820,7 @@
     (local $step i32) (local $sum i32) (local $vstep i32)
     (local $left_fp i32)
 
-    (local.set $t (i32.sub (local.get $elapsed) (i32.const 37436)))
+    (local.set $t (i32.sub (local.get $elapsed) (i32.const 32000)))
     (local.set $tick (i32.shr_u (local.get $t) (i32.const 4)))
 
     ;; Clear to background
@@ -1017,7 +1017,7 @@
     (local $t i32) (local $i i32) (local $x i32) (local $y i32)
     (local $text_color i32) (local $bob i32)
 
-    (local.set $t (i32.sub (local.get $elapsed) (i32.const 55722)))
+    (local.set $t (i32.sub (local.get $elapsed) (i32.const 44000)))
 
     ;; Clear
     (call $clear_fb)
@@ -1056,7 +1056,7 @@
       (i32.const 4)))
 
     ;; Draw 3D Phong-shaded strawberry first (behind text)
-    (call $draw_strawberry (i32.const 160) (i32.add (i32.const 145) (local.get $bob)) (local.get $t))
+    (call $draw_strawberry (i32.const 160) (i32.add (i32.const 130) (local.get $bob)) (local.get $t))
 
     ;; Text drawn on top of berry
     ;; "BERRRY.APP" at 3x scale, centered
@@ -1085,52 +1085,43 @@
     ;; petal locals
     (local $u_raw i32) (local $v_raw i32) (local $u7 i32) (local $v7 i32)
     (local $ddx i32) (local $ddy i32)
+    (local $rx i32)
+    (local $seed_cx i32) (local $seed_cy i32) (local $si i32)
 
-    ;; Slowly rotating light
-    (local.set $lx128 (i32.sub (i32.const -120)
-      (i32.shr_s (i32.mul (call $sin_tab (i32.shr_u (local.get $t) (i32.const 6))) (i32.const 60))
-        (i32.const 7))))
-    (local.set $ly128 (i32.const -180))
-    (local.set $lz128 (i32.const 220))
+    ;; Orbiting light: circles around berry to showcase Phong
+    ;; lx128 = -200 * sin(t), ly128 = -200 * cos(t), lz128 = 180 (front)
+    ;; sin_tab returns 0-255, subtract 128 → -128..127, *200/128 ≈ *25>>4
+    (local.set $lx128 (i32.shr_s (i32.mul
+      (i32.sub (call $sin_tab (i32.shr_u (local.get $t) (i32.const 3))) (i32.const 128))
+      (i32.const 25)) (i32.const 4)))
+    (local.set $ly128 (i32.shr_s (i32.mul
+      (i32.sub (call $sin_tab (i32.add (i32.shr_u (local.get $t) (i32.const 3)) (i32.const 64))) (i32.const 128))
+      (i32.const 25)) (i32.const 4)))
+    (local.set $lz128 (i32.const 180))
 
-    ;; Bounding box: dy -62..+52, dx -40..+40
-    (local.set $dy (i32.const -62))
+    ;; Bounding box: dy -65..+47, dx -40..+40
+    (local.set $dy (i32.const -65))
     (block $yd (loop $yl
-      (br_if $yd (i32.gt_s (local.get $dy) (i32.const 52)))
+      (br_if $yd (i32.gt_s (local.get $dy) (i32.const 47)))
       (local.set $dx (i32.const -40))
       (block $xd (loop $xl
         (br_if $xd (i32.gt_s (local.get $dx) (i32.const 40)))
 
-        ;; ---- Shape test ----
-        ;; Upper body: dy in [-38,-8], dx²*900 + 1444*(dy+8)² <= 1299600
-        ;; Lower body: dy in [-8,+50], dx²*135 <= (50-dy)³
+        ;; ---- Shape test via radius profile table at 0x10A00 ----
+        ;; 91 entries for dy=-45..+45, each byte = max rx at that height
         (local.set $in_body (i32.const 0))
+        (local.set $rx (i32.const 0))
 
-        ;; Upper body test
         (if (i32.and
-              (i32.ge_s (local.get $dy) (i32.const -38))
-              (i32.le_s (local.get $dy) (i32.const -8)))
+              (i32.ge_s (local.get $dy) (i32.const -45))
+              (i32.le_s (local.get $dy) (i32.const 45)))
           (then
-            (local.set $sdx (i32.add (local.get $dy) (i32.const 8)))
-            (if (i32.le_s
-                  (i32.add
-                    (i32.mul (i32.mul (local.get $dx) (local.get $dx)) (i32.const 900))
-                    (i32.mul (i32.mul (local.get $sdx) (local.get $sdx)) (i32.const 1444)))
-                  (i32.const 1299600))
-              (then (local.set $in_body (i32.const 1))))))
-
-        ;; Lower body test: dx²*135 <= (50-dy)³
-        (if (i32.and
-              (i32.ge_s (local.get $dy) (i32.const -8))
-              (i32.le_s (local.get $dy) (i32.const 50)))
-          (then
-            ;; (50-dy): range 58..0
-            (local.set $sdx (i32.sub (i32.const 50) (local.get $dy)))
-            ;; cube = sdx * sdx * sdx  (max 58^3=195112, fits i32)
-            (local.set $sdy (i32.mul (i32.mul (local.get $sdx) (local.get $sdx)) (local.get $sdx)))
-            (if (i32.le_s
-                  (i32.mul (i32.mul (local.get $dx) (local.get $dx)) (i32.const 135))
-                  (local.get $sdy))
+            (local.set $rx (i32.load8_u (i32.add (i32.const 0x10A00)
+              (i32.add (local.get $dy) (i32.const 45)))))
+            (if (i32.and
+                  (i32.gt_s (local.get $rx) (i32.const 0))
+                  (i32.le_s (i32.mul (local.get $dx) (local.get $dx))
+                            (i32.mul (local.get $rx) (local.get $rx))))
               (then (local.set $in_body (i32.const 1))))))
 
         ;; ---- Leaf petal test ----
@@ -1138,9 +1129,9 @@
         ;; in_leaf values: 0=none, 1=seed-inner, 2=leaf, 3=seed-shadow, 4=stem
         (local.set $in_leaf (i32.const 0))
 
-        ;; Petal 0: angle=0°, sin128=0, cos128=128, center=(0,-52)
+        ;; Petal 0: angle=0°, sin128=0, cos128=128, center=(0,-57)
         (local.set $ddx (local.get $dx))
-        (local.set $ddy (i32.sub (local.get $dy) (i32.const -52)))
+        (local.set $ddy (i32.sub (local.get $dy) (i32.const -57)))
         ;; u_raw = ddx*sin128 + ddy*(-cos128) = ddx*0 + ddy*(-128) = -ddy*128
         (local.set $u_raw (i32.mul (i32.sub (i32.const 0) (local.get $ddy)) (i32.const 128)))
         ;; v_raw = ddx*cos128 + ddy*sin128 = ddx*128 + ddy*0 = ddx*128
@@ -1159,9 +1150,9 @@
                   (i32.gt_s (select (local.get $u7) (i32.sub (i32.const 0) (local.get $u7)) (i32.ge_s (local.get $u7) (i32.const 0))) (i32.const 3)))
               (then (local.set $in_leaf (i32.const 5))))))
 
-        ;; Petal 1: angle=30°, sin128=64, cos128=111, center=(6,-50)
+        ;; Petal 1: angle=30°, sin128=64, cos128=111, center=(6,-55)
         (local.set $ddx (i32.sub (local.get $dx) (i32.const 6)))
-        (local.set $ddy (i32.sub (local.get $dy) (i32.const -50)))
+        (local.set $ddy (i32.sub (local.get $dy) (i32.const -55)))
         (local.set $u_raw (i32.add (i32.mul (local.get $ddx) (i32.const 64)) (i32.mul (local.get $ddy) (i32.sub (i32.const 0) (i32.const 111)))))
         (local.set $v_raw (i32.add (i32.mul (local.get $ddx) (i32.const 111)) (i32.mul (local.get $ddy) (i32.const 64))))
         (local.set $u7 (i32.shr_s (local.get $u_raw) (i32.const 7)))
@@ -1178,9 +1169,9 @@
                   (i32.gt_s (select (local.get $u7) (i32.sub (i32.const 0) (local.get $u7)) (i32.ge_s (local.get $u7) (i32.const 0))) (i32.const 3)))
               (then (local.set $in_leaf (i32.const 5))))))
 
-        ;; Petal 2: angle=-30°, sin128=-64, cos128=111, center=(-6,-50)
+        ;; Petal 2: angle=-30°, sin128=-64, cos128=111, center=(-6,-55)
         (local.set $ddx (i32.sub (local.get $dx) (i32.const -6)))
-        (local.set $ddy (i32.sub (local.get $dy) (i32.const -50)))
+        (local.set $ddy (i32.sub (local.get $dy) (i32.const -55)))
         (local.set $u_raw (i32.add (i32.mul (local.get $ddx) (i32.sub (i32.const 0) (i32.const 64))) (i32.mul (local.get $ddy) (i32.sub (i32.const 0) (i32.const 111)))))
         (local.set $v_raw (i32.add (i32.mul (local.get $ddx) (i32.const 111)) (i32.mul (local.get $ddy) (i32.sub (i32.const 0) (i32.const 64)))))
         (local.set $u7 (i32.shr_s (local.get $u_raw) (i32.const 7)))
@@ -1197,9 +1188,9 @@
                   (i32.gt_s (select (local.get $u7) (i32.sub (i32.const 0) (local.get $u7)) (i32.ge_s (local.get $u7) (i32.const 0))) (i32.const 3)))
               (then (local.set $in_leaf (i32.const 5))))))
 
-        ;; Petal 3: angle=55°, sin128=105, cos128=73, center=(10,-46)
+        ;; Petal 3: angle=55°, sin128=105, cos128=73, center=(10,-51)
         (local.set $ddx (i32.sub (local.get $dx) (i32.const 10)))
-        (local.set $ddy (i32.sub (local.get $dy) (i32.const -46)))
+        (local.set $ddy (i32.sub (local.get $dy) (i32.const -51)))
         (local.set $u_raw (i32.add (i32.mul (local.get $ddx) (i32.const 105)) (i32.mul (local.get $ddy) (i32.sub (i32.const 0) (i32.const 73)))))
         (local.set $v_raw (i32.add (i32.mul (local.get $ddx) (i32.const 73)) (i32.mul (local.get $ddy) (i32.const 105))))
         (local.set $u7 (i32.shr_s (local.get $u_raw) (i32.const 7)))
@@ -1216,9 +1207,9 @@
                   (i32.gt_s (select (local.get $u7) (i32.sub (i32.const 0) (local.get $u7)) (i32.ge_s (local.get $u7) (i32.const 0))) (i32.const 3)))
               (then (local.set $in_leaf (i32.const 5))))))
 
-        ;; Petal 4: angle=-55°, sin128=-105, cos128=73, center=(-10,-46)
+        ;; Petal 4: angle=-55°, sin128=-105, cos128=73, center=(-10,-51)
         (local.set $ddx (i32.sub (local.get $dx) (i32.const -10)))
-        (local.set $ddy (i32.sub (local.get $dy) (i32.const -46)))
+        (local.set $ddy (i32.sub (local.get $dy) (i32.const -51)))
         (local.set $u_raw (i32.add (i32.mul (local.get $ddx) (i32.sub (i32.const 0) (i32.const 105))) (i32.mul (local.get $ddy) (i32.sub (i32.const 0) (i32.const 73)))))
         (local.set $v_raw (i32.add (i32.mul (local.get $ddx) (i32.const 73)) (i32.mul (local.get $ddy) (i32.sub (i32.const 0) (i32.const 105)))))
         (local.set $u7 (i32.shr_s (local.get $u_raw) (i32.const 7)))
@@ -1235,12 +1226,12 @@
                   (i32.gt_s (select (local.get $u7) (i32.sub (i32.const 0) (local.get $u7)) (i32.ge_s (local.get $u7) (i32.const 0))) (i32.const 3)))
               (then (local.set $in_leaf (i32.const 5))))))
 
-        ;; Stem zone: |dx|<=1, dy in [-56,-50], not in a leaf petal
+        ;; Stem zone: |dx|<=1, dy in [-61,-55], not in a leaf petal
         (if (i32.and
               (i32.le_s (select (local.get $dx) (i32.sub (i32.const 0) (local.get $dx)) (i32.ge_s (local.get $dx) (i32.const 0))) (i32.const 1))
               (i32.and
-                (i32.ge_s (local.get $dy) (i32.const -56))
-                (i32.le_s (local.get $dy) (i32.const -50))))
+                (i32.ge_s (local.get $dy) (i32.const -61))
+                (i32.le_s (local.get $dy) (i32.const -55))))
           (then
             (if (i32.eqz (local.get $in_leaf))
               (then (local.set $in_leaf (i32.const 4))))))
@@ -1261,9 +1252,25 @@
                        (i32.lt_s (local.get $py) (i32.const 200))))
               (then
                 ;; Surface normal approximation
-                (local.set $nx128 (i32.div_s (i32.mul (local.get $dx) (i32.const 128)) (i32.const 38)))
-                ;; ny128 = (dy+8)*128/50, centered on shoulder
-                (local.set $ny128 (i32.div_s (i32.mul (i32.add (local.get $dy) (i32.const 8)) (i32.const 128)) (i32.const 50)))
+                ;; nx uses actual local radius for accurate curvature (fallback 38 for leaves)
+                (local.set $nx128 (i32.div_s (i32.mul (local.get $dx) (i32.const 128))
+                  (select (local.get $rx) (i32.const 38) (i32.gt_s (local.get $rx) (i32.const 0)))))
+                ;; ny: blend profile slope with spherical position for 3D look
+                ;; ny128 = (slope*3 + dy*128/45) / 2
+                (if (i32.and
+                      (i32.ge_s (local.get $dy) (i32.const -44))
+                      (i32.le_s (local.get $dy) (i32.const 44)))
+                  (then
+                    (local.set $ny128 (i32.shr_s (i32.add
+                      ;; slope component: (table[i-1] - table[i+1]) * 3
+                      (i32.mul (i32.const 3) (i32.sub
+                        (i32.load8_u (i32.add (i32.const 0x10A00) (i32.add (local.get $dy) (i32.const 44))))
+                        (i32.load8_u (i32.add (i32.const 0x10A00) (i32.add (local.get $dy) (i32.const 46))))))
+                      ;; spherical component: dy * 128 / 45 ≈ dy * 3
+                      (i32.mul (local.get $dy) (i32.const 3)))
+                      (i32.const 1))))
+                  (else
+                    (local.set $ny128 (i32.div_s (i32.mul (local.get $dy) (i32.const 128)) (i32.const 45)))))
                 ;; Clamp ny128 to ±127
                 (if (i32.gt_s (local.get $ny128) (i32.const 127))
                   (then (local.set $ny128 (i32.const 127))))
@@ -1314,120 +1321,41 @@
                 (local.set $dot_spec (i32.shr_u (i32.mul (local.get $dot_spec) (local.get $dot_spec)) (i32.const 8)))
                 (local.set $dot_spec (i32.shr_u (i32.mul (local.get $dot_spec) (local.get $dot_spec)) (i32.const 8)))
 
-                ;; Calyx zone: body pixels dy < -35 → green
+                ;; Calyx zone: body pixels dy < -40 → green
                 (if (i32.and
                       (i32.gt_s (local.get $in_body) (i32.const 0))
-                      (i32.lt_s (local.get $dy) (i32.const -35)))
+                      (i32.lt_s (local.get $dy) (i32.const -40)))
                   (then
                     (if (i32.eqz (local.get $in_leaf))
                       (then (local.set $in_leaf (i32.const 2))))))
 
-                ;; Seeds: 16 positions in normal space, only inside body and non-leaf
+                ;; Seeds: 26 positions from data table at 0x10B00, tiny (r≈2px)
+                ;; Inner: dist²<5, Shadow dimple: 5..12
+                (local.set $seed_cx (i32.const 0))
+                (local.set $seed_cy (i32.const 0))
                 (if (i32.and
                       (i32.gt_s (local.get $in_body) (i32.const 0))
                       (i32.eqz (local.get $in_leaf)))
                   (then
-                    ;; Row 1 (ny≈-55): (-65,-55), (15,-60), (75,-50)
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const -65)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const -55)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.lt_s (local.get $sdsq) (i32.const 180)) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380))) (then (local.set $in_leaf (i32.const 3))))
-
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const 15)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const -60)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
-
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const 75)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const -50)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
-
-                    ;; Row 2 (ny≈-15): (-95,-10), (-25,-20), (45,-12), (100,-5)
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const -95)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const -10)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
-
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const -25)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const -20)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
-
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const 45)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const -12)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
-
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const 100)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const -5)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
-
-                    ;; Row 3 (ny≈+30): (-70,35), (20,38), (80,30)
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const -70)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const 35)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
-
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const 20)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const 38)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
-
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const 80)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const 30)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
-
-                    ;; Row 4 (ny≈+65): (-50,60), (30,65), (-10,75)
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const -50)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const 60)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
-
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const 30)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const 65)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
-
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const -10)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const 75)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
-
-                    ;; Row 5 (ny≈+90): (-25,92), (40,88)
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const -25)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const 92)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
-
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const 40)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const 88)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
-
-                    ;; Extra: (60,55)
-                    (local.set $sdx (i32.sub (local.get $nx128) (i32.const 60)))
-                    (local.set $sdy (i32.sub (local.get $ny128) (i32.const 55)))
-                    (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.lt_s (local.get $sdsq) (i32.const 180))) (then (local.set $in_leaf (i32.const 1))))
-                    (if (i32.and (i32.eqz (local.get $in_leaf)) (i32.and (i32.ge_s (local.get $sdsq) (i32.const 180)) (i32.lt_s (local.get $sdsq) (i32.const 380)))) (then (local.set $in_leaf (i32.const 3))))
+                    (local.set $si (i32.const 0))
+                    (block $sdone (loop $slp
+                      (br_if $sdone (i32.or
+                        (i32.ge_u (local.get $si) (i32.const 26))
+                        (i32.gt_s (local.get $in_leaf) (i32.const 0))))
+                      ;; Read seed (dx, dy) as signed bytes
+                      (local.set $seed_cx (i32.load8_s (i32.add (i32.const 0x10B00) (i32.mul (local.get $si) (i32.const 2)))))
+                      (local.set $seed_cy (i32.load8_s (i32.add (i32.const 0x10B01) (i32.mul (local.get $si) (i32.const 2)))))
+                      (local.set $sdx (i32.sub (local.get $dx) (local.get $seed_cx)))
+                      (local.set $sdy (i32.sub (local.get $dy) (local.get $seed_cy)))
+                      (local.set $sdsq (i32.add (i32.mul (local.get $sdx) (local.get $sdx)) (i32.mul (local.get $sdy) (local.get $sdy))))
+                      ;; Inner seed (yellow dot)
+                      (if (i32.lt_s (local.get $sdsq) (i32.const 5))
+                        (then (local.set $in_leaf (i32.const 1)))
+                        (else (if (i32.lt_s (local.get $sdsq) (i32.const 12))
+                          (then (local.set $in_leaf (i32.const 3))))))
+                      (local.set $si (i32.add (local.get $si) (i32.const 1)))
+                      (br $slp)
+                    ))
                   ))
 
                 ;; ---- Color determination ----
@@ -1453,8 +1381,8 @@
                     )
                     (else (if (i32.eq (local.get $in_leaf) (i32.const 1))
                       (then
-                        ;; Seed inner: yellow bright/dark based on diffuse
-                        (if (i32.gt_s (local.get $dot_diff) (i32.const 120))
+                        ;; Seed: tiny yellow-green dot, shaded by surface diffuse
+                        (if (i32.gt_s (local.get $dot_diff) (i32.const 100))
                           (then (local.set $col (i32.const 30)))
                           (else (local.set $col (i32.const 31))))
                       )
@@ -1464,32 +1392,25 @@
                           (local.set $col (i32.const 32))
                         )
                         (else
-                          ;; Berry body: rim glow, specular, or red ramp
-                          (if (i32.lt_s (local.get $nz128) (i32.const 35))
-                            (then
-                              ;; Silhouette rim glow
-                              (local.set $col (i32.const 3))
-                            )
-                            (else
-                              (if (i32.gt_s (local.get $dot_spec) (i32.const 160))
-                                (then (local.set $col (i32.const 1)))
-                                (else (if (i32.gt_s (local.get $dot_spec) (i32.const 80))
-                                  (then (local.set $col (i32.const 4)))
-                                  (else
-                                    ;; Red ramp 10-25
-                                    (local.set $shade (i32.add (i32.div_s (local.get $dot_diff) (i32.const 16)) (i32.const 0)))
-                                    (if (i32.gt_s (local.get $shade) (i32.const 15))
-                                      (then (local.set $shade (i32.const 15))))
-                                    (if (i32.lt_s (local.get $shade) (i32.const 0))
-                                      (then (local.set $shade (i32.const 0))))
-                                    (local.set $col (i32.add (i32.const 10) (local.get $shade)))
-                                  ))
+                          ;; Berry body: specular or red ramp
+                          (if (i32.gt_s (local.get $dot_spec) (i32.const 160))
+                            (then (local.set $col (i32.const 1)))
+                            (else (if (i32.gt_s (local.get $dot_spec) (i32.const 80))
+                              (then (local.set $col (i32.const 4)))
+                              (else
+                                ;; Red ramp 10-25
+                                (local.set $shade (i32.div_s (local.get $dot_diff) (i32.const 16)))
+                                (if (i32.gt_s (local.get $shade) (i32.const 15))
+                                  (then (local.set $shade (i32.const 15))))
+                                (if (i32.lt_s (local.get $shade) (i32.const 0))
+                                  (then (local.set $shade (i32.const 0))))
+                                (local.set $col (i32.add (i32.const 10) (local.get $shade)))
                               ))
-                          ))
-                        ))
+                          )))
                       ))
                     ))
                 ))
+                )
 
                 ;; Write pixel
                 (i32.store8
@@ -1525,6 +1446,10 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)
     ))
+
+    ;; Strawberry radius profile is stored as a data segment at 0x10A00 (91 bytes)
+    ;; Hand-tuned smooth curve: quick widen, holds width, very gentle taper to soft tip
+    ;; No formula — just the right shape, guaranteed smooth.
 
     ;; Capture start tick
     (i32.store (i32.const 0x38004) (i32.load (i32.const 0x0C)))
@@ -1592,17 +1517,17 @@
     ;; Compute elapsed time since init, modulo 52000 for looping
     (local.set $elapsed (i32.rem_u
       (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x38004)))
-      (i32.const 70491)))
+      (i32.const 52000)))
 
     ;; Determine section from elapsed time
     (local.set $section (i32.const 0))
-    (if (i32.ge_u (local.get $elapsed) (i32.const 10667))
+    (if (i32.ge_u (local.get $elapsed) (i32.const 8000))
       (then (local.set $section (i32.const 1))))
-    (if (i32.ge_u (local.get $elapsed) (i32.const 25436))
+    (if (i32.ge_u (local.get $elapsed) (i32.const 20000))
       (then (local.set $section (i32.const 2))))
-    (if (i32.ge_u (local.get $elapsed) (i32.const 37436))
+    (if (i32.ge_u (local.get $elapsed) (i32.const 32000))
       (then (local.set $section (i32.const 3))))
-    (if (i32.ge_u (local.get $elapsed) (i32.const 55722))
+    (if (i32.ge_u (local.get $elapsed) (i32.const 44000))
       (then (local.set $section (i32.const 4))))
 
     ;; Navigation: space/click/right=next, left=prev (rising edge per-bit)
@@ -1622,30 +1547,30 @@
       (i32.const 25))
       (then
         ;; Compute next section boundary
-        (local.set $next_boundary (i32.const 10667))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 10667))
-          (then (local.set $next_boundary (i32.const 25436))))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 25436))
-          (then (local.set $next_boundary (i32.const 37436))))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 37436))
-          (then (local.set $next_boundary (i32.const 55722))))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 55722))
-          (then (local.set $next_boundary (i32.const 70491))))
+        (local.set $next_boundary (i32.const 8000))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 8000))
+          (then (local.set $next_boundary (i32.const 20000))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 20000))
+          (then (local.set $next_boundary (i32.const 32000))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 32000))
+          (then (local.set $next_boundary (i32.const 44000))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 44000))
+          (then (local.set $next_boundary (i32.const 52000))))
         ;; Shift start_tick backward so elapsed jumps to next_boundary
         (i32.store (i32.const 0x38004)
           (i32.sub (local.get $tick_ms) (local.get $next_boundary)))
         ;; Recompute elapsed and section
         (local.set $elapsed (i32.rem_u
           (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x38004)))
-          (i32.const 70491)))
+          (i32.const 52000)))
         (local.set $section (i32.const 0))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 10667))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 8000))
           (then (local.set $section (i32.const 1))))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 25436))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 20000))
           (then (local.set $section (i32.const 2))))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 37436))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 32000))
           (then (local.set $section (i32.const 3))))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 55722))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 44000))
           (then (local.set $section (i32.const 4))))
       ))
 
@@ -1655,30 +1580,30 @@
       (i32.const 4))
       (then
         ;; Compute previous section boundary
-        (local.set $next_boundary (i32.const 55722))  ;; wrap to last section
-        (if (i32.ge_u (local.get $elapsed) (i32.const 10667))
+        (local.set $next_boundary (i32.const 44000))  ;; wrap to last section
+        (if (i32.ge_u (local.get $elapsed) (i32.const 8000))
           (then (local.set $next_boundary (i32.const 0))))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 25436))
-          (then (local.set $next_boundary (i32.const 10667))))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 37436))
-          (then (local.set $next_boundary (i32.const 25436))))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 55722))
-          (then (local.set $next_boundary (i32.const 37436))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 20000))
+          (then (local.set $next_boundary (i32.const 8000))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 32000))
+          (then (local.set $next_boundary (i32.const 20000))))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 44000))
+          (then (local.set $next_boundary (i32.const 32000))))
         ;; Shift start_tick so elapsed jumps to prev boundary
         (i32.store (i32.const 0x38004)
           (i32.sub (local.get $tick_ms) (local.get $next_boundary)))
         ;; Recompute elapsed and section
         (local.set $elapsed (i32.rem_u
           (i32.sub (local.get $tick_ms) (i32.load (i32.const 0x38004)))
-          (i32.const 70491)))
+          (i32.const 52000)))
         (local.set $section (i32.const 0))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 10667))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 8000))
           (then (local.set $section (i32.const 1))))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 25436))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 20000))
           (then (local.set $section (i32.const 2))))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 37436))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 32000))
           (then (local.set $section (i32.const 3))))
-        (if (i32.ge_u (local.get $elapsed) (i32.const 55722))
+        (if (i32.ge_u (local.get $elapsed) (i32.const 44000))
           (then (local.set $section (i32.const 4))))
       ))
 
@@ -1708,15 +1633,15 @@
     ;; Global fade: fade in first 500ms, fade out last 500ms of each section
     ;; Compute section start/end boundaries
     (local.set $sec_start (i32.const 0))
-    (local.set $sec_end (i32.const 10667))
+    (local.set $sec_end (i32.const 8000))
     (if (i32.ge_u (local.get $section) (i32.const 1))
-      (then (local.set $sec_start (i32.const 10667)) (local.set $sec_end (i32.const 25436))))
+      (then (local.set $sec_start (i32.const 8000)) (local.set $sec_end (i32.const 20000))))
     (if (i32.ge_u (local.get $section) (i32.const 2))
-      (then (local.set $sec_start (i32.const 25436)) (local.set $sec_end (i32.const 37436))))
+      (then (local.set $sec_start (i32.const 20000)) (local.set $sec_end (i32.const 32000))))
     (if (i32.ge_u (local.get $section) (i32.const 3))
-      (then (local.set $sec_start (i32.const 37436)) (local.set $sec_end (i32.const 55722))))
+      (then (local.set $sec_start (i32.const 32000)) (local.set $sec_end (i32.const 44000))))
     (if (i32.ge_u (local.get $section) (i32.const 4))
-      (then (local.set $sec_start (i32.const 55722)) (local.set $sec_end (i32.const 70491))))
+      (then (local.set $sec_start (i32.const 44000)) (local.set $sec_end (i32.const 52000))))
 
     (local.set $t_in (i32.sub (local.get $elapsed) (local.get $sec_start)))
     (local.set $t_left (i32.sub (local.get $sec_end) (local.get $elapsed)))
@@ -1765,6 +1690,23 @@
   ;; Music pattern address lookup table (5 entries × 4 bytes at 0x10900)
   ;; section 0→0x20000, 1→0x20100, 2→0x20200, 3→0x20300, 4→0x20400
   (data (i32.const 0x10900) "\00\00\02\00\00\01\02\00\00\02\02\00\00\03\02\00\00\04\02\00")
+
+  ;; Strawberry radius profile: 81 bytes at 0x10A00 (dy=-40..+40)
+  ;; Asymmetric ellipse: center at i=25, top semi-axis=25, bottom semi-axis=55.
+  ;; Elongated egg shape — widest near top, gentle rounded taper at bottom.
+  ;; i: 0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19
+  ;; r: 0 11 15 18 21 23 25 26 28 29 30 31 32 33 34 35 35 36 36 37
+  ;; i:20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39
+  ;; r:37 38 38 38 38 38 38 38 38 38 38 38 38 38 37 37 37 37 37 37
+  ;; i:40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59
+  ;; r:37 36 36 36 36 35 35 35 35 34 34 33 33 33 32 32 31 31 30 30
+  ;; i:60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80
+  ;; r:29 29 28 27 27 26 25 25 24 23 22 21 20 19 17 16 14 12 10  7  0
+  (data (i32.const 0x10A00) "\00\0b\0f\12\15\17\19\1a\1c\1d\1e\1f\20\21\22\23\23\24\24\25\25\26\26\26\26\26\26\26\26\26\26\26\26\26\25\25\25\25\25\25\25\24\24\24\24\23\23\23\23\22\22\21\21\21\20\20\1f\1f\1e\1e\1d\1d\1c\1b\1b\1a\19\19\18\17\16\15\14\13\11\10\0e\0c\0a\07\00")
+
+  ;; Strawberry seed positions: 26 pairs of (dx:i8, dy:i8) in screen-space
+  ;; Stored at 0x10B00. Read with i32.load8_s for signed values.
+  (data (i32.const 0x10B00) "\f1\dd\08\dd\1c\df\e4\e9\f6\e8\0c\ea\1e\e8\e0\f4\f2\f6\05\f4\16\f5\23\f3\e2\00\f6\02\0c\00\1c\01\e6\0c\fa\0a\0e\0d\1c\0b\ec\16\04\14\14\17\f4\20\08\22\00\26")
 
   ;; Music patterns (MIDI-note format, read by harness from memory)
   ;; Pattern 5: CODE RAIN (90 BPM, Am)
