@@ -607,88 +607,124 @@
   )
 
   ;; =========================================================
-  ;; SECTION 2: Plasma + Text
+  ;; SECTION 2: "INTENT NOT SYNTAX" — dramatic reveal
   ;; =========================================================
   (func $pal_plasma
-    (local $i i32) (local $f f64) (local $v f64)
-    (local $r i32) (local $g i32) (local $b i32)
-    ;; 0-239: plasma rainbow (dimmed)
-    (local.set $i (i32.const 0))
-    (block $done (loop $lp
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 240)))
-      (local.set $f (f64.div (f64.convert_i32_u (local.get $i)) (f64.const 240.0)))
-      (local.set $v (f64.add (f64.mul (call $sin_approx (f64.mul (local.get $f) (f64.const 6.2832))) (f64.const 40.0)) (f64.const 50.0)))
-      (local.set $r (i32.trunc_f64_s (local.get $v)))
-      (local.set $v (f64.add (f64.mul (call $sin_approx (f64.add (f64.mul (local.get $f) (f64.const 6.2832)) (f64.const 2.094))) (f64.const 40.0)) (f64.const 50.0)))
-      (local.set $g (i32.trunc_f64_s (local.get $v)))
-      (local.set $v (f64.add (f64.mul (call $sin_approx (f64.add (f64.mul (local.get $f) (f64.const 6.2832)) (f64.const 4.189))) (f64.const 40.0)) (f64.const 50.0)))
-      (local.set $b (i32.trunc_f64_s (local.get $v)))
-      (if (i32.lt_s (local.get $r) (i32.const 0)) (then (local.set $r (i32.const 0))))
-      (if (i32.gt_s (local.get $r) (i32.const 255)) (then (local.set $r (i32.const 255))))
-      (if (i32.lt_s (local.get $g) (i32.const 0)) (then (local.set $g (i32.const 0))))
-      (if (i32.gt_s (local.get $g) (i32.const 255)) (then (local.set $g (i32.const 255))))
-      (if (i32.lt_s (local.get $b) (i32.const 0)) (then (local.set $b (i32.const 0))))
-      (if (i32.gt_s (local.get $b) (i32.const 255)) (then (local.set $b (i32.const 255))))
-      (call $set_pal (local.get $i) (local.get $r) (local.get $g) (local.get $b))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $lp)
-    ))
-    ;; 240-249: bright white-cyan text
-    (local.set $i (i32.const 240))
-    (block $td (loop $tl
-      (br_if $td (i32.gt_u (local.get $i) (i32.const 249)))
-      (call $set_pal (local.get $i) (i32.const 255) (i32.const 255) (i32.const 255))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $tl)
-    ))
-    ;; 250 = berrry green
-    (call $set_pal (i32.const 250) (i32.const 0) (i32.const 221) (i32.const 136))
+    ;; 0 = black
+    (call $set_pal (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    ;; 1 = white text
+    (call $set_pal (i32.const 1) (i32.const 255) (i32.const 255) (i32.const 255))
+    ;; 2 = berrry green
+    (call $set_pal (i32.const 2) (i32.const 0) (i32.const 221) (i32.const 136))
+    ;; 3 = glitch bright
+    (call $set_pal (i32.const 3) (i32.const 200) (i32.const 200) (i32.const 220))
+    ;; 4 = dim pulse
+    (call $set_pal (i32.const 4) (i32.const 40) (i32.const 40) (i32.const 50))
+    ;; 5 = red accent
+    (call $set_pal (i32.const 5) (i32.const 200) (i32.const 30) (i32.const 30))
   )
 
   (func $render_plasma (param $elapsed i32)
-    (local $t i32) (local $tick i32) (local $x i32) (local $y i32)
-    (local $v1 i32) (local $v2 i32) (local $v3 i32) (local $v4 i32) (local $color i32)
-    (local $sec_t i32) (local $wave i32) (local $text_y i32)
+    (local $t i32) (local $x i32) (local $y i32)
+    (local $glitch_y i32) (local $gx i32) (local $glitch_w i32)
+    (local $shake_x i32) (local $shake_y i32) (local $pulse i32)
 
-    (local.set $sec_t (i32.sub (local.get $elapsed) (i32.const 20000)))
-    (local.set $tick (i32.shr_u (local.get $elapsed) (i32.const 4)))
+    (local.set $t (i32.sub (local.get $elapsed) (i32.const 20000)))
 
-    ;; Draw plasma background
-    (local.set $y (i32.const 0))
-    (block $yd (loop $yl
-      (br_if $yd (i32.ge_u (local.get $y) (i32.const 200)))
-      (local.set $x (i32.const 0))
-      (block $xd (loop $xl
-        (br_if $xd (i32.ge_u (local.get $x) (i32.const 320)))
-        (local.set $v1 (call $sin_tab (i32.add (local.get $x) (local.get $tick))))
-        (local.set $v2 (call $sin_tab (i32.add (local.get $y) (i32.shl (local.get $tick) (i32.const 1)))))
-        (local.set $v3 (call $sin_tab (i32.add (i32.add (local.get $x) (local.get $y)) (local.get $tick))))
-        (local.set $v4 (call $sin_tab (i32.add
-          (i32.add (i32.mul (local.get $x) (i32.const 2)) (i32.mul (local.get $y) (i32.const 3)))
-          (i32.mul (local.get $tick) (i32.const 3)))))
-        (local.set $color (i32.rem_u
-          (i32.shr_u (i32.add (i32.add (local.get $v1) (local.get $v2))
-            (i32.add (local.get $v3) (local.get $v4))) (i32.const 2))
-          (i32.const 240)))
-        (i32.store8 (i32.add (i32.const 0x0340)
-          (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x)))
-          (local.get $color))
-        (local.set $x (i32.add (local.get $x) (i32.const 1)))
-        (br $xl)
+    (call $clear_fb)
+
+    ;; Phase 1 (0-800ms): Glitch static buildup — random blocks intensifying
+    (if (i32.lt_u (local.get $t) (i32.const 800))
+      (then
+        ;; Number of glitch blocks increases with time
+        (local.set $y (i32.const 0))
+        (block $gd (loop $gl
+          (br_if $gd (i32.ge_u (local.get $y) (i32.shr_u (local.get $t) (i32.const 4))))
+          (local.set $glitch_y (i32.rem_u
+            (i32.and (call $rand) (i32.const 0x7FFFFFFF)) (i32.const 200)))
+          (local.set $gx (i32.rem_u
+            (i32.and (call $rand) (i32.const 0x7FFFFFFF)) (i32.const 280)))
+          (local.set $glitch_w (i32.add
+            (i32.rem_u (i32.and (call $rand) (i32.const 0x7FFFFFFF)) (i32.const 60)) (i32.const 5)))
+          (local.set $x (local.get $gx))
+          (block $gwd (loop $gwl
+            (br_if $gwd (i32.ge_u (local.get $x)
+              (i32.add (local.get $gx) (local.get $glitch_w))))
+            (if (i32.lt_u (local.get $x) (i32.const 320))
+              (then
+                (i32.store8 (i32.add (i32.const 0x0340)
+                  (i32.add (i32.mul (local.get $glitch_y) (i32.const 320)) (local.get $x)))
+                  (select (i32.const 3) (i32.const 4)
+                    (i32.lt_u (i32.and (call $rand) (i32.const 3)) (i32.const 2))))))
+            (local.set $x (i32.add (local.get $x) (i32.const 1)))
+            (br $gwl)
+          ))
+          (local.set $y (i32.add (local.get $y) (i32.const 1)))
+          (br $gl)
+        ))
+        (return)
       ))
-      (local.set $y (i32.add (local.get $y) (i32.const 1)))
-      (br $yl)
-    ))
 
-    ;; Overlay text with sine wave Y offset
-    ;; "INTENT NOT SYNTAX" (17 chars * 9 * 2 = 306px → x=7)
-    (local.set $wave (i32.sub
-      (i32.shr_u (call $sin_tab (i32.shr_u (local.get $sec_t) (i32.const 3))) (i32.const 2))
-      (i32.const 32)))
-    (local.set $text_y (i32.add (i32.const 88) (local.get $wave)))
+    ;; Phase 2 (800ms-1200ms): White flash → text slam
+    (if (i32.lt_u (local.get $t) (i32.const 1200))
+      (then
+        ;; Brief white flash at 800ms, fading to black by 1200ms
+        (local.set $pulse (i32.div_u
+          (i32.mul (i32.sub (i32.const 1200) (local.get $t)) (i32.const 255))
+          (i32.const 400)))
+        (call $set_pal (i32.const 4) (local.get $pulse) (local.get $pulse) (local.get $pulse))
+        ;; Fill with flash color
+        (local.set $y (i32.const 0))
+        (block $fd (loop $fl
+          (br_if $fd (i32.ge_u (local.get $y) (i32.const 64000)))
+          (i32.store8 (i32.add (i32.const 0x0340) (local.get $y)) (i32.const 4))
+          (local.set $y (i32.add (local.get $y) (i32.const 1)))
+          (br $fl)
+        ))
+      ))
 
-    (call $draw_text (i32.const 0x10780) (i32.const 17)
-      (i32.const 7) (local.get $text_y) (i32.const 2) (i32.const 245))
+    ;; Phase 3 (1200ms+): Text on black with subtle glitch bars
+    ;; "INTENT NOT SYNTAX" at 2x, centered: 17*9*2=306px, x=7
+    ;; Screen shake in first 500ms after slam
+    (local.set $shake_x (i32.const 0))
+    (local.set $shake_y (i32.const 0))
+    (if (i32.lt_u (local.get $t) (i32.const 1700))
+      (then
+        (local.set $shake_x (i32.sub
+          (i32.rem_u (i32.and (call $rand) (i32.const 0x7FFFFFFF)) (i32.const 7)) (i32.const 3)))
+        (local.set $shake_y (i32.sub
+          (i32.rem_u (i32.and (call $rand) (i32.const 0x7FFFFFFF)) (i32.const 5)) (i32.const 2)))))
+
+    (if (i32.ge_u (local.get $t) (i32.const 1200))
+      (then
+        (call $draw_text (i32.const 0x10780) (i32.const 17)
+          (i32.add (i32.const 7) (local.get $shake_x))
+          (i32.add (i32.const 88) (local.get $shake_y))
+          (i32.const 2) (i32.const 1))
+
+        ;; Occasional glitch bars
+        (if (i32.lt_u (i32.and (local.get $t) (i32.const 255)) (i32.const 12))
+          (then
+            (local.set $y (i32.const 0))
+            (block $hd (loop $hl
+              (br_if $hd (i32.ge_u (local.get $y) (i32.const 2)))
+              (local.set $glitch_y (i32.rem_u
+                (i32.and (call $rand) (i32.const 0x7FFFFFFF)) (i32.const 200)))
+              (local.set $x (i32.const 0))
+              (block $hxd (loop $hxl
+                (br_if $hxd (i32.ge_u (local.get $x) (i32.const 320)))
+                (i32.store8 (i32.add (i32.const 0x0340)
+                  (i32.add (i32.mul (local.get $glitch_y) (i32.const 320)) (local.get $x)))
+                  (select (i32.const 3) (i32.const 0)
+                    (i32.lt_u (i32.and (call $rand) (i32.const 7)) (i32.const 2))))
+                (local.set $x (i32.add (local.get $x) (i32.const 1)))
+                (br $hxl)
+              ))
+              (local.set $y (i32.add (local.get $y) (i32.const 1)))
+              (br $hl)
+            ))
+          ))
+      ))
   )
 
   ;; =========================================================
@@ -835,14 +871,14 @@
       (if (i32.and (i32.ge_s (local.get $ty_fp) (i32.const 0))
                    (i32.lt_s (local.get $ty_fp) (i32.const 23040)))
         (then
-          ;; left_fp in fixed-point: (160 - df*150/169) * 256
-          ;; = 40960 - df*38400/169  (smooth, no integer rounding jumps)
+          ;; left_fp in fixed-point: 1.5x wider chars
+          ;; = 40960 - df*57600/169
           (local.set $left_fp (i32.sub (i32.const 40960)
-            (i32.div_u (i32.mul (local.get $df) (i32.const 38400)) (i32.const 169))))
+            (i32.div_u (i32.mul (local.get $df) (i32.const 57600)) (i32.const 169))))
           ;; Integer left/right for loop bounds only
           (local.set $left (i32.shr_s (local.get $left_fp) (i32.const 8)))
           (local.set $screen_half (i32.div_u
-            (i32.mul (local.get $df) (i32.const 150)) (i32.const 169)))
+            (i32.mul (local.get $df) (i32.const 225)) (i32.const 169)))
           (local.set $right (i32.add (i32.const 160) (local.get $screen_half)))
           (if (i32.lt_s (local.get $left) (i32.const 0))
             (then (local.set $left (i32.const 0))))
@@ -868,10 +904,10 @@
             (br_if $xd (i32.ge_u (local.get $sx) (local.get $right)))
 
             ;; text_x fixed-point using left_fp for smooth horizontal mapping
-            ;; tx_fp = (sx*256 - left_fp) * 253 / (df * 2)  [253/2 = 126.5 exact]
+            ;; tx_fp = (sx*256 - left_fp) * 253 / (df * 3)  [1.5x wider chars]
             (local.set $tx_fp (i32.div_u
               (i32.mul (i32.sub (i32.mul (local.get $sx) (i32.const 256)) (local.get $left_fp)) (i32.const 253))
-              (i32.mul (local.get $df) (i32.const 2))))
+              (i32.mul (local.get $df) (i32.const 3))))
 
             ;; Check tx_fp < 224*256 = 57344
             (if (i32.lt_u (local.get $tx_fp) (i32.const 57344))
@@ -1113,12 +1149,34 @@
   )
 
   ;; =========================================================
+  ;; UTILITY: apply fade to entire palette (factor 0-255)
+  ;; =========================================================
+  (func $apply_fade (param $factor i32)
+    (local $i i32) (local $addr i32) (local $r i32) (local $g i32) (local $b i32)
+    (if (i32.ge_u (local.get $factor) (i32.const 255)) (then (return)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 256)))
+      (local.set $addr (i32.add (i32.const 0x0040) (i32.mul (local.get $i) (i32.const 3))))
+      (local.set $r (i32.load8_u (local.get $addr)))
+      (local.set $g (i32.load8_u (i32.add (local.get $addr) (i32.const 1))))
+      (local.set $b (i32.load8_u (i32.add (local.get $addr) (i32.const 2))))
+      (i32.store8 (local.get $addr) (i32.shr_u (i32.mul (local.get $r) (local.get $factor)) (i32.const 8)))
+      (i32.store8 (i32.add (local.get $addr) (i32.const 1)) (i32.shr_u (i32.mul (local.get $g) (local.get $factor)) (i32.const 8)))
+      (i32.store8 (i32.add (local.get $addr) (i32.const 2)) (i32.shr_u (i32.mul (local.get $b) (local.get $factor)) (i32.const 8)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)
+    ))
+  )
+
+  ;; =========================================================
   ;; FRAME — main dispatcher
   ;; =========================================================
   (func (export "frame")
     (local $tick_ms i32) (local $elapsed i32) (local $section i32)
     (local $last_section i32) (local $input i32) (local $prev_input i32)
-    (local $next_boundary i32)
+    (local $next_boundary i32) (local $sec_start i32) (local $sec_end i32)
+    (local $t_in i32) (local $t_left i32) (local $fade i32)
 
     ;; Read current tick
     (local.set $tick_ms (i32.load (i32.const 0x0C)))
@@ -1238,6 +1296,45 @@
     (if (i32.eq (local.get $section) (i32.const 2)) (then (call $render_plasma (local.get $elapsed))))
     (if (i32.eq (local.get $section) (i32.const 3)) (then (call $render_scroll (local.get $elapsed))))
     (if (i32.eq (local.get $section) (i32.const 4)) (then (call $render_berrry (local.get $elapsed))))
+
+    ;; Global fade: fade in first 500ms, fade out last 500ms of each section
+    ;; Compute section start/end boundaries
+    (local.set $sec_start (i32.const 0))
+    (local.set $sec_end (i32.const 8000))
+    (if (i32.ge_u (local.get $section) (i32.const 1))
+      (then (local.set $sec_start (i32.const 8000)) (local.set $sec_end (i32.const 20000))))
+    (if (i32.ge_u (local.get $section) (i32.const 2))
+      (then (local.set $sec_start (i32.const 20000)) (local.set $sec_end (i32.const 32000))))
+    (if (i32.ge_u (local.get $section) (i32.const 3))
+      (then (local.set $sec_start (i32.const 32000)) (local.set $sec_end (i32.const 44000))))
+    (if (i32.ge_u (local.get $section) (i32.const 4))
+      (then (local.set $sec_start (i32.const 44000)) (local.set $sec_end (i32.const 52000))))
+
+    (local.set $t_in (i32.sub (local.get $elapsed) (local.get $sec_start)))
+    (local.set $t_left (i32.sub (local.get $sec_end) (local.get $elapsed)))
+    (local.set $fade (i32.const 255))
+
+    ;; Fade in: first 500ms
+    (if (i32.lt_u (local.get $t_in) (i32.const 500))
+      (then (local.set $fade (i32.div_u (i32.mul (local.get $t_in) (i32.const 255)) (i32.const 500)))))
+    ;; Fade out: last 500ms (use minimum of fade-in and fade-out)
+    (if (i32.lt_u (local.get $t_left) (i32.const 500))
+      (then (local.set $fade (select
+        (local.get $fade)
+        (i32.div_u (i32.mul (local.get $t_left) (i32.const 255)) (i32.const 500))
+        (i32.lt_u (local.get $fade)
+          (i32.div_u (i32.mul (local.get $t_left) (i32.const 255)) (i32.const 500)))))))
+
+    ;; Only apply fade when actually fading (not at full brightness)
+    ;; Must re-setup palette first since fade is destructive
+    (if (i32.lt_u (local.get $fade) (i32.const 255))
+      (then
+        (if (i32.eqz (local.get $section))            (then (call $pal_rain)))
+        (if (i32.eq (local.get $section) (i32.const 1)) (then (call $pal_grave)))
+        (if (i32.eq (local.get $section) (i32.const 2)) (then (call $pal_plasma)))
+        (if (i32.eq (local.get $section) (i32.const 3)) (then (call $pal_scroll)))
+        (if (i32.eq (local.get $section) (i32.const 4)) (then (call $pal_berrry)))
+        (call $apply_fade (local.get $fade))))
   )
 
   ;; =========================================================
