@@ -51,6 +51,12 @@
   ;; +18: boss_phase (u8)
   ;; +19: boss_timer (u8)
   ;; +20: shake_timer (u8)
+  ;; +21: hit_msg_idx (u8)
+  ;; +22: music_state (u8)
+  ;; +23: prev_btn (u8)
+  ;; +24: prev_keys (u8)
+  ;; +26: prev_mouse_x (u16)
+  ;; +28: prev_mouse_y (u16)
 
   ;; --- SFX helper: look up address from table and call $sfx ---
   (func $play_sfx (param $id i32)
@@ -331,13 +337,17 @@
           (then (local.set $px (i32.add (local.get $px) (i32.const 3)))))
       )
       (else
-        ;; no keys held — lerp toward mouse (1/4 distance per frame)
+        ;; no keys held — lerp toward mouse only if mouse has moved since last frame
         (local.set $mx (i32.load16_u (i32.const 0x04)))
-        (if (i32.lt_s (local.get $mx) (i32.const 8)) (then (local.set $mx (i32.const 8))))
-        (if (i32.gt_s (local.get $mx) (i32.const 280)) (then (local.set $mx (i32.const 280))))
         (local.set $my (i32.load16_u (i32.const 0x06)))
-        (if (i32.lt_s (local.get $my) (i32.const 16)) (then (local.set $my (i32.const 16))))
-        (if (i32.gt_s (local.get $my) (i32.const 190)) (then (local.set $my (i32.const 190))))
+        (if (i32.or
+              (i32.ne (local.get $mx) (i32.load16_u (i32.const 0x1035A)))
+              (i32.ne (local.get $my) (i32.load16_u (i32.const 0x1035C))))
+          (then
+            (if (i32.lt_s (local.get $mx) (i32.const 8)) (then (local.set $mx (i32.const 8))))
+            (if (i32.gt_s (local.get $mx) (i32.const 280)) (then (local.set $mx (i32.const 280))))
+            (if (i32.lt_s (local.get $my) (i32.const 16)) (then (local.set $my (i32.const 16))))
+            (if (i32.gt_s (local.get $my) (i32.const 190)) (then (local.set $my (i32.const 190))))
         (local.set $px (i32.add (local.get $px) (i32.shr_s (i32.sub (local.get $mx) (local.get $px)) (i32.const 2))))
         (local.set $py (i32.add (local.get $py) (i32.shr_s (i32.sub (local.get $my) (local.get $py)) (i32.const 2))))
       )
@@ -1531,8 +1541,9 @@
         (call $draw_string (i32.const 0x11188) (i32.const 14) (i32.const 104) (i32.const 140) (i32.const 15) (i32.const 1))
       )
     )
-    ;; check mouse click
-    (local.set $btn (i32.load8_u (i32.const 0x08)))
+    ;; check NEW mouse click (rising edge) or timeout
+    (local.set $btn (i32.and (i32.load8_u (i32.const 0x08))
+      (i32.xor (i32.load8_u (i32.const 0x10357)) (i32.const 0xFF))))
     (if (i32.or (i32.and (local.get $btn) (i32.const 1))
           (i32.gt_u (local.get $timer) (i32.const 600)))
       (then
@@ -1695,11 +1706,14 @@
         (call $draw_string (i32.const 0x111A8) (i32.const 16) (i32.const 96) (i32.const 150) (i32.const 15) (i32.const 1))
       )
     )
-    ;; restart on click after delay
-    (local.set $btn (i32.load8_u (i32.const 0x08)))
+    ;; restart on NEW click/space after delay (rising edge)
+    (local.set $btn (i32.and (i32.load8_u (i32.const 0x08))
+      (i32.xor (i32.load8_u (i32.const 0x10357)) (i32.const 0xFF))))
     (if (i32.and (i32.gt_u (local.get $timer) (i32.const 180))
           (i32.or (i32.and (local.get $btn) (i32.const 1))
-                  (i32.and (i32.load8_u (i32.const 0x10)) (i32.const 16))))
+                  (i32.and
+                    (i32.and (i32.load8_u (i32.const 0x10)) (i32.xor (i32.load8_u (i32.const 0x10358)) (i32.const 0xFF)))
+                    (i32.const 16))))
       (then
         ;; reset to title
         (call $music (i32.const 0x12400))
@@ -1933,19 +1947,35 @@
 
   (func (export "frame")
     (local $phase i32) (local $timer i32)
+    (local $btn i32) (local $keys i32) (local $new_btn i32) (local $new_keys i32)
     ;; increment phase timer
     (local.set $timer (i32.add (i32.load16_u (i32.const 0x10342)) (i32.const 1)))
     (i32.store16 (i32.const 0x10342) (local.get $timer))
+    ;; read current input and compute rising edges
+    (local.set $btn (i32.load8_u (i32.const 0x08)))
+    (local.set $keys (i32.load8_u (i32.const 0x10)))
+    (local.set $new_btn (i32.and (local.get $btn)
+      (i32.xor (i32.load8_u (i32.const 0x10357)) (i32.const 0xFF))))
+    (local.set $new_keys (i32.and (local.get $keys)
+      (i32.xor (i32.load8_u (i32.const 0x10358)) (i32.const 0xFF))))
     ;; dispatch on phase
     (local.set $phase (i32.load8_u (i32.const 0x10340)))
-    ;; skip intro on click or space (keyboard bit4 at 0x10) — require timer>30 to avoid accidental skip
+    ;; start intro music once (0x10356 = music state: 0=need intro, 1=intro playing, 2=gameplay)
+    (if (i32.and (i32.lt_u (local.get $phase) (i32.const 5))
+                 (i32.eqz (i32.load8_u (i32.const 0x10356))))
+      (then
+        (call $music (i32.const 0x12400))
+        (i32.store8 (i32.const 0x10356) (i32.const 1))
+      )
+    )
+    ;; skip intro on NEW click or space — require timer>30 to avoid accidental skip
     (if (i32.and
           (i32.lt_u (local.get $phase) (i32.const 5))
           (i32.gt_u (local.get $timer) (i32.const 30)))
       (then
         (if (i32.or
-              (i32.and (i32.load8_u (i32.const 0x08)) (i32.const 1))    ;; mouse left
-              (i32.and (i32.load8_u (i32.const 0x10)) (i32.const 16)))  ;; space key
+              (i32.and (local.get $new_btn) (i32.const 1))     ;; newly pressed mouse left
+              (i32.and (local.get $new_keys) (i32.const 16)))  ;; newly pressed space
           (then
             ;; jump to gameplay
             (call $music (i32.const 0x12500))
@@ -1959,18 +1989,28 @@
             (i32.store8 (i32.const 0x1034A) (i32.const 0))
             (i32.store8 (i32.const 0x1034B) (i32.const 60))
             (i32.store8 (i32.const 0x1034C) (i32.const 0))
+            ;; save prev input before returning
+            (i32.store8 (i32.const 0x10357) (local.get $btn))
+            (i32.store8 (i32.const 0x10358) (local.get $keys))
+            (i32.store16 (i32.const 0x1035A) (i32.load16_u (i32.const 0x04)))
+            (i32.store16 (i32.const 0x1035C) (i32.load16_u (i32.const 0x06)))
             (call $phase_gameplay)
             (return)
           )
         )
       )
     )
-    (if (i32.eqz (local.get $phase)) (then (call $phase_story) (return)))
-    (if (i32.eq (local.get $phase) (i32.const 1)) (then (call $phase_planet) (return)))
-    (if (i32.eq (local.get $phase) (i32.const 2)) (then (call $phase_ship) (return)))
-    (if (i32.eq (local.get $phase) (i32.const 3)) (then (call $phase_title) (return)))
-    (if (i32.eq (local.get $phase) (i32.const 4)) (then (call $phase_press_fire) (return)))
-    (if (i32.eq (local.get $phase) (i32.const 5)) (then (call $phase_gameplay) (return)))
-    (if (i32.eq (local.get $phase) (i32.const 6)) (then (call $phase_game_over) (return)))
+    (if (i32.eqz (local.get $phase)) (then (call $phase_story)))
+    (if (i32.eq (local.get $phase) (i32.const 1)) (then (call $phase_planet)))
+    (if (i32.eq (local.get $phase) (i32.const 2)) (then (call $phase_ship)))
+    (if (i32.eq (local.get $phase) (i32.const 3)) (then (call $phase_title)))
+    (if (i32.eq (local.get $phase) (i32.const 4)) (then (call $phase_press_fire)))
+    (if (i32.eq (local.get $phase) (i32.const 5)) (then (call $phase_gameplay)))
+    (if (i32.eq (local.get $phase) (i32.const 6)) (then (call $phase_game_over)))
+    ;; save prev input state at end of frame
+    (i32.store8 (i32.const 0x10357) (local.get $btn))
+    (i32.store8 (i32.const 0x10358) (local.get $keys))
+    (i32.store16 (i32.const 0x1035A) (i32.load16_u (i32.const 0x04)))
+    (i32.store16 (i32.const 0x1035C) (i32.load16_u (i32.const 0x06)))
   )
 )
