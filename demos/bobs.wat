@@ -132,10 +132,18 @@
     (f32.store (i32.const 0x103DC) (f32.const -1.2))
   )
 
-  ;; Update bob positions, bounce off walls (radius 8)
+  ;; Update bob positions, bounce off walls (radius 8), attract toward mouse
   (func $update_bobs
     (local $i i32) (local $addr i32)
     (local $x f32) (local $y f32) (local $vx f32) (local $vy f32)
+    (local $mx f32) (local $my f32) (local $dx f32) (local $dy f32)
+    (local $dist f32) (local $force f32) (local $clicked i32)
+
+    ;; Read mouse position and button state
+    (local.set $mx (f32.convert_i32_u (i32.load16_u (i32.const 0x04))))
+    (local.set $my (f32.convert_i32_u (i32.load16_u (i32.const 0x06))))
+    (local.set $clicked (i32.and (i32.load8_u (i32.const 0x08)) (i32.const 1)))
+
     (local.set $i (i32.const 0))
     (block $done
       (loop $lp
@@ -145,6 +153,33 @@
         (local.set $y (f32.load (i32.add (local.get $addr) (i32.const 4))))
         (local.set $vx (f32.load (i32.add (local.get $addr) (i32.const 8))))
         (local.set $vy (f32.load (i32.add (local.get $addr) (i32.const 12))))
+
+        ;; Compute direction toward mouse
+        (local.set $dx (f32.sub (local.get $mx) (local.get $x)))
+        (local.set $dy (f32.sub (local.get $my) (local.get $y)))
+
+        ;; Distance = sqrt(dx*dx + dy*dy), clamped to min 1.0 to avoid division by zero
+        (local.set $dist (f32.sqrt (f32.add
+          (f32.mul (local.get $dx) (local.get $dx))
+          (f32.mul (local.get $dy) (local.get $dy)))))
+        (if (f32.lt (local.get $dist) (f32.const 1.0))
+          (then (local.set $dist (f32.const 1.0))))
+
+        ;; Force: gentle=0.03, strong (click)=0.25
+        (if (local.get $clicked)
+          (then (local.set $force (f32.const 0.25)))
+          (else (local.set $force (f32.const 0.03))))
+
+        ;; Apply attraction: vx += dx/dist * force, vy += dy/dist * force
+        (local.set $vx (f32.add (local.get $vx)
+          (f32.mul (f32.div (local.get $dx) (local.get $dist)) (local.get $force))))
+        (local.set $vy (f32.add (local.get $vy)
+          (f32.mul (f32.div (local.get $dy) (local.get $dist)) (local.get $force))))
+
+        ;; Dampen velocity slightly to prevent infinite acceleration (0.995)
+        (local.set $vx (f32.mul (local.get $vx) (f32.const 0.995)))
+        (local.set $vy (f32.mul (local.get $vy) (f32.const 0.995)))
+
         ;; move
         (local.set $x (f32.add (local.get $x) (local.get $vx)))
         (local.set $y (f32.add (local.get $y) (local.get $vy)))

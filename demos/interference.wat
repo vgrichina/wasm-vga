@@ -2,10 +2,8 @@
   (import "env" "memory" (memory 4))
 
   ;; Interference / moiré pattern with palette cycling
-  ;; Framebuffer is written once in init(), then frame() just rotates the palette.
-  ;; Guest area: 0x10340+ used for palette backup (768 bytes)
-
-  ;; Palette backup at 0x10340 (256*3 = 768 bytes)
+  ;; Third wave source follows mouse cursor for real-time interactivity.
+  ;; Framebuffer recomputed every frame.
 
   (func $isqrt (param $n i32) (result i32)
     ;; Integer square root via Newton's method
@@ -41,14 +39,69 @@
       (f64.neg (f64.div (local.get $x7) (f64.const 5040.0))))
   )
 
-  (func (export "init")
-    (local $i i32) (local $x i32) (local $y i32) (local $addr i32)
+  (func $compute_framebuffer (param $mx i32) (param $my i32)
+    (local $x i32) (local $y i32) (local $addr i32)
     (local $dx1 i32) (local $dy1 i32) (local $dx2 i32) (local $dy2 i32) (local $dx3 i32) (local $dy3 i32)
     (local $d1 i32) (local $d2 i32) (local $d3 i32) (local $val i32)
+
+    ;; Source 1: (80, 60)   Source 2: (240, 140)   Source 3: (mx, my)
+    (local.set $y (i32.const 0))
+    (block $ydone
+      (loop $yloop
+        (br_if $ydone (i32.ge_u (local.get $y) (i32.const 200)))
+        (local.set $x (i32.const 0))
+        (block $xdone
+          (loop $xloop
+            (br_if $xdone (i32.ge_u (local.get $x) (i32.const 320)))
+
+            ;; Distance to source 1 (80, 60)
+            (local.set $dx1 (i32.sub (local.get $x) (i32.const 80)))
+            (local.set $dy1 (i32.sub (local.get $y) (i32.const 60)))
+            (local.set $d1 (call $isqrt (i32.add
+              (i32.mul (local.get $dx1) (local.get $dx1))
+              (i32.mul (local.get $dy1) (local.get $dy1)))))
+
+            ;; Distance to source 2 (240, 140)
+            (local.set $dx2 (i32.sub (local.get $x) (i32.const 240)))
+            (local.set $dy2 (i32.sub (local.get $y) (i32.const 140)))
+            (local.set $d2 (call $isqrt (i32.add
+              (i32.mul (local.get $dx2) (local.get $dx2))
+              (i32.mul (local.get $dy2) (local.get $dy2)))))
+
+            ;; Distance to source 3 (mouse position)
+            (local.set $dx3 (i32.sub (local.get $x) (local.get $mx)))
+            (local.set $dy3 (i32.sub (local.get $y) (local.get $my)))
+            (local.set $d3 (call $isqrt (i32.add
+              (i32.mul (local.get $dx3) (local.get $dx3))
+              (i32.mul (local.get $dy3) (local.get $dy3)))))
+
+            ;; Combine: scale distances for ring density, then mask to 0-255
+            (local.set $val (i32.and
+              (i32.add (i32.add
+                (i32.mul (local.get $d1) (i32.const 3))
+                (i32.mul (local.get $d2) (i32.const 3)))
+                (i32.mul (local.get $d3) (i32.const 3)))
+              (i32.const 255)))
+
+            (local.set $addr (i32.add (i32.const 0x0340)
+              (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x))))
+            (i32.store8 (local.get $addr) (local.get $val))
+
+            (local.set $x (i32.add (local.get $x) (i32.const 1)))
+            (br $xloop)
+          )
+        )
+        (local.set $y (i32.add (local.get $y) (i32.const 1)))
+        (br $yloop)
+      )
+    )
+  )
+
+  (func (export "init")
+    (local $i i32)
     (local $f f64) (local $v f64) (local $r i32) (local $g i32) (local $b i32) (local $paddr i32)
 
     ;; === Set up palette: smooth multi-hue rainbow with extra saturation ===
-    ;; Use HSV-like mapping: cycle through hues with full saturation
     (local.set $i (i32.const 0))
     (block $pdone
       (loop $plp
@@ -86,67 +139,20 @@
       )
     )
 
-    ;; === Compute framebuffer: interference of 3 wave sources ===
-    ;; Source 1: (80, 60)   Source 2: (240, 140)   Source 3: (160, 30)
-    ;; pixel = (dist1 + dist2 + dist3) & 255
-    ;; Scale distances so the pattern has nice density of rings
-
-    (local.set $y (i32.const 0))
-    (block $ydone
-      (loop $yloop
-        (br_if $ydone (i32.ge_u (local.get $y) (i32.const 200)))
-        (local.set $x (i32.const 0))
-        (block $xdone
-          (loop $xloop
-            (br_if $xdone (i32.ge_u (local.get $x) (i32.const 320)))
-
-            ;; Distance to source 1 (80, 60)
-            (local.set $dx1 (i32.sub (local.get $x) (i32.const 80)))
-            (local.set $dy1 (i32.sub (local.get $y) (i32.const 60)))
-            (local.set $d1 (call $isqrt (i32.add
-              (i32.mul (local.get $dx1) (local.get $dx1))
-              (i32.mul (local.get $dy1) (local.get $dy1)))))
-
-            ;; Distance to source 2 (240, 140)
-            (local.set $dx2 (i32.sub (local.get $x) (i32.const 240)))
-            (local.set $dy2 (i32.sub (local.get $y) (i32.const 140)))
-            (local.set $d2 (call $isqrt (i32.add
-              (i32.mul (local.get $dx2) (local.get $dx2))
-              (i32.mul (local.get $dy2) (local.get $dy2)))))
-
-            ;; Distance to source 3 (160, 30)
-            (local.set $dx3 (i32.sub (local.get $x) (i32.const 160)))
-            (local.set $dy3 (i32.sub (local.get $y) (i32.const 30)))
-            (local.set $d3 (call $isqrt (i32.add
-              (i32.mul (local.get $dx3) (local.get $dx3))
-              (i32.mul (local.get $dy3) (local.get $dy3)))))
-
-            ;; Combine: scale distances for ring density, then mask to 0-255
-            ;; Multiply by ~3 to get tighter rings
-            (local.set $val (i32.and
-              (i32.add (i32.add
-                (i32.mul (local.get $d1) (i32.const 3))
-                (i32.mul (local.get $d2) (i32.const 3)))
-                (i32.mul (local.get $d3) (i32.const 3)))
-              (i32.const 255)))
-
-            (local.set $addr (i32.add (i32.const 0x0340)
-              (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x))))
-            (i32.store8 (local.get $addr) (local.get $val))
-
-            (local.set $x (i32.add (local.get $x) (i32.const 1)))
-            (br $xloop)
-          )
-        )
-        (local.set $y (i32.add (local.get $y) (i32.const 1)))
-        (br $yloop)
-      )
-    )
+    ;; Initial framebuffer with default third source at (160, 30)
+    (call $compute_framebuffer (i32.const 160) (i32.const 30))
   )
 
   (func (export "frame")
     (local $i i32) (local $r i32) (local $g i32) (local $b i32)
     (local $src i32)
+
+    ;; Recompute framebuffer with third source at mouse position
+    (call $compute_framebuffer
+      (i32.load16_u (i32.const 0x04))   ;; mouse x
+      (i32.load16_u (i32.const 0x06)))  ;; mouse y
+
+    ;; === Palette cycling: rotate all 256 entries by 1 ===
 
     ;; Save color 0 (first entry) to temp
     (local.set $r (i32.load8_u (i32.const 0x0040)))
@@ -159,7 +165,6 @@
       (loop $lp
         (br_if $done (i32.ge_u (local.get $i) (i32.const 255)))
         (local.set $src (i32.add (i32.const 0x0043) (i32.mul (local.get $i) (i32.const 3))))
-        ;; dest = 0x0040 + i*3, src = 0x0040 + (i+1)*3 = 0x0043 + i*3
         (i32.store8 (i32.add (i32.const 0x0040) (i32.mul (local.get $i) (i32.const 3)))
           (i32.load8_u (local.get $src)))
         (i32.store8 (i32.add (i32.const 0x0041) (i32.mul (local.get $i) (i32.const 3)))
