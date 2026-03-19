@@ -348,8 +348,10 @@
             (if (i32.gt_s (local.get $mx) (i32.const 280)) (then (local.set $mx (i32.const 280))))
             (if (i32.lt_s (local.get $my) (i32.const 16)) (then (local.set $my (i32.const 16))))
             (if (i32.gt_s (local.get $my) (i32.const 190)) (then (local.set $my (i32.const 190))))
-        (local.set $px (i32.add (local.get $px) (i32.shr_s (i32.sub (local.get $mx) (local.get $px)) (i32.const 2))))
-        (local.set $py (i32.add (local.get $py) (i32.shr_s (i32.sub (local.get $my) (local.get $py)) (i32.const 2))))
+            (local.set $px (i32.add (local.get $px) (i32.shr_s (i32.sub (local.get $mx) (local.get $px)) (i32.const 2))))
+            (local.set $py (i32.add (local.get $py) (i32.shr_s (i32.sub (local.get $my) (local.get $py)) (i32.const 2))))
+          )
+        )
       )
     )
     ;; clamp position
@@ -363,21 +365,24 @@
     (local.set $cd (i32.load8_u (i32.const 0x10364)))
     (if (i32.gt_u (local.get $cd) (i32.const 0))
       (then (local.set $cd (i32.sub (local.get $cd) (i32.const 1)))))
-    ;; click/space to fire
-    (if (i32.and (i32.eqz (local.get $cd))
-          (i32.or (i32.and (local.get $btn) (i32.const 1))
-                  (i32.and (local.get $keys) (i32.const 16))))  ;; space
+    ;; click/space/enter to fire
+    (if (i32.eqz (local.get $cd))
       (then
-        (call $spawn_player_bullet (local.get $px) (local.get $py))
-        (call $play_sfx (i32.const 0))
-        ;; power level 1+ = double shot
-        (if (i32.ge_u (i32.load8_u (i32.const 0x10349)) (i32.const 1))
+        (if (i32.or (i32.and (local.get $btn) (i32.const 1))
+                    (i32.and (local.get $keys) (i32.const 48)))
           (then
-            (call $spawn_player_bullet (local.get $px) (i32.sub (local.get $py) (i32.const 6)))
-            (call $spawn_player_bullet (local.get $px) (i32.add (local.get $py) (i32.const 6)))
+            (call $spawn_player_bullet (local.get $px) (local.get $py))
+            (call $play_sfx (i32.const 0))
+            ;; power level 1+ = double shot
+            (if (i32.ge_u (i32.load8_u (i32.const 0x10349)) (i32.const 1))
+              (then
+                (call $spawn_player_bullet (local.get $px) (i32.sub (local.get $py) (i32.const 6)))
+                (call $spawn_player_bullet (local.get $px) (i32.add (local.get $py) (i32.const 6)))
+              )
+            )
+            (local.set $cd (i32.const 6))
           )
         )
-        (local.set $cd (i32.const 6))
       )
     )
     (i32.store8 (i32.const 0x10364) (local.get $cd))
@@ -1682,24 +1687,37 @@
 
   ;; Phase 6: Game over
   (func $phase_game_over
-    (local $timer i32) (local $btn i32)
+    (local $timer i32) (local $btn i32) (local $score i32) (local $digits i32) (local $tmp i32) (local $sx i32)
     (call $clear_fb (i32.const 0))
     (call $update_and_draw_stars)
     (call $update_and_draw_particles)
     (local.set $timer (i32.load16_u (i32.const 0x10342)))
-    ;; "GAME OVER" or "VICTORY"
+    ;; "GAME OVER" or "VICTORY" — centered
     (if (i32.gt_u (i32.load8_u (i32.const 0x10348)) (i32.const 0))
       (then
-        ;; victory (lives > 0 shouldn't happen here... but boss killed => came here)
-        (call $draw_string (i32.const 0x111A0) (i32.const 7) (i32.const 100) (i32.const 70) (i32.const 46) (i32.const 2))
+        ;; "VICTORY" 7 chars * 16px = 112px, center = (320-112)/2 = 104
+        (call $draw_string (i32.const 0x111A1) (i32.const 7) (i32.const 104) (i32.const 70) (i32.const 46) (i32.const 2))
       )
       (else
+        ;; "GAME OVER" 9 chars * 16px = 144px, center = (320-144)/2 = 88
         (call $draw_string (i32.const 0x11198) (i32.const 9) (i32.const 88) (i32.const 70) (i32.const 36) (i32.const 2))
       )
     )
-    ;; show score
-    (call $draw_string (i32.const 0x12388) (i32.const 4) (i32.const 108) (i32.const 110) (i32.const 15) (i32.const 2))
-    (call $draw_number (i32.load (i32.const 0x10344)) (i32.const 176) (i32.const 110) (i32.const 46) (i32.const 2))
+    ;; show score — center "SC: " + digits as one unit
+    ;; count digits in score
+    (local.set $score (i32.load (i32.const 0x10344)))
+    (local.set $digits (i32.const 1))
+    (local.set $tmp (local.get $score))
+    (block $done (loop $lp
+      (local.set $tmp (i32.div_u (local.get $tmp) (i32.const 10)))
+      (br_if $done (i32.eqz (local.get $tmp)))
+      (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
+      (br $lp)))
+    ;; total width = (4 + digits) * 16, sx = (320 - total) / 2
+    (local.set $sx (i32.div_u (i32.sub (i32.const 320)
+      (i32.mul (i32.add (i32.const 4) (local.get $digits)) (i32.const 16))) (i32.const 2)))
+    (call $draw_string (i32.const 0x12388) (i32.const 4) (local.get $sx) (i32.const 110) (i32.const 15) (i32.const 2))
+    (call $draw_number (local.get $score) (i32.add (local.get $sx) (i32.const 64)) (i32.const 110) (i32.const 46) (i32.const 2))
     ;; "CLICK TO RESTART"
     (if (i32.and (i32.gt_u (local.get $timer) (i32.const 120)) (i32.and (local.get $timer) (i32.const 32)))
       (then
@@ -1877,7 +1895,7 @@
   (data (i32.const 0x11178) "STELLAR\00ASSAULT\00")
   (data (i32.const 0x11188) "CLICK TO START")
   (data (i32.const 0x11198) "GAME OVER")
-  (data (i32.const 0x111A0) "VICTORY")
+  (data (i32.const 0x111A1) "VICTORY")
   (data (i32.const 0x111A8) "CLICK TO RESTART")
   (data (i32.const 0x111C0) "HULL BREACH")
   (data (i32.const 0x111CC) "SHIELDS DOWN")

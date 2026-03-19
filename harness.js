@@ -268,10 +268,10 @@ function touchToMouse(e) {
   setMousePos((t.clientX - rect.left) / rect.width * WIDTH,
               (t.clientY - rect.top) / rect.height * HEIGHT);
 }
-canvas.addEventListener('touchstart', (e) => { e.preventDefault(); ensureAudio(); touchToMouse(e); setMouseBtn(0, true); }, { passive: false });
+canvas.addEventListener('touchstart', (e) => { e.preventDefault(); ensureAudio(); touchToMouse(e); }, { passive: false });
 canvas.addEventListener('touchmove', (e) => { e.preventDefault(); touchToMouse(e); }, { passive: false });
-canvas.addEventListener('touchend', (e) => { e.preventDefault(); setMouseBtn(0, false); }, { passive: false });
-canvas.addEventListener('touchcancel', () => setMouseBtn(0, false));
+canvas.addEventListener('touchend', (e) => { e.preventDefault(); }, { passive: false });
+canvas.addEventListener('touchcancel', () => {});
 
 // --- Keyboard → control block at 0x10 ---
 // Bitfield: bit0=Up/W, bit1=Down/S, bit2=Left/A, bit3=Right/D,
@@ -319,17 +319,17 @@ function setupVirtualControls() {
   // D-pad buttons
   el.querySelectorAll('[data-key]').forEach(btn => {
     const bit = parseInt(btn.dataset.key);
-    btn.addEventListener('touchstart', (e) => { e.preventDefault(); btn.classList.add('active'); setKeyBit(bit, true); }, { passive: false });
-    btn.addEventListener('touchend', (e) => { e.preventDefault(); btn.classList.remove('active'); setKeyBit(bit, false); }, { passive: false });
-    btn.addEventListener('touchcancel', () => { btn.classList.remove('active'); setKeyBit(bit, false); });
+    btn.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); btn.classList.add('active'); setKeyBit(bit, true); }, { passive: false });
+    btn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); btn.classList.remove('active'); setKeyBit(bit, false); }, { passive: false });
+    btn.addEventListener('touchcancel', (e) => { e.stopPropagation(); btn.classList.remove('active'); setKeyBit(bit, false); });
   });
 
   // Fire button → mouse left click
   el.querySelectorAll('[data-mouse]').forEach(btn => {
     const bit = parseInt(btn.dataset.mouse);
-    btn.addEventListener('touchstart', (e) => { e.preventDefault(); btn.classList.add('active'); setMouseBtn(bit, true); }, { passive: false });
-    btn.addEventListener('touchend', (e) => { e.preventDefault(); btn.classList.remove('active'); setMouseBtn(bit, false); }, { passive: false });
-    btn.addEventListener('touchcancel', () => { btn.classList.remove('active'); setMouseBtn(bit, false); });
+    btn.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); btn.classList.add('active'); setMouseBtn(bit, true); }, { passive: false });
+    btn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); btn.classList.remove('active'); setMouseBtn(bit, false); }, { passive: false });
+    btn.addEventListener('touchcancel', (e) => { e.stopPropagation(); btn.classList.remove('active'); setMouseBtn(bit, false); });
   });
 }
 
