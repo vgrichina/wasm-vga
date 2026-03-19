@@ -75,14 +75,18 @@ function sfx(id) {
       playNoise(0.12, 0.3);
       playTone('sine', 60, 0.15, 0.2);
       break;
-    case 2: // pickup
-      playTone('sine', 523, 0.05, 0.15);
-      setTimeout(() => { if (audioCtx) playTone('sine', 659, 0.05, 0.15); }, 50);
-      setTimeout(() => { if (audioCtx) playTone('sine', 784, 0.08, 0.15); }, 100);
+    case 2: // pickup — triumphant rising arpeggio
+      playTone('square', 523, 0.06, 0.18);
+      playTone('sine', 523, 0.06, 0.1);
+      setTimeout(() => { if (audioCtx) { playTone('square', 659, 0.06, 0.18); playTone('sine', 659, 0.06, 0.1); } }, 60);
+      setTimeout(() => { if (audioCtx) { playTone('square', 784, 0.06, 0.18); playTone('sine', 784, 0.06, 0.1); } }, 120);
+      setTimeout(() => { if (audioCtx) { playTone('square', 1047, 0.12, 0.2); playTone('sine', 1047, 0.12, 0.12); } }, 180);
       break;
-    case 3: // hit
-      playNoise(0.04, 0.25);
-      playTone('square', 200, 0.06, 0.2, 80);
+    case 3: // hit — heavy crunch, low rumble + noise
+      playNoise(0.15, 0.35);
+      playTone('square', 150, 0.12, 0.25, 30);
+      playTone('sawtooth', 80, 0.2, 0.15, 20);
+      setTimeout(() => { if (audioCtx) { playNoise(0.08, 0.2); playTone('sine', 40, 0.15, 0.15); } }, 80);
       break;
     case 4: // boss
       playTone('sawtooth', 110, 0.2, 0.2);
@@ -198,6 +202,39 @@ const musicPatterns = {
           466,0,0,0, 440,0,0,0, 349,0,0,0, 0,0,0,0,   // Bb4 A4 F4
           392,0,0,0, 349,0,0,0, 294,0,0,0, 0,0,0,0,   // G4 F4 D4
           330,0,0,0, 277,0,0,0, 220,0,0,0, 0,0,0,0,   // E4 C#4 A3
+        ],
+      },
+    ],
+  },
+
+  4: { // BOSS FIGHT — fast, intense, dissonant. Em → F → G → Ab (chromatic tension)
+    bpm: 180,
+    tracks: [
+      { // bass — relentless pounding
+        type: 'sawtooth', vol: 0.18, dur: 0.07,
+        notes: [
+          82,82,0,82, 82,0,82,0, 82,82,0,82, 0,82,82,0,   // Em pounding
+          87,87,0,87, 87,0,87,0, 87,87,0,87, 0,87,87,0,   // F
+          98,98,0,98, 98,0,98,0, 98,98,0,98, 0,98,98,0,   // G
+          104,104,0,104, 104,0,104,0, 104,104,0,104, 0,82,82,0, // Ab→Em
+        ],
+      },
+      { // arp — frantic dissonant arpeggios
+        type: 'square', vol: 0.12, dur: 0.05,
+        notes: [
+          330,494,659,494, 330,659,494,659, 330,494,659,784, 659,494,330,494,  // Em
+          349,523,698,523, 349,698,523,698, 349,523,698,880, 698,523,349,523,  // F
+          392,587,784,587, 392,784,587,784, 392,587,784,988, 784,587,392,587,  // G
+          415,622,831,622, 415,831,622,831, 415,622,831,1047, 831,622,330,494, // Ab→Em
+        ],
+      },
+      { // lead — menacing descending riff
+        type: 'sawtooth', vol: 0.10, dur: 0.1,
+        notes: [
+          659,0,622,0, 659,0,784,0, 659,0,494,0, 0,0,330,0,   // Em riff
+          698,0,659,0, 698,0,880,0, 698,0,523,0, 0,0,349,0,   // F riff
+          784,0,698,0, 784,0,988,0, 784,0,587,0, 0,0,392,0,   // G riff
+          831,0,784,0, 880,0,1047,0, 880,0,659,0, 0,0,0,0,    // Ab climax
         ],
       },
     ],
