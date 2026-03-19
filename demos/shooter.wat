@@ -401,29 +401,43 @@
     ;; blink when invulnerable
     (if (i32.and (i32.gt_u (local.get $inv) (i32.const 0)) (i32.and (local.get $frame) (i32.const 2)))
       (then (return)))
-    ;; Ship body (pointing right): ~16x10 pixels
-    ;; Nose
-    (call $put_pixel (i32.add (local.get $px) (i32.const 8)) (local.get $py) (i32.const 15))
-    (call $put_pixel (i32.add (local.get $px) (i32.const 7)) (local.get $py) (i32.const 15))
-    (call $put_pixel (i32.add (local.get $px) (i32.const 7)) (i32.sub (local.get $py) (i32.const 1)) (i32.const 11))
-    (call $put_pixel (i32.add (local.get $px) (i32.const 7)) (i32.add (local.get $py) (i32.const 1)) (i32.const 11))
-    ;; Body
-    (call $draw_rect (i32.sub (local.get $px) (i32.const 2)) (i32.sub (local.get $py) (i32.const 2)) (i32.const 10) (i32.const 5) (i32.const 11))
-    ;; Cockpit highlight
-    (call $put_pixel (i32.add (local.get $px) (i32.const 4)) (local.get $py) (i32.const 14))
+    ;; === Player ship (pointing right, vertically symmetrical) ===
+    ;; Nose cone
+    (call $put_pixel (i32.add (local.get $px) (i32.const 9)) (local.get $py) (i32.const 15))
+    (call $put_pixel (i32.add (local.get $px) (i32.const 8)) (local.get $py) (i32.const 14))
+    (call $put_pixel (i32.add (local.get $px) (i32.const 8)) (i32.sub (local.get $py) (i32.const 1)) (i32.const 11))
+    (call $put_pixel (i32.add (local.get $px) (i32.const 8)) (i32.add (local.get $py) (i32.const 1)) (i32.const 11))
+    ;; Fuselage (main body)
+    (call $draw_rect (i32.sub (local.get $px) (i32.const 1)) (i32.sub (local.get $py) (i32.const 2)) (i32.const 10) (i32.const 5) (i32.const 11))
+    ;; Body taper at rear
+    (call $draw_rect (i32.sub (local.get $px) (i32.const 3)) (i32.sub (local.get $py) (i32.const 1)) (i32.const 2) (i32.const 3) (i32.const 11))
+    ;; Cockpit canopy (bright highlight)
     (call $put_pixel (i32.add (local.get $px) (i32.const 5)) (local.get $py) (i32.const 15))
-    ;; Wings
-    (call $draw_rect (i32.sub (local.get $px) (i32.const 4)) (i32.sub (local.get $py) (i32.const 5)) (i32.const 6) (i32.const 2) (i32.const 9))
-    (call $draw_rect (i32.sub (local.get $px) (i32.const 4)) (i32.add (local.get $py) (i32.const 3)) (i32.const 6) (i32.const 2) (i32.const 9))
-    ;; Engine glow (animated)
-    (call $put_pixel (i32.sub (local.get $px) (i32.const 5)) (local.get $py)
+    (call $put_pixel (i32.add (local.get $px) (i32.const 6)) (local.get $py) (i32.const 14))
+    (call $put_pixel (i32.add (local.get $px) (i32.const 4)) (local.get $py) (i32.const 14))
+    ;; Wings (symmetrical top/bottom)
+    (call $draw_rect (i32.sub (local.get $px) (i32.const 2)) (i32.sub (local.get $py) (i32.const 5)) (i32.const 7) (i32.const 2) (i32.const 9))
+    (call $draw_rect (i32.sub (local.get $px) (i32.const 2)) (i32.add (local.get $py) (i32.const 3)) (i32.const 7) (i32.const 2) (i32.const 9))
+    ;; Wing tips
+    (call $put_pixel (i32.add (local.get $px) (i32.const 5)) (i32.sub (local.get $py) (i32.const 5)) (i32.const 11))
+    (call $put_pixel (i32.add (local.get $px) (i32.const 5)) (i32.add (local.get $py) (i32.const 4)) (i32.const 11))
+    ;; Engine pods (symmetrical)
+    (call $draw_rect (i32.sub (local.get $px) (i32.const 4)) (i32.sub (local.get $py) (i32.const 4)) (i32.const 3) (i32.const 2) (i32.const 9))
+    (call $draw_rect (i32.sub (local.get $px) (i32.const 4)) (i32.add (local.get $py) (i32.const 2)) (i32.const 3) (i32.const 2) (i32.const 9))
+    ;; Engine glow (animated, symmetrical)
+    (call $put_pixel (i32.sub (local.get $px) (i32.const 5)) (i32.sub (local.get $py) (i32.const 4))
       (select (i32.const 40) (i32.const 36) (i32.and (local.get $frame) (i32.const 4))))
-    (call $put_pixel (i32.sub (local.get $px) (i32.const 6)) (local.get $py)
+    (call $put_pixel (i32.sub (local.get $px) (i32.const 5)) (i32.add (local.get $py) (i32.const 3))
+      (select (i32.const 40) (i32.const 36) (i32.and (local.get $frame) (i32.const 4))))
+    (call $put_pixel (i32.sub (local.get $px) (i32.const 6)) (i32.sub (local.get $py) (i32.const 4))
       (select (i32.const 36) (i32.const 32) (i32.and (local.get $frame) (i32.const 4))))
-    (call $put_pixel (i32.sub (local.get $px) (i32.const 5)) (i32.sub (local.get $py) (i32.const 1))
+    (call $put_pixel (i32.sub (local.get $px) (i32.const 6)) (i32.add (local.get $py) (i32.const 3))
+      (select (i32.const 36) (i32.const 32) (i32.and (local.get $frame) (i32.const 4))))
+    ;; Center engine glow
+    (call $put_pixel (i32.sub (local.get $px) (i32.const 4)) (local.get $py)
       (select (i32.const 38) (i32.const 34) (i32.and (local.get $frame) (i32.const 2))))
-    (call $put_pixel (i32.sub (local.get $px) (i32.const 5)) (i32.add (local.get $py) (i32.const 1))
-      (select (i32.const 38) (i32.const 34) (i32.and (local.get $frame) (i32.const 2))))
+    (call $put_pixel (i32.sub (local.get $px) (i32.const 5)) (local.get $py)
+      (select (i32.const 36) (i32.const 32) (i32.and (local.get $frame) (i32.const 2))))
   )
 
   ;; ============================================================
@@ -602,42 +616,69 @@
           (local.set $type (i32.load8_u (i32.add (local.get $addr) (i32.const 1))))
           (local.set $x (i32.load16_u (i32.add (local.get $addr) (i32.const 4))))
           (local.set $y (i32.load16_u (i32.add (local.get $addr) (i32.const 6))))
-          ;; type 0: red diamond
+          ;; type 0: red fighter — diamond with swept wings
           (if (i32.eqz (local.get $type))
             (then
-              (call $put_pixel (local.get $x) (i32.sub (local.get $y) (i32.const 4)) (i32.const 20))
-              (call $draw_rect (i32.sub (local.get $x) (i32.const 1)) (i32.sub (local.get $y) (i32.const 3)) (i32.const 3) (i32.const 2) (i32.const 22))
-              (call $draw_rect (i32.sub (local.get $x) (i32.const 3)) (i32.sub (local.get $y) (i32.const 1)) (i32.const 7) (i32.const 3) (i32.const 24))
-              (call $draw_rect (i32.sub (local.get $x) (i32.const 1)) (i32.add (local.get $y) (i32.const 2)) (i32.const 3) (i32.const 2) (i32.const 22))
-              (call $put_pixel (local.get $x) (i32.add (local.get $y) (i32.const 4)) (i32.const 20))
-              ;; eye
-              (call $put_pixel (i32.add (local.get $x) (i32.const 1)) (local.get $y) (i32.const 15))
+              ;; Diamond core
+              (call $draw_rect (i32.sub (local.get $x) (i32.const 1)) (i32.sub (local.get $y) (i32.const 2)) (i32.const 5) (i32.const 5) (i32.const 22))
+              (call $draw_rect (i32.sub (local.get $x) (i32.const 4)) (i32.sub (local.get $y) (i32.const 1)) (i32.const 3) (i32.const 3) (i32.const 24))
+              ;; Nose spike
+              (call $put_pixel (i32.sub (local.get $x) (i32.const 5)) (local.get $y) (i32.const 24))
+              (call $put_pixel (i32.sub (local.get $x) (i32.const 6)) (local.get $y) (i32.const 20))
+              ;; Swept wings (symmetrical)
+              (call $draw_rect (i32.add (local.get $x) (i32.const 1)) (i32.sub (local.get $y) (i32.const 4)) (i32.const 4) (i32.const 2) (i32.const 20))
+              (call $draw_rect (i32.add (local.get $x) (i32.const 1)) (i32.add (local.get $y) (i32.const 3)) (i32.const 4) (i32.const 2) (i32.const 20))
+              ;; Wing tips
+              (call $put_pixel (i32.add (local.get $x) (i32.const 5)) (i32.sub (local.get $y) (i32.const 5)) (i32.const 24))
+              (call $put_pixel (i32.add (local.get $x) (i32.const 5)) (i32.add (local.get $y) (i32.const 5)) (i32.const 24))
+              ;; Cockpit
+              (call $put_pixel (i32.sub (local.get $x) (i32.const 2)) (local.get $y) (i32.const 15))
+              (call $put_pixel (i32.sub (local.get $x) (i32.const 3)) (local.get $y) (i32.const 44))
             )
           )
-          ;; type 1: green arrow
+          ;; type 1: green interceptor — sleek with angled fins
           (if (i32.eq (local.get $type) (i32.const 1))
             (then
-              (call $draw_rect (i32.sub (local.get $x) (i32.const 5)) (i32.sub (local.get $y) (i32.const 2)) (i32.const 10) (i32.const 5) (i32.const 26))
-              ;; nose
-              (call $draw_rect (i32.sub (local.get $x) (i32.const 6)) (i32.sub (local.get $y) (i32.const 1)) (i32.const 1) (i32.const 3) (i32.const 28))
-              ;; fins
-              (call $draw_rect (i32.add (local.get $x) (i32.const 3)) (i32.sub (local.get $y) (i32.const 5)) (i32.const 3) (i32.const 3) (i32.const 26))
-              (call $draw_rect (i32.add (local.get $x) (i32.const 3)) (i32.add (local.get $y) (i32.const 3)) (i32.const 3) (i32.const 3) (i32.const 26))
-              ;; eye
-              (call $put_pixel (i32.sub (local.get $x) (i32.const 3)) (local.get $y) (i32.const 15))
+              ;; Fuselage
+              (call $draw_rect (i32.sub (local.get $x) (i32.const 5)) (i32.sub (local.get $y) (i32.const 1)) (i32.const 10) (i32.const 3) (i32.const 28))
+              ;; Nose
+              (call $put_pixel (i32.sub (local.get $x) (i32.const 6)) (local.get $y) (i32.const 26))
+              (call $put_pixel (i32.sub (local.get $x) (i32.const 7)) (local.get $y) (i32.const 28))
+              ;; Wider mid-section
+              (call $draw_rect (i32.sub (local.get $x) (i32.const 2)) (i32.sub (local.get $y) (i32.const 2)) (i32.const 6) (i32.const 5) (i32.const 26))
+              ;; Angled fins (symmetrical)
+              (call $draw_rect (i32.add (local.get $x) (i32.const 2)) (i32.sub (local.get $y) (i32.const 5)) (i32.const 2) (i32.const 3) (i32.const 28))
+              (call $draw_rect (i32.add (local.get $x) (i32.const 2)) (i32.add (local.get $y) (i32.const 3)) (i32.const 2) (i32.const 3) (i32.const 28))
+              (call $put_pixel (i32.add (local.get $x) (i32.const 4)) (i32.sub (local.get $y) (i32.const 6)) (i32.const 26))
+              (call $put_pixel (i32.add (local.get $x) (i32.const 4)) (i32.add (local.get $y) (i32.const 6)) (i32.const 26))
+              ;; Engine glow
+              (call $put_pixel (i32.add (local.get $x) (i32.const 5)) (local.get $y) (i32.const 36))
+              ;; Cockpit
+              (call $put_pixel (i32.sub (local.get $x) (i32.const 4)) (local.get $y) (i32.const 15))
             )
           )
-          ;; type 2: purple heavy
+          ;; type 2: purple heavy cruiser — wide armored body
           (if (i32.eq (local.get $type) (i32.const 2))
             (then
-              (call $draw_rect (i32.sub (local.get $x) (i32.const 6)) (i32.sub (local.get $y) (i32.const 4)) (i32.const 12) (i32.const 9) (i32.const 30))
-              (call $draw_rect (i32.sub (local.get $x) (i32.const 4)) (i32.sub (local.get $y) (i32.const 2)) (i32.const 8) (i32.const 5) (i32.const 31))
-              ;; gun ports
-              (call $put_pixel (i32.sub (local.get $x) (i32.const 7)) (i32.sub (local.get $y) (i32.const 2)) (i32.const 44))
-              (call $put_pixel (i32.sub (local.get $x) (i32.const 7)) (i32.add (local.get $y) (i32.const 2)) (i32.const 44))
-              ;; eyes
+              ;; Outer hull
+              (call $draw_rect (i32.sub (local.get $x) (i32.const 6)) (i32.sub (local.get $y) (i32.const 5)) (i32.const 14) (i32.const 11) (i32.const 30))
+              ;; Inner armor
+              (call $draw_rect (i32.sub (local.get $x) (i32.const 4)) (i32.sub (local.get $y) (i32.const 3)) (i32.const 10) (i32.const 7) (i32.const 31))
+              ;; Nose wedge
+              (call $draw_rect (i32.sub (local.get $x) (i32.const 7)) (i32.sub (local.get $y) (i32.const 2)) (i32.const 2) (i32.const 5) (i32.const 31))
+              (call $put_pixel (i32.sub (local.get $x) (i32.const 8)) (local.get $y) (i32.const 30))
+              ;; Gun turrets (symmetrical)
+              (call $draw_rect (i32.sub (local.get $x) (i32.const 8)) (i32.sub (local.get $y) (i32.const 4)) (i32.const 3) (i32.const 2) (i32.const 22))
+              (call $draw_rect (i32.sub (local.get $x) (i32.const 8)) (i32.add (local.get $y) (i32.const 3)) (i32.const 3) (i32.const 2) (i32.const 22))
+              ;; Gun barrels
+              (call $put_pixel (i32.sub (local.get $x) (i32.const 9)) (i32.sub (local.get $y) (i32.const 3)) (i32.const 44))
+              (call $put_pixel (i32.sub (local.get $x) (i32.const 9)) (i32.add (local.get $y) (i32.const 3)) (i32.const 44))
+              ;; Bridge eyes (symmetrical)
               (call $put_pixel (i32.sub (local.get $x) (i32.const 2)) (i32.sub (local.get $y) (i32.const 1)) (i32.const 15))
               (call $put_pixel (i32.sub (local.get $x) (i32.const 2)) (i32.add (local.get $y) (i32.const 1)) (i32.const 15))
+              ;; Engine blocks (symmetrical)
+              (call $draw_rect (i32.add (local.get $x) (i32.const 6)) (i32.sub (local.get $y) (i32.const 4)) (i32.const 3) (i32.const 3) (i32.const 22))
+              (call $draw_rect (i32.add (local.get $x) (i32.const 6)) (i32.add (local.get $y) (i32.const 2)) (i32.const 3) (i32.const 3) (i32.const 22))
             )
           )
         )
@@ -1213,32 +1254,44 @@
     (local.set $y (i32.load16_u (i32.const 0x10350)))
     (local.set $hp (i32.load8_u (i32.const 0x1034D)))
     (local.set $frame (i32.load (i32.const 0)))
-    ;; Main body
+    ;; Main hull (symmetrical)
     (call $draw_rect (i32.sub (local.get $x) (i32.const 14)) (i32.sub (local.get $y) (i32.const 10))
-      (i32.const 28) (i32.const 20)
+      (i32.const 28) (i32.const 21)
       (select (i32.const 30) (i32.const 31) (i32.gt_u (local.get $hp) (i32.const 15))))
-    ;; Core
-    (call $draw_rect (i32.sub (local.get $x) (i32.const 8)) (i32.sub (local.get $y) (i32.const 6))
-      (i32.const 16) (i32.const 12) (i32.const 24))
-    ;; Eye (pulsing)
-    (call $draw_rect (i32.sub (local.get $x) (i32.const 3)) (i32.sub (local.get $y) (i32.const 3))
-      (i32.const 6) (i32.const 6)
+    ;; Inner hull
+    (call $draw_rect (i32.sub (local.get $x) (i32.const 10)) (i32.sub (local.get $y) (i32.const 7))
+      (i32.const 20) (i32.const 15) (i32.const 24))
+    ;; Nose wedge
+    (call $draw_rect (i32.sub (local.get $x) (i32.const 16)) (i32.sub (local.get $y) (i32.const 4))
+      (i32.const 4) (i32.const 9) (i32.const 31))
+    (call $draw_rect (i32.sub (local.get $x) (i32.const 18)) (i32.sub (local.get $y) (i32.const 2))
+      (i32.const 3) (i32.const 5) (i32.const 30))
+    ;; Central eye (pulsing)
+    (call $draw_rect (i32.sub (local.get $x) (i32.const 4)) (i32.sub (local.get $y) (i32.const 3))
+      (i32.const 8) (i32.const 7)
       (select (i32.const 36) (i32.const 40) (i32.and (local.get $frame) (i32.const 8))))
-    (call $draw_rect (i32.sub (local.get $x) (i32.const 1)) (i32.sub (local.get $y) (i32.const 1))
-      (i32.const 2) (i32.const 2) (i32.const 15))
-    ;; Turrets
-    (call $draw_rect (i32.sub (local.get $x) (i32.const 18)) (i32.sub (local.get $y) (i32.const 13))
-      (i32.const 8) (i32.const 6) (i32.const 22))
-    (call $draw_rect (i32.sub (local.get $x) (i32.const 18)) (i32.add (local.get $y) (i32.const 7))
-      (i32.const 8) (i32.const 6) (i32.const 22))
-    ;; Turret guns
-    (call $draw_rect (i32.sub (local.get $x) (i32.const 20)) (i32.sub (local.get $y) (i32.const 11))
-      (i32.const 4) (i32.const 2) (i32.const 44))
-    (call $draw_rect (i32.sub (local.get $x) (i32.const 20)) (i32.add (local.get $y) (i32.const 9))
-      (i32.const 4) (i32.const 2) (i32.const 44))
-    ;; Armor plates
+    (call $draw_rect (i32.sub (local.get $x) (i32.const 2)) (i32.sub (local.get $y) (i32.const 1))
+      (i32.const 4) (i32.const 3) (i32.const 15))
+    ;; Turret pods (symmetrical top/bottom)
+    (call $draw_rect (i32.sub (local.get $x) (i32.const 18)) (i32.sub (local.get $y) (i32.const 14))
+      (i32.const 10) (i32.const 4) (i32.const 22))
+    (call $draw_rect (i32.sub (local.get $x) (i32.const 18)) (i32.add (local.get $y) (i32.const 11))
+      (i32.const 10) (i32.const 4) (i32.const 22))
+    ;; Turret gun barrels
+    (call $draw_rect (i32.sub (local.get $x) (i32.const 21)) (i32.sub (local.get $y) (i32.const 12))
+      (i32.const 5) (i32.const 2) (i32.const 44))
+    (call $draw_rect (i32.sub (local.get $x) (i32.const 21)) (i32.add (local.get $y) (i32.const 11))
+      (i32.const 5) (i32.const 2) (i32.const 44))
+    ;; Engine blocks (symmetrical)
     (call $draw_rect (i32.add (local.get $x) (i32.const 10)) (i32.sub (local.get $y) (i32.const 8))
-      (i32.const 6) (i32.const 16) (i32.const 22))
+      (i32.const 5) (i32.const 5) (i32.const 22))
+    (call $draw_rect (i32.add (local.get $x) (i32.const 10)) (i32.add (local.get $y) (i32.const 4))
+      (i32.const 5) (i32.const 5) (i32.const 22))
+    ;; Engine glow (symmetrical, animated)
+    (call $put_pixel (i32.add (local.get $x) (i32.const 15)) (i32.sub (local.get $y) (i32.const 6))
+      (select (i32.const 40) (i32.const 36) (i32.and (local.get $frame) (i32.const 4))))
+    (call $put_pixel (i32.add (local.get $x) (i32.const 15)) (i32.add (local.get $y) (i32.const 6))
+      (select (i32.const 40) (i32.const 36) (i32.and (local.get $frame) (i32.const 4))))
     ;; HP bar above boss
     (call $draw_rect (i32.sub (local.get $x) (i32.const 15)) (i32.sub (local.get $y) (i32.const 18))
       (local.get $hp) (i32.const 2) (i32.const 36))
