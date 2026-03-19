@@ -65,32 +65,42 @@ function playTone(type, freq, duration, vol, freqEnd) {
   osc.start(t); osc.stop(t + duration);
 }
 
-function sfx(id) {
+// SFX — reads voice definitions from WASM memory
+// Format at addr:
+//   +0: num_voices (u8, 1-8)
+//   +1: pad
+//   Per voice (8 bytes, starting at +2):
+//     +0: type (u8): 0=sine,1=square,2=sawtooth,3=triangle,4=noise
+//     +1: vol (u8, 0-255 → 0-0.4)
+//     +2: dur_centisec (u8)
+//     +3: freq_start MIDI (u8, ignored for noise)
+//     +4: freq_end MIDI (u8, 0=same as start)
+//     +5: delay_ms (u8)
+//     +6-7: pad
+const midiToFreq = n => n ? 440 * Math.pow(2, (n - 69) / 12) : 0;
+
+function sfx(addr) {
   ensureAudio();
-  switch (id) {
-    case 0: // laser
-      playTone('square', 880, 0.08, 0.15, 220);
-      break;
-    case 1: // explosion
-      playNoise(0.12, 0.3);
-      playTone('sine', 60, 0.15, 0.2);
-      break;
-    case 2: // pickup — triumphant rising arpeggio
-      playTone('square', 523, 0.06, 0.18);
-      playTone('sine', 523, 0.06, 0.1);
-      setTimeout(() => { if (audioCtx) { playTone('square', 659, 0.06, 0.18); playTone('sine', 659, 0.06, 0.1); } }, 60);
-      setTimeout(() => { if (audioCtx) { playTone('square', 784, 0.06, 0.18); playTone('sine', 784, 0.06, 0.1); } }, 120);
-      setTimeout(() => { if (audioCtx) { playTone('square', 1047, 0.12, 0.2); playTone('sine', 1047, 0.12, 0.12); } }, 180);
-      break;
-    case 3: // hit — heavy crunch, low rumble + noise
-      playNoise(0.15, 0.35);
-      playTone('square', 150, 0.12, 0.25, 30);
-      playTone('sawtooth', 80, 0.2, 0.15, 20);
-      setTimeout(() => { if (audioCtx) { playNoise(0.08, 0.2); playTone('sine', 40, 0.15, 0.15); } }, 80);
-      break;
-    case 4: // boss
-      playTone('sawtooth', 110, 0.2, 0.2);
-      break;
+  if (!addr || !memU8) return;
+  const numVoices = Math.min(memU8[addr], 8);
+  for (let v = 0; v < numVoices; v++) {
+    const o = addr + 2 + v * 8;
+    const type = memU8[o];
+    const vol = memU8[o + 1] / 255 * 0.4;
+    const dur = memU8[o + 2] / 100;
+    const freqStart = midiToFreq(memU8[o + 3]);
+    const freqEnd = midiToFreq(memU8[o + 4]);
+    const delay = memU8[o + 5];
+    const play = () => {
+      if (!audioCtx) return;
+      if (type === 4) {
+        playNoise(dur, vol);
+      } else {
+        playTone(oscTypes[type & 3], freqStart || 440, dur, vol, freqEnd || undefined);
+      }
+    };
+    if (delay > 0) setTimeout(play, delay);
+    else play();
   }
 }
 
@@ -100,162 +110,49 @@ function note(oscType, freq, durMs, vol255) {
   playTone(types[oscType & 3] || 'sine', freq || 440, (durMs || 100) / 1000, (vol255 || 128) / 255 * 0.3);
 }
 
-// Music — 3-track sequencer (bass, arp, lead) per song
-// Each track: [freq, ...] where 0 = rest. Step = 16th note.
-// Frequencies: C2=65 D2=73 E2=82 F2=87 G2=98 A2=110 B2=123
-//   C3=131 D3=147 E3=165 F3=175 G3=196 A3=220 Bb3=233 B3=247
-//   C4=262 D4=294 E4=330 F4=349 G4=392 A4=440 Bb4=466 B4=494
-//   C5=523 D5=587 E5=659 F5=698 G5=784 A5=880
+// Music sequencer — reads pattern data from WASM memory
+// Pattern format in memory:
+//   +0: bpm (u16 LE)
+//   +2: steps (u8) — notes per track
+//   +3: num_tracks (u8, 1-3)
+//   +4,+8,+12: per track — type(u8), vol(u8), dur_centisec(u8), pad(u8)
+//   +16: note data — MIDI note numbers (u8), 0=rest
+//         track0[steps], track1[steps], track2[steps]
+// MIDI to Hz: 440 * 2^((note-69)/12)
+let currentMusicAddr = 0;
+const oscTypes = ['sine', 'square', 'sawtooth', 'triangle'];
 
-const musicPatterns = {
-  1: { // INTRO — ominous space ambient, Am → Em → Dm → E
-    bpm: 100,
-    tracks: [
-      { // bass — low octave pedal tones, slow pulse
-        type: 'triangle', vol: 0.12, dur: 0.4,
-        notes: [
-          110,0,0,0, 0,0,110,0, 0,0,0,0, 110,0,0,0,  // Am pedal
-          82,0,0,0,  0,0,82,0,  0,0,0,0, 82,0,0,0,    // Em pedal
-          73,0,0,0,  0,0,73,0,  0,0,0,0, 73,0,0,0,    // Dm pedal
-          82,0,0,0,  0,0,0,0,   82,0,82,0, 0,0,0,0,   // E with rhythm
-        ],
-      },
-      { // pad — sustained minor chords, eerie
-        type: 'sine', vol: 0.06, dur: 0.5,
-        notes: [
-          220,0,0,262, 0,0,220,0, 330,0,0,0, 262,0,220,0,  // Am tones
-          165,0,0,196, 0,0,247,0, 0,0,196,0, 165,0,0,0,    // Em tones
-          147,0,0,175, 0,0,220,0, 0,0,175,0, 147,0,0,0,    // Dm tones
-          165,0,0,208, 0,0,247,0, 330,0,0,0, 247,0,208,0,  // E tones
-        ],
-      },
-      { // high — sparse, haunting melody
-        type: 'sine', vol: 0.05, dur: 0.3,
-        notes: [
-          0,0,0,0, 523,0,0,0, 0,0,0,0, 0,0,440,0,      // A minor hint
-          0,0,0,0, 494,0,0,0, 0,0,0,0, 0,0,0,0,         // B over Em
-          0,0,0,0, 440,0,0,0, 0,0,0,0, 0,0,349,0,       // F over Dm
-          0,0,0,0, 0,0,416,0, 0,0,0,0, 494,0,0,0,       // G#→B over E
-        ],
-      },
-    ],
-  },
-
-  2: { // GAMEPLAY — aggressive driving chiptune, Am: i-VII-VI-V
-    bpm: 150,
-    tracks: [
-      { // bass — pumping eighth-note pattern
-        type: 'square', vol: 0.15, dur: 0.08,
-        notes: [
-          110,0,110,0, 110,0,110,110, 110,0,110,0, 110,0,165,0,  // Am bass
-          98,0,98,0,   98,0,98,98,    98,0,98,0,   98,0,147,0,   // G bass
-          87,0,87,0,   87,0,87,87,    87,0,87,0,   87,0,131,0,   // F bass
-          82,0,82,0,   82,0,82,82,    82,0,82,0,   82,0,110,0,   // E bass → back
-        ],
-      },
-      { // arp — fast arpeggios cycling chord tones
-        type: 'triangle', vol: 0.12, dur: 0.06,
-        notes: [
-          440,523,659,523, 440,523,659,784, 659,523,440,523, 659,784,659,523,  // Am arp
-          392,494,587,494, 392,494,587,784, 587,494,392,494, 587,784,587,494,  // G arp
-          349,440,523,440, 349,440,523,698, 523,440,349,440, 523,698,523,440,  // F arp
-          330,416,494,416, 330,416,494,659, 494,416,330,416, 494,659,494,416,  // E arp
-        ],
-      },
-      { // lead — catchy 8-bit melody
-        type: 'square', vol: 0.10, dur: 0.12,
-        notes: [
-          880,0,784,880, 0,0,659,0, 784,0,659,0, 523,0,659,0,   // melody A
-          784,0,659,784, 0,0,587,0, 494,0,587,0, 494,0,392,0,   // melody B
-          698,0,659,698, 0,0,523,0, 440,0,523,0, 440,0,349,0,   // melody C
-          659,0,0,494,   659,0,784,0, 880,0,784,659, 0,0,0,0,   // melody D (resolve)
-        ],
-      },
-    ],
-  },
-
-  3: { // GAME OVER — slow, tragic, Dm → Bb → Gm → A
-    bpm: 80,
-    tracks: [
-      { // bass — slow heartbeat
-        type: 'triangle', vol: 0.12, dur: 0.35,
-        notes: [
-          73,0,0,0, 0,0,0,0, 73,0,0,0, 0,0,0,0,    // Dm
-          58,0,0,0, 0,0,0,0, 58,0,0,0, 0,0,0,0,    // Bb (Bb1=58)
-          49,0,0,0, 0,0,0,0, 49,0,0,0, 0,0,0,0,    // Gm (G1=49)
-          55,0,0,0, 0,0,0,0, 55,0,55,0, 0,0,0,0,   // A (A1=55)
-        ],
-      },
-      { // chords — descending minor
-        type: 'sine', vol: 0.08, dur: 0.4,
-        notes: [
-          294,0,0,349, 0,0,0,0, 262,0,0,0, 0,0,0,0,   // Dm chord
-          233,0,0,294, 0,0,0,0, 233,0,0,0, 0,0,0,0,   // Bb chord
-          196,0,0,233, 0,0,0,0, 196,0,0,0, 0,0,0,0,   // Gm chord
-          220,0,0,277, 0,0,0,0, 220,0,0,0, 0,0,0,0,   // A chord
-        ],
-      },
-      { // melody — descending lament
-        type: 'sine', vol: 0.07, dur: 0.3,
-        notes: [
-          587,0,0,0, 523,0,0,0, 440,0,0,0, 0,0,0,0,   // D5 C5 A4
-          466,0,0,0, 440,0,0,0, 349,0,0,0, 0,0,0,0,   // Bb4 A4 F4
-          392,0,0,0, 349,0,0,0, 294,0,0,0, 0,0,0,0,   // G4 F4 D4
-          330,0,0,0, 277,0,0,0, 220,0,0,0, 0,0,0,0,   // E4 C#4 A3
-        ],
-      },
-    ],
-  },
-
-  4: { // BOSS FIGHT — fast, intense, dissonant. Em → F → G → Ab (chromatic tension)
-    bpm: 180,
-    tracks: [
-      { // bass — relentless pounding
-        type: 'sawtooth', vol: 0.18, dur: 0.07,
-        notes: [
-          82,82,0,82, 82,0,82,0, 82,82,0,82, 0,82,82,0,   // Em pounding
-          87,87,0,87, 87,0,87,0, 87,87,0,87, 0,87,87,0,   // F
-          98,98,0,98, 98,0,98,0, 98,98,0,98, 0,98,98,0,   // G
-          104,104,0,104, 104,0,104,0, 104,104,0,104, 0,82,82,0, // Ab→Em
-        ],
-      },
-      { // arp — frantic dissonant arpeggios
-        type: 'square', vol: 0.12, dur: 0.05,
-        notes: [
-          330,494,659,494, 330,659,494,659, 330,494,659,784, 659,494,330,494,  // Em
-          349,523,698,523, 349,698,523,698, 349,523,698,880, 698,523,349,523,  // F
-          392,587,784,587, 392,784,587,784, 392,587,784,988, 784,587,392,587,  // G
-          415,622,831,622, 415,831,622,831, 415,622,831,1047, 831,622,330,494, // Ab→Em
-        ],
-      },
-      { // lead — menacing descending riff
-        type: 'sawtooth', vol: 0.10, dur: 0.1,
-        notes: [
-          659,0,622,0, 659,0,784,0, 659,0,494,0, 0,0,330,0,   // Em riff
-          698,0,659,0, 698,0,880,0, 698,0,523,0, 0,0,349,0,   // F riff
-          784,0,698,0, 784,0,988,0, 784,0,587,0, 0,0,392,0,   // G riff
-          831,0,784,0, 880,0,1047,0, 880,0,659,0, 0,0,0,0,    // Ab climax
-        ],
-      },
-    ],
-  },
-};
-let currentMusicCmd = 0;
-
-function music(cmd) {
+function music(addr) {
   ensureAudio();
   if (musicInterval) { clearInterval(musicInterval); musicInterval = null; }
-  currentMusicCmd = cmd;
-  if (cmd === 0) return;
-  const p = musicPatterns[cmd];
-  if (!p) return;
+  currentMusicAddr = addr;
+  if (addr === 0 || !memU8) return;
+  // read pattern header from WASM memory
+  const bpm = memU8[addr] | (memU8[addr + 1] << 8);
+  const steps = memU8[addr + 2];
+  const numTracks = Math.min(memU8[addr + 3], 3);
+  if (!bpm || !steps || !numTracks) return;
+  const tracks = [];
+  for (let t = 0; t < numTracks; t++) {
+    const h = addr + 4 + t * 4;
+    tracks.push({
+      type: oscTypes[memU8[h] & 3],
+      vol: memU8[h + 1] / 255 * 0.3,
+      dur: memU8[h + 2] / 100,
+      noteOff: addr + 16 + t * steps,
+    });
+  }
   musicStep = 0;
-  const interval = 60000 / p.bpm / 4;
+  const interval = 60000 / bpm / 4;
   musicInterval = setInterval(() => {
-    if (!audioCtx || isMuted) return;
-    for (const tr of p.tracks) {
-      const freq = tr.notes[musicStep % tr.notes.length];
-      if (freq) playTone(tr.type, freq, tr.dur, tr.vol);
+    if (!audioCtx || isMuted || !memU8) return;
+    const s = musicStep % steps;
+    for (const tr of tracks) {
+      const midi = memU8[tr.noteOff + s];
+      if (midi) {
+        const freq = 440 * Math.pow(2, (midi - 69) / 12);
+        playTone(tr.type, freq, tr.dur, tr.vol);
+      }
     }
     musicStep++;
   }, interval);
@@ -266,10 +163,8 @@ function toggleMute() {
   if (masterGain) masterGain.gain.value = isMuted ? 0 : 1;
   if (isMuted) {
     if (musicInterval) { clearInterval(musicInterval); musicInterval = null; }
-  } else if (currentMusicCmd) {
-    const saved = currentMusicCmd;
-    currentMusicCmd = 0; // reset so music() doesn't skip
-    music(saved);
+  } else if (currentMusicAddr) {
+    music(currentMusicAddr);
   }
   const btn = document.getElementById('mute-btn');
   if (btn) btn.textContent = isMuted ? 'OFF' : 'SND';

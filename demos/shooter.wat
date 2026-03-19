@@ -52,6 +52,11 @@
   ;; +19: boss_timer (u8)
   ;; +20: shake_timer (u8)
 
+  ;; --- SFX helper: look up address from table and call $sfx ---
+  (func $play_sfx (param $id i32)
+    (call $sfx (i32.load (i32.add (i32.const 0x12BE0) (i32.mul (local.get $id) (i32.const 4)))))
+  )
+
   ;; --- PRNG (xorshift32) ---
   (func $rand (result i32)
     (local $s i32)
@@ -354,7 +359,7 @@
                   (i32.and (local.get $keys) (i32.const 16))))  ;; space
       (then
         (call $spawn_player_bullet (local.get $px) (local.get $py))
-        (call $sfx (i32.const 0))
+        (call $play_sfx (i32.const 0))
         ;; power level 1+ = double shot
         (if (i32.ge_u (i32.load8_u (i32.const 0x10349)) (i32.const 1))
           (then
@@ -901,7 +906,7 @@
                         ;; enemy destroyed
                         (i32.store8 (local.get $eaddr) (i32.const 0))
                         (call $spawn_explosion (local.get $ex) (local.get $ey) (i32.const 12))
-                        (call $sfx (i32.const 1))
+                        (call $play_sfx (i32.const 1))
                         ;; score: type+1 * 100
                         (local.set $type (i32.load8_u (i32.add (local.get $eaddr) (i32.const 1))))
                         (local.set $score (i32.load (i32.const 0x10344)))
@@ -964,8 +969,8 @@
               (call $spawn_explosion (i32.add (local.get $px) (i32.const 8)) (i32.add (local.get $py) (i32.const 10)) (i32.const 16))
               (call $spawn_explosion (i32.sub (local.get $px) (i32.const 6)) (i32.add (local.get $py) (i32.const 12)) (i32.const 12))
               (call $spawn_explosion (i32.add (local.get $px) (i32.const 10)) (i32.sub (local.get $py) (i32.const 8)) (i32.const 12))
-              (call $sfx (i32.const 3))
-              (call $sfx (i32.const 1))  ;; layer explosion sfx on top
+              (call $play_sfx (i32.const 3))
+              (call $play_sfx (i32.const 1))  ;; layer explosion sfx on top
               (i32.store8 (i32.const 0x10365) (i32.const 90))  ;; invuln for 1.5s
               (i32.store8 (i32.const 0x10354) (i32.const 20))  ;; massive shake
               ;; pick a random hit message (0-2) and store index at 0x10355
@@ -980,7 +985,7 @@
                 )
                 (else
                   ;; game over
-                  (call $music (i32.const 3))
+                  (call $music (i32.const 0x12600))
                   (i32.store8 (i32.const 0x10340) (i32.const 6))
                   (i32.store16 (i32.const 0x10342) (i32.const 0))
                 )
@@ -1015,7 +1020,7 @@
                          (i32.gt_s (i32.sub (local.get $uy) (local.get $py)) (i32.const -10))))
             (then
               (i32.store8 (local.get $addr) (i32.const 0))
-              (call $sfx (i32.const 2))
+              (call $play_sfx (i32.const 2))
               ;; power up
               (local.set $pl (i32.load8_u (i32.const 0x10349)))
               (if (i32.lt_u (local.get $pl) (i32.const 3))
@@ -1064,8 +1069,8 @@
               (if (i32.le_s (local.get $hp) (i32.const 0))
                 (then
                   ;; boss destroyed!
-                  (call $sfx (i32.const 4))
-                  (call $sfx (i32.const 1))
+                  (call $play_sfx (i32.const 4))
+                  (call $play_sfx (i32.const 1))
                   (i32.store8 (i32.const 0x1034C) (i32.const 0))
                   (call $spawn_explosion (local.get $boss_x) (local.get $boss_y) (i32.const 30))
                   (call $spawn_explosion (i32.add (local.get $boss_x) (i32.const 10)) (i32.sub (local.get $boss_y) (i32.const 8)) (i32.const 20))
@@ -1073,7 +1078,7 @@
                   (i32.store (i32.const 0x10344) (i32.add (i32.load (i32.const 0x10344)) (i32.const 5000)))
                   (i32.store8 (i32.const 0x10354) (i32.const 15))  ;; big shake
                   ;; go to game over (victory)
-                  (call $music (i32.const 3))
+                  (call $music (i32.const 0x12600))
                   (i32.store8 (i32.const 0x10340) (i32.const 6))
                   (i32.store16 (i32.const 0x10342) (i32.const 0))
                 )
@@ -1192,7 +1197,7 @@
         ;; all waves done, spawn boss
         (if (i32.eqz (i32.load8_u (i32.const 0x1034C)))
           (then
-            (call $music (i32.const 4))  ;; boss fight music!
+            (call $music (i32.const 0x12700))  ;; boss fight music!
             (i32.store8 (i32.const 0x1034C) (i32.const 1))    ;; boss active
             (i32.store8 (i32.const 0x1034D) (i32.const 30))   ;; boss HP
             (i32.store16 (i32.const 0x1034E) (i32.const 350)) ;; boss x (offscreen right)
@@ -1532,7 +1537,7 @@
           (i32.gt_u (local.get $timer) (i32.const 600)))
       (then
         ;; start gameplay
-        (call $music (i32.const 2))
+        (call $music (i32.const 0x12500))
         (i32.store8 (i32.const 0x10340) (i32.const 5))
         (i32.store16 (i32.const 0x10342) (i32.const 0))
         ;; init player
@@ -1697,7 +1702,7 @@
                   (i32.and (i32.load8_u (i32.const 0x10)) (i32.const 16))))
       (then
         ;; reset to title
-        (call $music (i32.const 1))
+        (call $music (i32.const 0x12400))
         (i32.store8 (i32.const 0x10340) (i32.const 0))
         (i32.store16 (i32.const 0x10342) (i32.const 0))
       )
@@ -1865,6 +1870,32 @@
   (data (i32.const 0x111D8) "DAMAGE CRITICAL")
   (data (i32.const 0x12388) "SC: ")
 
+  ;; Music patterns (MIDI-note format, read by harness from memory)
+  ;; Format: bpm(u16) steps(u8) tracks(u8) [type vol dur pad]×3 notes...
+  ;; Pattern 1: INTRO (100 BPM) at 0x12400
+  (data (i32.const 0x12400) "\64\00\40\03\03\66\28\00\00\33\32\00\00\2b\1e\00\2d\00\00\00\00\00\2d\00\00\00\00\00\2d\00\00\00\28\00\00\00\00\00\28\00\00\00\00\00\28\00\00\00\26\00\00\00\00\00\26\00\00\00\00\00\26\00\00\00\28\00\00\00\00\00\00\00\28\00\28\00\00\00\00\00\39\00\00\3c\00\00\39\00\40\00\00\00\3c\00\39\00\34\00\00\37\00\00\3b\00\00\00\37\00\34\00\00\00\32\00\00\35\00\00\39\00\00\00\35\00\32\00\00\00\34\00\00\38\00\00\3b\00\40\00\00\00\3b\00\38\00\00\00\00\00\48\00\00\00\00\00\00\00\00\00\45\00\00\00\00\00\47\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\45\00\00\00\00\00\00\00\00\00\41\00\00\00\00\00\00\00\44\00\00\00\00\00\47\00\00\00")
+  ;; Pattern 2: GAMEPLAY (150 BPM) at 0x12500
+  (data (i32.const 0x12500) "\96\00\40\03\01\80\08\00\03\66\06\00\01\55\0c\00\2d\00\2d\00\2d\00\2d\2d\2d\00\2d\00\2d\00\34\00\2b\00\2b\00\2b\00\2b\2b\2b\00\2b\00\2b\00\32\00\29\00\29\00\29\00\29\29\29\00\29\00\29\00\30\00\28\00\28\00\28\00\28\28\28\00\28\00\28\00\2d\00\45\48\4c\48\45\48\4c\4f\4c\48\45\48\4c\4f\4c\48\43\47\4a\47\43\47\4a\4f\4a\47\43\47\4a\4f\4a\47\41\45\48\45\41\45\48\4d\48\45\41\45\48\4d\48\45\40\44\47\44\40\44\47\4c\47\44\40\44\47\4c\47\44\51\00\4f\51\00\00\4c\00\4f\00\4c\00\48\00\4c\00\4f\00\4c\4f\00\00\4a\00\47\00\4a\00\47\00\43\00\4d\00\4c\4d\00\00\48\00\45\00\48\00\45\00\41\00\4c\00\00\47\4c\00\4f\00\51\00\4f\4c\00\00\00\00")
+  ;; Pattern 3: GAME OVER (80 BPM) at 0x12600
+  (data (i32.const 0x12600) "\50\00\40\03\03\66\23\00\00\44\28\00\00\3c\1e\00\26\00\00\00\00\00\00\00\26\00\00\00\00\00\00\00\22\00\00\00\00\00\00\00\22\00\00\00\00\00\00\00\1f\00\00\00\00\00\00\00\1f\00\00\00\00\00\00\00\21\00\00\00\00\00\00\00\21\00\21\00\00\00\00\00\3e\00\00\41\00\00\00\00\3c\00\00\00\00\00\00\00\3a\00\00\3e\00\00\00\00\3a\00\00\00\00\00\00\00\37\00\00\3a\00\00\00\00\37\00\00\00\00\00\00\00\39\00\00\3d\00\00\00\00\39\00\00\00\00\00\00\00\4a\00\00\00\48\00\00\00\45\00\00\00\00\00\00\00\46\00\00\00\45\00\00\00\41\00\00\00\00\00\00\00\43\00\00\00\41\00\00\00\3e\00\00\00\00\00\00\00\40\00\00\00\3d\00\00\00\39\00\00\00\00\00\00\00")
+  ;; SFX definitions (voice-based format, read by harness from memory)
+  ;; Format: num_voices(u8) pad(u8) then per voice: type vol dur freq_start freq_end delay pad pad
+  ;; SFX 0: laser (1 voice)
+  (data (i32.const 0x12800) "\01\00\01\60\08\51\39\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")
+  ;; SFX 1: explosion (2 voices)
+  (data (i32.const 0x12844) "\02\00\04\bf\0c\00\00\00\00\00\00\80\0f\23\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")
+  ;; SFX 2: pickup (8 voices — rising arpeggio)
+  (data (i32.const 0x12888) "\08\00\01\73\06\48\00\00\00\00\00\40\06\48\00\00\00\00\01\73\06\4c\00\3c\00\00\00\40\06\4c\00\3c\00\00\01\73\06\4f\00\78\00\00\00\40\06\4f\00\78\00\00\01\80\0c\54\00\b4\00\00\00\4d\0c\54\00\b4\00\00\00\00")
+  ;; SFX 3: hit (5 voices — crunch + rumble)
+  (data (i32.const 0x128CC) "\05\00\04\df\0f\00\00\00\00\00\01\9f\0c\32\17\00\00\00\02\60\14\27\0f\00\00\00\04\80\08\00\00\50\00\00\00\60\0f\1b\00\50\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")
+  ;; SFX 4: boss (1 voice)
+  (data (i32.const 0x12910) "\01\00\02\80\14\2d\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")
+  ;; SFX address lookup table (5 entries × 4 bytes at 0x12BE0)
+  (data (i32.const 0x12BE0) "\00\28\01\00\44\28\01\00\88\28\01\00\cc\28\01\00\10\29\01\00")
+
+  ;; Pattern 4: BOSS FIGHT (180 BPM) at 0x12700
+  (data (i32.const 0x12700) "\b4\00\40\03\02\99\07\00\01\66\05\00\02\55\0a\00\28\28\00\28\28\00\28\00\28\28\00\28\00\28\28\00\29\29\00\29\29\00\29\00\29\29\00\29\00\29\29\00\2b\2b\00\2b\2b\00\2b\00\2b\2b\00\2b\00\2b\2b\00\2c\2c\00\2c\2c\00\2c\00\2c\2c\00\2c\00\28\28\00\40\47\4c\47\40\4c\47\4c\40\47\4c\4f\4c\47\40\47\41\48\4d\48\41\4d\48\4d\41\48\4d\51\4d\48\41\48\43\4a\4f\4a\43\4f\4a\4f\43\4a\4f\53\4f\4a\43\4a\44\4b\50\4b\44\50\4b\50\44\4b\50\54\50\4b\40\47\4c\00\4b\00\4c\00\4f\00\4c\00\47\00\00\00\40\00\4d\00\4c\00\4d\00\51\00\4d\00\48\00\00\00\41\00\4f\00\4d\00\4f\00\53\00\4f\00\4a\00\00\00\43\00\50\00\4f\00\51\00\54\00\51\00\4c\00\00\00\00\00")
+
   ;; ============================================================
   ;; INIT SIN TABLE
   ;; ============================================================
@@ -1917,7 +1948,7 @@
               (i32.and (i32.load8_u (i32.const 0x10)) (i32.const 16)))  ;; space key
           (then
             ;; jump to gameplay
-            (call $music (i32.const 2))
+            (call $music (i32.const 0x12500))
             (i32.store8 (i32.const 0x10340) (i32.const 5))
             (i32.store16 (i32.const 0x10342) (i32.const 0))
             (i32.store16 (i32.const 0x10360) (i32.const 40))
