@@ -6,7 +6,7 @@ All demos are WAT files compiled in-browser via wabt.js. No server-side compilat
 ## Architecture
 
 - `index.html` — UI with demo picker, fullscreen, responsive layout
-- `harness.js` — VGA harness: memory layout, palette, framebuffer blit, mouse/keyboard/touch input, virtual controls, animation loop
+- `harness.js` — VGA harness: memory layout, palette, framebuffer blit, mouse/keyboard/touch input, virtual controls, animation loop, sound engine
 - `demos/*.wat` — WAT source files (WebAssembly Text format)
 - `demos/*.wasm` — Compiled binaries (gitignored, built by `build.sh`)
 
@@ -47,6 +47,11 @@ Each demo exports:
 - `frame()` — Called each animation frame
 
 Memory is imported as `env.memory` (4 pages = 256KB).
+
+Optional sound imports (demos that don't use them work unchanged):
+- `(import "env" "sfx" (func $sfx (param i32)))` — trigger a sound effect by ID
+- `(import "env" "note" (func $note (param i32 i32 i32 i32)))` — play a tone (osc_type, freq, duration_ms, volume_0-255)
+- `(import "env" "music" (func $music (param i32)))` — start/stop background music by pattern ID (0=stop)
 
 Use `(data (i32.const ADDR) "...")` segments for static data (fonts, strings, maps) instead of `i32.store8` chains. Data segments are initialized at instantiation and keep WAT files compact.
 
@@ -123,6 +128,36 @@ This is per-bit rising edge — a held mouse click won't block a keyboard press 
 ### Harness Keyboard Capture
 
 `harness.js` uses capture-phase (`window.addEventListener(..., true)`) + `stopPropagation()` to intercept arrow keys and space before UI elements (select dropdown, buttons) can consume them. The canvas auto-focuses after `loadDemo()`.
+
+## Sound System
+
+The harness provides a Web Audio sound engine. AudioContext is created lazily on first user interaction (respects autoplay policy). A mute toggle button is in the UI.
+
+### SFX IDs (used by shooter demo)
+
+- `0` — laser (square sweep 880→220Hz)
+- `1` — explosion (noise burst + low sine)
+- `2` — powerup pickup (4-note rising arpeggio, doubled square+sine)
+- `3` — player hit (heavy noise crunch + low rumble)
+- `4` — boss (sawtooth 110Hz)
+
+### Music Patterns (shooter demo)
+
+- `0` — stop music
+- `1` — intro (100 BPM, ominous ambient, Am→Em→Dm→E)
+- `2` — gameplay (150 BPM, driving chiptune, Am→G→F→E)
+- `3` — game over (80 BPM, tragic lament, Dm→Bb→Gm→A)
+- `4` — boss fight (180 BPM, intense, Em→F→G→Ab chromatic)
+
+Music patterns are defined in `harness.js` as multi-track sequencers (bass + arp + lead). Each track specifies oscillator type, volume, duration, and a note array (16th-note steps, 0=rest). `music()` is idempotent per cmd — calling it every frame with the same value is safe (only restarts on cmd change).
+
+### `note()` for Custom Sounds
+
+`note(osc_type, freq, duration_ms, volume)` plays a generic tone:
+- `osc_type`: 0=sine, 1=square, 2=sawtooth, 3=triangle
+- `freq`: frequency in Hz
+- `duration_ms`: length in milliseconds
+- `volume`: 0-255
 
 ## Adding a New Demo
 
