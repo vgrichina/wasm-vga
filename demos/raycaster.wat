@@ -263,6 +263,22 @@
   ;; ---- Map data (16x16, initialized via data segment) ----
   ;; Wall types: 0=empty, 1=brick, 2=stone, 3=wood, 4=slime
 
+  ;; ---- Autopilot state ----
+  ;; 0x14204  idle_counter (i32) — frames since last input
+  ;; 0x14208  autopilot flag (i32) — 1=autopilot active
+  ;; 0x1420C  prev_mouse_x for input detection (i32)
+  ;; 0x14210  turn_dir (i32) — current preferred turn direction (1 or -1)
+
+  ;; Check if a map cell ahead of player is a wall
+  ;; Returns 1 if wall, 0 if clear. Checks at distance $dist along angle $angle from ($px,$py)
+  (func $wall_ahead (param $px f64) (param $py f64) (param $angle f64) (param $dist f64) (result i32)
+    (i32.ne (i32.const 0)
+      (call $map_get
+        (i32.trunc_f64_s (f64.add (local.get $px)
+          (f64.mul (call $cos_approx (local.get $angle)) (local.get $dist))))
+        (i32.trunc_f64_s (f64.add (local.get $py)
+          (f64.mul (call $sin_approx (local.get $angle)) (local.get $dist)))))))
+
   ;; ---- INIT ----
   (func (export "init")
     ;; Seed PRNG
@@ -279,6 +295,11 @@
     (f32.store (i32.const 0x10140) (f32.const 2.5))
     (f32.store (i32.const 0x10144) (f32.const 2.5))
     (f32.store (i32.const 0x10148) (f32.const 0.0))
+    ;; Start in autopilot mode
+    (i32.store (i32.const 0x14204) (i32.const 60))  ;; idle counter starts high
+    (i32.store (i32.const 0x14208) (i32.const 1))   ;; autopilot on
+    (i32.store (i32.const 0x1420C) (i32.const 0))   ;; prev mouse x
+    (i32.store (i32.const 0x14210) (i32.const 1))   ;; turn dir: right
   )
 
   ;; ---- DDA Raycaster with texture mapping ----
@@ -321,45 +342,110 @@
     (local.set $move_speed (f64.const 0.06))
     (local.set $turn_speed (f64.const 0.04))
 
+    ;; --- Autopilot/manual mode detection ---
+    ;; Check if user is providing any input: keyboard or mouse movement
+    (if (i32.or
+          (local.get $keys)
+          (i32.and
+            (i32.ne (local.get $prev_mouse_x) (i32.const 0))
+            (i32.ne (local.get $mouse_x) (i32.load (i32.const 0x1420C)))))
+      (then
+        ;; Input detected: reset idle counter, switch to manual
+        (i32.store (i32.const 0x14204) (i32.const 0))
+        (i32.store (i32.const 0x14208) (i32.const 0))
+      )
+      (else
+        ;; No input: increment idle counter
+        (i32.store (i32.const 0x14204)
+          (i32.add (i32.load (i32.const 0x14204)) (i32.const 1)))
+        ;; If idle for 60+ frames, switch to autopilot
+        (if (i32.ge_u (i32.load (i32.const 0x14204)) (i32.const 60))
+          (then (i32.store (i32.const 0x14208) (i32.const 1))))
+      )
+    )
+    ;; Save mouse x for next frame's input detection
+    (i32.store (i32.const 0x1420C) (local.get $mouse_x))
+
     ;; Precompute direction
     (local.set $cos_a (call $cos_approx (local.get $player_angle)))
     (local.set $sin_a (call $sin_approx (local.get $player_angle)))
 
-    ;; --- Turning: Left/Right keys (bits 2,3) ---
-    ;; bit2 = Left/A = turn left
-    (if (i32.and (local.get $keys) (i32.const 4))
-      (then (local.set $player_angle (f64.sub (local.get $player_angle) (local.get $turn_speed)))))
-    ;; bit3 = Right/D = turn right
-    (if (i32.and (local.get $keys) (i32.const 8))
-      (then (local.set $player_angle (f64.add (local.get $player_angle) (local.get $turn_speed)))))
-
-    ;; --- Mouse turning: relative mouse_x movement ---
-    ;; Only apply if prev_mouse_x is valid (non-zero, meaning not first frame)
-    (if (local.get $prev_mouse_x)
+    ;; Branch: autopilot vs manual control
+    (if (i32.load (i32.const 0x14208))
       (then
-        (local.set $player_angle (f64.add (local.get $player_angle)
-          (f64.mul (f64.convert_i32_s (i32.sub (local.get $mouse_x) (local.get $prev_mouse_x)))
-                   (f64.const 0.01))))))
-    ;; Store current mouse_x as prev
+        ;; === AUTOPILOT MODE ===
+        ;; Move forward at steady pace
+        (local.set $move_dx (f64.mul (local.get $cos_a) (f64.const 0.04)))
+        (local.set $move_dy (f64.mul (local.get $sin_a) (f64.const 0.04)))
+
+        ;; Check wall ahead at distance 1.0
+        (if (call $wall_ahead (local.get $px) (local.get $py) (local.get $player_angle) (f64.const 1.0))
+          (then
+            ;; Wall ahead — stop moving forward, turn instead
+            (local.set $move_dx (f64.const 0.0))
+            (local.set $move_dy (f64.const 0.0))
+
+            ;; Try current preferred turn direction; if that's also blocked, flip
+            (if (call $wall_ahead (local.get $px) (local.get $py)
+                  (f64.add (local.get $player_angle)
+                    (f64.mul (f64.convert_i32_s (i32.load (i32.const 0x14210))) (f64.const 1.57)))
+                  (f64.const 1.0))
+              (then
+                ;; Preferred direction blocked too — flip turn direction
+                (i32.store (i32.const 0x14210)
+                  (i32.sub (i32.const 0) (i32.load (i32.const 0x14210))))))
+
+            ;; Turn in preferred direction
+            (local.set $player_angle (f64.add (local.get $player_angle)
+              (f64.mul (f64.convert_i32_s (i32.load (i32.const 0x14210))) (f64.const 0.05))))
+          )
+          (else
+            ;; No wall ahead — add gentle random drift for natural movement
+            (if (i32.eqz (i32.rem_u (i32.and (call $rand) (i32.const 0x7FFFFFFF)) (i32.const 90)))
+              (then
+                ;; Occasionally flip turn preference for variety
+                (i32.store (i32.const 0x14210)
+                  (i32.sub (i32.const 0) (i32.load (i32.const 0x14210))))))
+            ;; Very slight turn for wandering feel
+            (local.set $player_angle (f64.add (local.get $player_angle)
+              (f64.mul (f64.convert_i32_s (i32.load (i32.const 0x14210))) (f64.const 0.003))))
+          )
+        )
+      )
+      (else
+        ;; === MANUAL MODE ===
+        ;; --- Turning: Left/Right keys (bits 2,3) ---
+        (if (i32.and (local.get $keys) (i32.const 4))
+          (then (local.set $player_angle (f64.sub (local.get $player_angle) (local.get $turn_speed)))))
+        (if (i32.and (local.get $keys) (i32.const 8))
+          (then (local.set $player_angle (f64.add (local.get $player_angle) (local.get $turn_speed)))))
+
+        ;; --- Mouse turning ---
+        (if (local.get $prev_mouse_x)
+          (then
+            (local.set $player_angle (f64.add (local.get $player_angle)
+              (f64.mul (f64.convert_i32_s (i32.sub (local.get $mouse_x) (local.get $prev_mouse_x)))
+                       (f64.const 0.01))))))
+
+        ;; Recompute direction after turning
+        (local.set $cos_a (call $cos_approx (local.get $player_angle)))
+        (local.set $sin_a (call $sin_approx (local.get $player_angle)))
+
+        ;; --- Movement: Forward/Back (bits 0,1) ---
+        (local.set $move_dx (f64.const 0.0))
+        (local.set $move_dy (f64.const 0.0))
+        (if (i32.and (local.get $keys) (i32.const 1))
+          (then
+            (local.set $move_dx (f64.add (local.get $move_dx) (f64.mul (local.get $cos_a) (local.get $move_speed))))
+            (local.set $move_dy (f64.add (local.get $move_dy) (f64.mul (local.get $sin_a) (local.get $move_speed))))))
+        (if (i32.and (local.get $keys) (i32.const 2))
+          (then
+            (local.set $move_dx (f64.sub (local.get $move_dx) (f64.mul (local.get $cos_a) (local.get $move_speed))))
+            (local.set $move_dy (f64.sub (local.get $move_dy) (f64.mul (local.get $sin_a) (local.get $move_speed))))))
+      )
+    )
+    ;; Store current mouse_x as prev for mouse turning
     (i32.store (i32.const 0x1014C) (local.get $mouse_x))
-
-    ;; Recompute direction after turning
-    (local.set $cos_a (call $cos_approx (local.get $player_angle)))
-    (local.set $sin_a (call $sin_approx (local.get $player_angle)))
-
-    ;; --- Movement: Forward/Back (bits 0,1) ---
-    (local.set $move_dx (f64.const 0.0))
-    (local.set $move_dy (f64.const 0.0))
-    ;; bit0 = Up/W = forward
-    (if (i32.and (local.get $keys) (i32.const 1))
-      (then
-        (local.set $move_dx (f64.add (local.get $move_dx) (f64.mul (local.get $cos_a) (local.get $move_speed))))
-        (local.set $move_dy (f64.add (local.get $move_dy) (f64.mul (local.get $sin_a) (local.get $move_speed))))))
-    ;; bit1 = Down/S = backward
-    (if (i32.and (local.get $keys) (i32.const 2))
-      (then
-        (local.set $move_dx (f64.sub (local.get $move_dx) (f64.mul (local.get $cos_a) (local.get $move_speed))))
-        (local.set $move_dy (f64.sub (local.get $move_dy) (f64.mul (local.get $sin_a) (local.get $move_speed))))))
 
     ;; --- Collision detection: try X and Y independently with 0.2 margin ---
     ;; Try X movement

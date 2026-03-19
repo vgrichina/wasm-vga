@@ -113,6 +113,10 @@
   ;; 0x3F008: cam_y (f64)
   ;; 0x3F010: cam_angle (f64)
   ;; 0x3F018: speed (f64)
+  ;; 0x3F020: idle_counter (i32) — frames since last input
+  ;; 0x3F024: mode (i32) — 0=autopilot, 1=manual
+  ;; 0x3F028: last_mouse_x (i32) — for detecting mouse movement
+  ;; 0x3F02C: last_mouse_y (i32)
 
   (func (export "init")
     (local $i i32) (local $x i32) (local $y i32) (local $pass i32)
@@ -125,6 +129,10 @@
     (f64.store (i32.const 0x3F008) (f64.const 64.0))   ;; cam_y = center
     (f64.store (i32.const 0x3F010) (f64.const 0.0))    ;; cam_angle = 0
     (f64.store (i32.const 0x3F018) (f64.const 0.3))    ;; speed = base forward speed
+    (i32.store (i32.const 0x3F020) (i32.const 120))    ;; idle_counter = high (start in autopilot)
+    (i32.store (i32.const 0x3F024) (i32.const 0))      ;; mode = autopilot
+    (i32.store (i32.const 0x3F028) (i32.const 0))      ;; last_mouse_x
+    (i32.store (i32.const 0x3F02C) (i32.const 0))      ;; last_mouse_y
 
     ;; Setup palette
     (local.set $i (i32.const 0))
@@ -191,12 +199,17 @@
     (local $angle_offset f64)
     (local $sky_r i32) (local $sky_g i32) (local $sky_b i32)
     (local $keys i32) (local $mouse_y i32) (local $speed f64)
+    (local $mouse_x i32) (local $idle i32) (local $mode i32)
+    (local $has_input i32) (local $mdx i32) (local $mdy i32)
+    (local $frame_ct i32) (local $auto_angle f64)
 
     (local.set $tick (i32.load (i32.const 12)))
+    (local.set $frame_ct (i32.load (i32.const 0)))
 
     ;; Read keyboard state (0x10): bit0=Up, bit1=Down, bit2=Left, bit3=Right
     (local.set $keys (i32.load8_u (i32.const 0x10)))
-    ;; Read mouse y (u16 at 0x06)
+    ;; Read mouse position
+    (local.set $mouse_x (i32.load16_u (i32.const 0x04)))
     (local.set $mouse_y (i32.load16_u (i32.const 0x06)))
 
     ;; Load camera state from memory
@@ -204,27 +217,92 @@
     (local.set $cam_y (f64.load (i32.const 0x3F008)))
     (local.set $cam_angle (f64.load (i32.const 0x3F010)))
     (local.set $speed (f64.load (i32.const 0x3F018)))
+    (local.set $idle (i32.load (i32.const 0x3F020)))
+    (local.set $mode (i32.load (i32.const 0x3F024)))
 
-    ;; Left arrow (bit2): turn left
-    (if (i32.and (local.get $keys) (i32.const 4))
-      (then (local.set $cam_angle (f64.sub (local.get $cam_angle) (f64.const 0.03)))))
-    ;; Right arrow (bit3): turn right
-    (if (i32.and (local.get $keys) (i32.const 8))
-      (then (local.set $cam_angle (f64.add (local.get $cam_angle) (f64.const 0.03)))))
+    ;; Detect input: keyboard or significant mouse movement
+    (local.set $has_input (i32.const 0))
+    ;; Any keyboard direction key pressed?
+    (if (i32.and (local.get $keys) (i32.const 0x0F))  ;; bits 0-3: up/down/left/right
+      (then (local.set $has_input (i32.const 1))))
+    ;; Check mouse movement (delta > 3 pixels)
+    (local.set $mdx (i32.sub (local.get $mouse_x) (i32.load (i32.const 0x3F028))))
+    (local.set $mdy (i32.sub (local.get $mouse_y) (i32.load (i32.const 0x3F02C))))
+    ;; abs(dx) > 3 or abs(dy) > 3
+    (if (i32.or
+      (i32.gt_u (select (i32.sub (i32.const 0) (local.get $mdx)) (local.get $mdx) (i32.lt_s (local.get $mdx) (i32.const 0))) (i32.const 3))
+      (i32.gt_u (select (i32.sub (i32.const 0) (local.get $mdy)) (local.get $mdy) (i32.lt_s (local.get $mdy) (i32.const 0))) (i32.const 3)))
+      (then (local.set $has_input (i32.const 1))))
+    ;; Store current mouse pos for next frame comparison
+    (i32.store (i32.const 0x3F028) (local.get $mouse_x))
+    (i32.store (i32.const 0x3F02C) (local.get $mouse_y))
 
-    ;; Up arrow (bit0): accelerate forward
-    (if (i32.and (local.get $keys) (i32.const 1))
-      (then (local.set $speed (f64.min (f64.add (local.get $speed) (f64.const 0.02)) (f64.const 1.5))))
+    ;; Update idle counter and mode
+    (if (local.get $has_input)
+      (then
+        ;; Input detected: reset idle counter, switch to manual
+        (local.set $idle (i32.const 0))
+        (local.set $mode (i32.const 1))
+      )
       (else
-        ;; Down arrow (bit1): brake/slow down
-        (if (i32.and (local.get $keys) (i32.const 2))
-          (then (local.set $speed (f64.max (f64.sub (local.get $speed) (f64.const 0.03)) (f64.const 0.0))))
+        ;; No input: increment idle counter
+        (local.set $idle (i32.add (local.get $idle) (i32.const 1)))
+        ;; After 60 frames idle, switch to autopilot
+        (if (i32.ge_u (local.get $idle) (i32.const 60))
+          (then (local.set $mode (i32.const 0))))
+      )
+    )
+    (i32.store (i32.const 0x3F020) (local.get $idle))
+    (i32.store (i32.const 0x3F024) (local.get $mode))
+
+    (if (local.get $mode)
+      (then
+        ;; === MANUAL MODE ===
+        ;; Left arrow (bit2): turn left
+        (if (i32.and (local.get $keys) (i32.const 4))
+          (then (local.set $cam_angle (f64.sub (local.get $cam_angle) (f64.const 0.03)))))
+        ;; Right arrow (bit3): turn right
+        (if (i32.and (local.get $keys) (i32.const 8))
+          (then (local.set $cam_angle (f64.add (local.get $cam_angle) (f64.const 0.03)))))
+
+        ;; Up arrow (bit0): accelerate forward
+        (if (i32.and (local.get $keys) (i32.const 1))
+          (then (local.set $speed (f64.min (f64.add (local.get $speed) (f64.const 0.02)) (f64.const 1.5))))
           (else
-            ;; No up/down: drift toward base speed
-            (if (f64.gt (local.get $speed) (f64.const 0.3))
-              (then (local.set $speed (f64.sub (local.get $speed) (f64.const 0.005)))))
+            ;; Down arrow (bit1): brake/slow down
+            (if (i32.and (local.get $keys) (i32.const 2))
+              (then (local.set $speed (f64.max (f64.sub (local.get $speed) (f64.const 0.03)) (f64.const 0.0))))
+              (else
+                ;; No up/down: drift toward base speed
+                (if (f64.gt (local.get $speed) (f64.const 0.3))
+                  (then (local.set $speed (f64.sub (local.get $speed) (f64.const 0.005)))))
+              )
+            )
           )
         )
+
+        ;; Camera height from mouse y: mouse_y 0..199 maps to height 280..100
+        (local.set $cam_h (f64.sub (f64.const 280.0)
+          (f64.mul (f64.convert_i32_u (local.get $mouse_y)) (f64.const 0.9))))
+      )
+      (else
+        ;; === AUTOPILOT MODE ===
+        ;; Gentle sinusoidal turning: angle += 0.012 * sin(frame / 97) + 0.008 * sin(frame / 151)
+        ;; Two overlapping sine waves create organic, non-repetitive flight path
+        (local.set $auto_angle (f64.add
+          (f64.mul (f64.const 0.012)
+            (call $sin_approx (f64.div (f64.convert_i32_u (local.get $frame_ct)) (f64.const 97.0))))
+          (f64.mul (f64.const 0.008)
+            (call $sin_approx (f64.div (f64.convert_i32_u (local.get $frame_ct)) (f64.const 151.0))))))
+        (local.set $cam_angle (f64.add (local.get $cam_angle) (local.get $auto_angle)))
+
+        ;; Moderate constant speed
+        (local.set $speed (f64.const 0.4))
+
+        ;; Moderate altitude with gentle oscillation
+        (local.set $cam_h (f64.add (f64.const 200.0)
+          (f64.mul (f64.const 20.0)
+            (call $sin_approx (f64.div (f64.convert_i32_u (local.get $frame_ct)) (f64.const 200.0))))))
       )
     )
 
@@ -239,11 +317,6 @@
     (f64.store (i32.const 0x3F008) (local.get $cam_y))
     (f64.store (i32.const 0x3F010) (local.get $cam_angle))
     (f64.store (i32.const 0x3F018) (local.get $speed))
-
-    ;; Camera height from mouse y: mouse_y 0..199 maps to height 280..100
-    ;; height = 280 - mouse_y * 0.9
-    (local.set $cam_h (f64.sub (f64.const 280.0)
-      (f64.mul (f64.convert_i32_u (local.get $mouse_y)) (f64.const 0.9))))
 
     ;; Look direction
     (local.set $cos_a (call $cos_approx (local.get $cam_angle)))
