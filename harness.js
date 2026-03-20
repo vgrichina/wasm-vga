@@ -417,8 +417,8 @@ async function loadDemo() {
   const name = document.getElementById('demo').value;
   history.replaceState(null, '', '#' + name);
 
-  // 4 pages = 256KB, plenty of room
-  memory = new WebAssembly.Memory({ initial: 4 });
+  // 8 pages = 512KB
+  memory = new WebAssembly.Memory({ initial: 8 });
   memU8  = new Uint8Array(memory.buffer);
   memU32 = new Uint32Array(memory.buffer);
 

@@ -1,5 +1,5 @@
 (module
-  (import "env" "memory" (memory 4))
+  (import "env" "memory" (memory 8))
   (import "env" "music" (func $music (param i32)))
 
   ;; "CODING IS OVER" — Multi-section demoscene piece
@@ -23,7 +23,7 @@
   ;;   0x38008 - last_section (4 bytes)
   ;;   0x3800C - prev_input (4 bytes)
   ;;   0x38010 - rain columns: 40 x 4 = 160 bytes
-  ;;   0x38100 - fire buffer: 320x80 = 25600 bytes (ends 0x3E500)
+  ;;   0x38100 - fire buffer: 320x104 = 33280 bytes (ends 0x40300)
   ;;
   ;; Section timing (elapsed_ms % 52000):
   ;;   0     -  8000  Section 0: Code Rain
@@ -544,30 +544,101 @@
   ;; =========================================================
   ;; SECTION 1: Graveyard  (placeholder)
   ;; =========================================================
+  ;; Fire color ramp: maps intensity 0..84 to RGB
+  ;; Separated from alpha — color is always vivid, never near-black
+  ;; Ramp: deep red (80,0,0) → bright red → orange → yellow → white
+  ;; Returns via memory scratch at 0x3FF00 (3 bytes: r,g,b)
+  (func $fire_color (param $i i32)
+    (local $r i32) (local $g i32) (local $b i32)
+    ;; 0-27: deep red to bright red (80+6*i, 0, 0)
+    (if (i32.lt_u (local.get $i) (i32.const 28))
+      (then
+        (local.set $r (i32.add (i32.const 80) (i32.mul (local.get $i) (i32.const 6))))
+        (local.set $g (i32.const 0))
+        (local.set $b (i32.const 0)))
+      (else (if (i32.lt_u (local.get $i) (i32.const 56))
+        (then ;; 28-55: red to yellow
+          (local.set $r (i32.const 255))
+          (local.set $g (i32.mul (i32.sub (local.get $i) (i32.const 28)) (i32.const 9)))
+          (local.set $b (i32.const 0)))
+        (else ;; 56-84: yellow to white
+          (local.set $r (i32.const 255))
+          (local.set $g (i32.const 255))
+          (local.set $b (i32.mul (i32.sub (local.get $i) (i32.const 56)) (i32.const 9)))))))
+    (if (i32.gt_u (local.get $r) (i32.const 255)) (then (local.set $r (i32.const 255))))
+    (if (i32.gt_u (local.get $g) (i32.const 255)) (then (local.set $g (i32.const 255))))
+    (if (i32.gt_u (local.get $b) (i32.const 255)) (then (local.set $b (i32.const 255))))
+    (i32.store8 (i32.const 0x3FF00) (local.get $r))
+    (i32.store8 (i32.const 0x3FF01) (local.get $g))
+    (i32.store8 (i32.const 0x3FF02) (local.get $b))
+  )
+
+  ;; Fire alpha curve: intensity 0..84 → alpha 0..84 (out of 84)
+  ;; Ramps linearly over first 21 steps, then fully opaque
+  (func $fire_alpha (param $i i32) (result i32)
+    (select (i32.mul (local.get $i) (i32.const 4)) (i32.const 84)
+      (i32.lt_u (local.get $i) (i32.const 21)))
+  )
+
+  ;; Generate translucent fire entries blended against a background color
+  ;; base_idx: first palette index, bg_r/g/b: background
+  ;; Produces 21 entries (i=0..20) where alpha < 1
+  (func $gen_fire_blend (param $base_idx i32) (param $bg_r i32) (param $bg_g i32) (param $bg_b i32)
+    (local $i i32) (local $a i32)
+    (local $r i32) (local $g i32) (local $b i32)
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.gt_u (local.get $i) (i32.const 20)))
+      (call $fire_color (local.get $i))
+      (local.set $a (call $fire_alpha (local.get $i)))
+      ;; Blend: result = (fire * a + bg * (84 - a)) / 84
+      (local.set $r (i32.div_u
+        (i32.add (i32.mul (i32.load8_u (i32.const 0x3FF00)) (local.get $a))
+                 (i32.mul (local.get $bg_r) (i32.sub (i32.const 84) (local.get $a))))
+        (i32.const 84)))
+      (local.set $g (i32.div_u
+        (i32.add (i32.mul (i32.load8_u (i32.const 0x3FF01)) (local.get $a))
+                 (i32.mul (local.get $bg_g) (i32.sub (i32.const 84) (local.get $a))))
+        (i32.const 84)))
+      (local.set $b (i32.div_u
+        (i32.add (i32.mul (i32.load8_u (i32.const 0x3FF02)) (local.get $a))
+                 (i32.mul (local.get $bg_b) (i32.sub (i32.const 84) (local.get $a))))
+        (i32.const 84)))
+      (call $set_pal (i32.add (local.get $base_idx) (local.get $i))
+        (local.get $r) (local.get $g) (local.get $b))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)
+    ))
+  )
+
   (func $pal_grave
     (local $i i32)
     ;; 0 = dark purple sky
     (call $set_pal (i32.const 0) (i32.const 15) (i32.const 8) (i32.const 30))
     ;; 1-3: stars (set by $draw_stars each frame)
-    ;; 10-94: fire palette (black → red → yellow → white)
-    ;; Loop i=0..84, palette index = i+10
-    (local.set $i (i32.const 0))
+
+    ;; 10-73: opaque fire (intensity 21..84), shared across all backgrounds
+    ;; At i=21, alpha=1.0 so color is pure fire_color — same regardless of bg
+    (local.set $i (i32.const 21))
     (block $done (loop $lp
       (br_if $done (i32.gt_u (local.get $i) (i32.const 84)))
-      (if (i32.lt_u (local.get $i) (i32.const 28))
-        (then ;; black to red
-          (call $set_pal (i32.add (local.get $i) (i32.const 10))
-            (i32.mul (local.get $i) (i32.const 9)) (i32.const 0) (i32.const 0)))
-        (else (if (i32.lt_u (local.get $i) (i32.const 56))
-          (then ;; red to yellow
-            (call $set_pal (i32.add (local.get $i) (i32.const 10)) (i32.const 255)
-              (i32.mul (i32.sub (local.get $i) (i32.const 28)) (i32.const 9)) (i32.const 0)))
-          (else ;; yellow to white
-            (call $set_pal (i32.add (local.get $i) (i32.const 10)) (i32.const 255) (i32.const 255)
-              (i32.mul (i32.sub (local.get $i) (i32.const 56)) (i32.const 9)))))))
+      (call $fire_color (local.get $i))
+      ;; palette index = i - 21 + 10 = i - 11
+      (call $set_pal (i32.sub (local.get $i) (i32.const 11))
+        (i32.load8_u (i32.const 0x3FF00))
+        (i32.load8_u (i32.const 0x3FF01))
+        (i32.load8_u (i32.const 0x3FF02)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)
     ))
+
+    ;; 74-94: dim fire (intensity 0..20) blended over sky (15,8,30)
+    (call $gen_fire_blend (i32.const 74) (i32.const 15) (i32.const 8) (i32.const 30))
+    ;; 100-120: dim fire (intensity 0..20) blended over stone (70,70,80)
+    (call $gen_fire_blend (i32.const 100) (i32.const 70) (i32.const 70) (i32.const 80))
+    ;; 121-141: dim fire (intensity 0..20) blended over white text (255,255,255)
+    (call $gen_fire_blend (i32.const 121) (i32.const 255) (i32.const 255) (i32.const 255))
+
     ;; 95 = dark brown ground
     (call $set_pal (i32.const 95) (i32.const 50) (i32.const 28) (i32.const 10))
     ;; 96 = gray tombstone
@@ -619,21 +690,21 @@
     (call $draw_tombstone (i32.const 275) (i32.const 28) (i32.const 62)
       (local.get $rise) (i32.const 0x108F6) (i32.const 2))
 
-    ;; Doom-style fire simulation in buffer at 0x38100 (320×80, rows 0-79 map to y=120-199)
-    ;; Seed bottom row (row 79) with random hot values
+    ;; Doom-style fire simulation in buffer at 0x38100 (320×104, rows 0-103 map to y=96-199)
+    ;; Seed bottom row (row 103) with random hot values
     (local.set $x (i32.const 0))
     (block $sd (loop $sl
       (br_if $sd (i32.ge_u (local.get $x) (i32.const 320)))
-      (i32.store8 (i32.add (i32.const 0x38100) (i32.add (i32.mul (i32.const 79) (i32.const 320)) (local.get $x)))
-        (i32.add (i32.rem_u (i32.and (call $rand) (i32.const 127)) (i32.const 85)) (i32.const 10)))
+      (i32.store8 (i32.add (i32.const 0x38100) (i32.add (i32.mul (i32.const 103) (i32.const 320)) (local.get $x)))
+        (i32.rem_u (i32.and (call $rand) (i32.const 127)) (i32.const 85)))
       (local.set $x (i32.add (local.get $x) (i32.const 1)))
       (br $sl)
     ))
-    ;; Propagate fire upward: for each pixel (x, row) where row < 79
+    ;; Propagate fire upward: for each pixel (x, row) where row < 103
     ;; new[row][x] = avg(old[row+1][x-1], old[row+1][x], old[row+1][x+1], old[row+2][x]) - decay
     (local.set $y (i32.const 0))
     (block $fd (loop $fl
-      (br_if $fd (i32.ge_u (local.get $y) (i32.const 79)))
+      (br_if $fd (i32.ge_u (local.get $y) (i32.const 103)))
       (local.set $x (i32.const 0))
       (block $fxd (loop $fxl
         (br_if $fxd (i32.ge_u (local.get $x) (i32.const 320)))
@@ -650,18 +721,19 @@
           (i32.add (i32.mul (i32.add (local.get $y) (i32.const 1)) (i32.const 320))
             (select (i32.add (local.get $x) (i32.const 1)) (i32.const 319)
               (i32.lt_u (local.get $x) (i32.const 319)))))))
-        ;; two-below (or bottom row if at row 38)
+        ;; two-below (or bottom row if near end)
         (local.set $heat (i32.shr_u
           (i32.add (i32.add (local.get $v1) (local.get $v2))
             (i32.add (local.get $heat)
               (i32.load8_u (i32.add (i32.const 0x38100)
                 (i32.add (i32.mul
-                  (select (i32.add (local.get $y) (i32.const 2)) (i32.const 79)
-                    (i32.lt_u (local.get $y) (i32.const 78)))
+                  (select (i32.add (local.get $y) (i32.const 2)) (i32.const 103)
+                    (i32.lt_u (local.get $y) (i32.const 102)))
                   (i32.const 320)) (local.get $x))))))
           (i32.const 2)))
-        ;; random decay 0-1
-        (local.set $heat (i32.sub (local.get $heat) (i32.and (call $rand) (i32.const 1))))
+        ;; random decay: -1 with 25% probability (slower decay = taller flames)
+        (local.set $heat (i32.sub (local.get $heat)
+          (i32.eqz (i32.and (call $rand) (i32.const 3)))))
         (if (i32.lt_s (local.get $heat) (i32.const 0))
           (then (local.set $heat (i32.const 0))))
         ;; Store with wind: randomly shift x by 0 or 1
@@ -677,20 +749,39 @@
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $fl)
     ))
-    ;; Overlay fire buffer onto framebuffer where intensity > 12 (fire palette starts at 10)
+    ;; Overlay fire buffer onto framebuffer with alpha-blended palette bands
+    ;; heat >= 21 → opaque fire at palette (heat - 11)  [indices 10-73]
+    ;; heat 1..20 → blended band: 74+heat (sky), 100+heat (stone), 121+heat (white text)
     (local.set $y (i32.const 0))
     (block $od (loop $ol
-      (br_if $od (i32.ge_u (local.get $y) (i32.const 80)))
+      (br_if $od (i32.ge_u (local.get $y) (i32.const 104)))
       (local.set $x (i32.const 0))
       (block $oxd (loop $oxl
         (br_if $oxd (i32.ge_u (local.get $x) (i32.const 320)))
         (local.set $heat (i32.load8_u (i32.add (i32.const 0x38100)
           (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x)))))
-        (if (i32.gt_u (local.get $heat) (i32.const 12))
+        (if (i32.gt_u (local.get $heat) (i32.const 0))
           (then
-            (i32.store8 (i32.add (i32.const 0x0340)
-              (i32.add (i32.mul (i32.add (local.get $y) (i32.const 120)) (i32.const 320)) (local.get $x)))
-              (local.get $heat))))
+            (if (i32.ge_u (local.get $heat) (i32.const 21))
+              (then
+                ;; Opaque fire — same for all backgrounds
+                (i32.store8 (i32.add (i32.const 0x0340)
+                  (i32.add (i32.mul (i32.add (local.get $y) (i32.const 96)) (i32.const 320)) (local.get $x)))
+                  (i32.sub (local.get $heat) (i32.const 11))))
+              (else
+                ;; Translucent fire — read bg pixel to pick blend band
+                (local.set $v1 (i32.load8_u (i32.add (i32.const 0x0340)
+                  (i32.add (i32.mul (i32.add (local.get $y) (i32.const 96)) (i32.const 320)) (local.get $x)))))
+                ;; base: 74 (sky), 100 (stone 96/97), 121 (white text 98)
+                (local.set $v2 (i32.const 74))  ;; default: sky
+                (if (i32.or (i32.eq (local.get $v1) (i32.const 96))
+                            (i32.eq (local.get $v1) (i32.const 97)))
+                  (then (local.set $v2 (i32.const 100))))
+                (if (i32.eq (local.get $v1) (i32.const 98))
+                  (then (local.set $v2 (i32.const 121))))
+                (i32.store8 (i32.add (i32.const 0x0340)
+                  (i32.add (i32.mul (i32.add (local.get $y) (i32.const 96)) (i32.const 320)) (local.get $x)))
+                  (i32.add (local.get $v2) (local.get $heat)))))))
         (local.set $x (i32.add (local.get $x) (i32.const 1)))
         (br $oxl)
       ))
