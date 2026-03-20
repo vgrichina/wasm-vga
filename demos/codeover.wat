@@ -1056,59 +1056,75 @@
     ;; 0 = black background
     (call $set_pal (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     ;; 1-3 = stars (set by $draw_stars)
-    ;; 33 = white (specular highlight)
-    (call $set_pal (i32.const 33) (i32.const 255) (i32.const 255) (i32.const 255))
     ;; 34 = berrry brand green
     (call $set_pal (i32.const 34) (i32.const 0) (i32.const 221) (i32.const 136))
-    ;; 35 = pink rim glow
-    (call $set_pal (i32.const 35) (i32.const 255) (i32.const 180) (i32.const 190))
-    ;; 36 = glossy pink-white specular (warm, between bright red and white)
-    (call $set_pal (i32.const 36) (i32.const 255) (i32.const 210) (i32.const 200))
-    ;; 37 = stem brown
-    (call $set_pal (i32.const 37) (i32.const 80) (i32.const 50) (i32.const 20))
     ;; 38 = sparkle
     (call $set_pal (i32.const 38) (i32.const 200) (i32.const 200) (i32.const 255))
     ;; 39 = dim text
     (call $set_pal (i32.const 39) (i32.const 100) (i32.const 100) (i32.const 100))
-    ;; 10-25 = red shading ramp: very dark (40,2,5) to bright pinkish-red (252,150,140)
-    (call $set_pal (i32.const 10) (i32.const 40)  (i32.const 2)   (i32.const 5))
-    (call $set_pal (i32.const 11) (i32.const 60)  (i32.const 4)   (i32.const 8))
-    (call $set_pal (i32.const 12) (i32.const 80)  (i32.const 7)   (i32.const 12))
-    (call $set_pal (i32.const 13) (i32.const 100) (i32.const 10)  (i32.const 17))
-    (call $set_pal (i32.const 14) (i32.const 120) (i32.const 14)  (i32.const 22))
-    (call $set_pal (i32.const 15) (i32.const 140) (i32.const 18)  (i32.const 28))
-    (call $set_pal (i32.const 16) (i32.const 158) (i32.const 24)  (i32.const 35))
-    (call $set_pal (i32.const 17) (i32.const 175) (i32.const 32)  (i32.const 44))
-    (call $set_pal (i32.const 18) (i32.const 192) (i32.const 42)  (i32.const 55))
-    (call $set_pal (i32.const 19) (i32.const 206) (i32.const 55)  (i32.const 65))
-    (call $set_pal (i32.const 20) (i32.const 218) (i32.const 70)  (i32.const 75))
-    (call $set_pal (i32.const 21) (i32.const 228) (i32.const 88)  (i32.const 88))
-    (call $set_pal (i32.const 22) (i32.const 237) (i32.const 105) (i32.const 100))
-    (call $set_pal (i32.const 23) (i32.const 244) (i32.const 120) (i32.const 112))
-    (call $set_pal (i32.const 24) (i32.const 252) (i32.const 145) (i32.const 135))
-    (call $set_pal (i32.const 25) (i32.const 255) (i32.const 170) (i32.const 160))
-    ;; 26-28 = green leaf ramp (8 shades: 40-47)
-    ;; Keep 26-28 as before for backward compat, actual ramp at 40-47
-    (call $set_pal (i32.const 26) (i32.const 20)  (i32.const 70)  (i32.const 15))
-    (call $set_pal (i32.const 27) (i32.const 40)  (i32.const 130) (i32.const 30))
-    (call $set_pal (i32.const 28) (i32.const 70)  (i32.const 190) (i32.const 60))
-    ;; 29 = leaf vein dark
-    (call $set_pal (i32.const 29) (i32.const 15)  (i32.const 50)  (i32.const 10))
-    ;; 40-47 = 8-shade green leaf ramp (dark to bright)
-    (call $set_pal (i32.const 40) (i32.const 12)  (i32.const 42)  (i32.const 8))
-    (call $set_pal (i32.const 41) (i32.const 20)  (i32.const 65)  (i32.const 14))
-    (call $set_pal (i32.const 42) (i32.const 30)  (i32.const 90)  (i32.const 22))
-    (call $set_pal (i32.const 43) (i32.const 42)  (i32.const 118) (i32.const 30))
-    (call $set_pal (i32.const 44) (i32.const 55)  (i32.const 148) (i32.const 40))
-    (call $set_pal (i32.const 45) (i32.const 70)  (i32.const 178) (i32.const 52))
-    (call $set_pal (i32.const 46) (i32.const 90)  (i32.const 210) (i32.const 68))
-    (call $set_pal (i32.const 47) (i32.const 115) (i32.const 235) (i32.const 88))
-    ;; 30 = seed yellow bright
-    (call $set_pal (i32.const 30) (i32.const 235) (i32.const 215) (i32.const 90))
-    ;; 31 = seed yellow dark
-    (call $set_pal (i32.const 31) (i32.const 150) (i32.const 130) (i32.const 35))
-    ;; 32 = seed dimple shadow (very dark red)
-    (call $set_pal (i32.const 32) (i32.const 35)  (i32.const 5)   (i32.const 8))
+
+    ;; 48-71 = red body ramp (24 shades: near-black → red → pink → white)
+    (call $set_pal (i32.const 48) (i32.const 12)  (i32.const 1)   (i32.const 2))
+    (call $set_pal (i32.const 49) (i32.const 22)  (i32.const 2)   (i32.const 4))
+    (call $set_pal (i32.const 50) (i32.const 35)  (i32.const 3)   (i32.const 6))
+    (call $set_pal (i32.const 51) (i32.const 50)  (i32.const 4)   (i32.const 8))
+    (call $set_pal (i32.const 52) (i32.const 68)  (i32.const 5)   (i32.const 10))
+    (call $set_pal (i32.const 53) (i32.const 88)  (i32.const 7)   (i32.const 14))
+    (call $set_pal (i32.const 54) (i32.const 108) (i32.const 10)  (i32.const 18))
+    (call $set_pal (i32.const 55) (i32.const 128) (i32.const 14)  (i32.const 22))
+    (call $set_pal (i32.const 56) (i32.const 148) (i32.const 20)  (i32.const 30))
+    (call $set_pal (i32.const 57) (i32.const 165) (i32.const 28)  (i32.const 38))
+    (call $set_pal (i32.const 58) (i32.const 182) (i32.const 38)  (i32.const 48))
+    (call $set_pal (i32.const 59) (i32.const 196) (i32.const 50)  (i32.const 58))
+    (call $set_pal (i32.const 60) (i32.const 210) (i32.const 62)  (i32.const 68))
+    (call $set_pal (i32.const 61) (i32.const 222) (i32.const 78)  (i32.const 80))
+    (call $set_pal (i32.const 62) (i32.const 232) (i32.const 95)  (i32.const 92))
+    (call $set_pal (i32.const 63) (i32.const 240) (i32.const 112) (i32.const 105))
+    (call $set_pal (i32.const 64) (i32.const 248) (i32.const 132) (i32.const 120))
+    (call $set_pal (i32.const 65) (i32.const 252) (i32.const 155) (i32.const 140))
+    (call $set_pal (i32.const 66) (i32.const 255) (i32.const 175) (i32.const 160))
+    (call $set_pal (i32.const 67) (i32.const 255) (i32.const 195) (i32.const 182))
+    (call $set_pal (i32.const 68) (i32.const 255) (i32.const 212) (i32.const 202))
+    (call $set_pal (i32.const 69) (i32.const 255) (i32.const 228) (i32.const 222))
+    (call $set_pal (i32.const 70) (i32.const 255) (i32.const 242) (i32.const 240))
+    (call $set_pal (i32.const 71) (i32.const 255) (i32.const 255) (i32.const 255))
+
+    ;; 72-83 = seed yellow ramp (12 shades: dark olive → yellow → pale → white)
+    (call $set_pal (i32.const 72) (i32.const 12)  (i32.const 10)  (i32.const 2))
+    (call $set_pal (i32.const 73) (i32.const 30)  (i32.const 25)  (i32.const 5))
+    (call $set_pal (i32.const 74) (i32.const 55)  (i32.const 45)  (i32.const 10))
+    (call $set_pal (i32.const 75) (i32.const 85)  (i32.const 70)  (i32.const 18))
+    (call $set_pal (i32.const 76) (i32.const 115) (i32.const 98)  (i32.const 28))
+    (call $set_pal (i32.const 77) (i32.const 150) (i32.const 130) (i32.const 40))
+    (call $set_pal (i32.const 78) (i32.const 185) (i32.const 165) (i32.const 55))
+    (call $set_pal (i32.const 79) (i32.const 215) (i32.const 195) (i32.const 75))
+    (call $set_pal (i32.const 80) (i32.const 235) (i32.const 218) (i32.const 100))
+    (call $set_pal (i32.const 81) (i32.const 245) (i32.const 235) (i32.const 160))
+    (call $set_pal (i32.const 82) (i32.const 250) (i32.const 245) (i32.const 210))
+    (call $set_pal (i32.const 83) (i32.const 255) (i32.const 255) (i32.const 255))
+
+    ;; 84-95 = green leaf ramp (12 shades: dark → bright green, matte)
+    ;; Bottom shades double as vein color
+    (call $set_pal (i32.const 84) (i32.const 5)   (i32.const 15)  (i32.const 3))
+    (call $set_pal (i32.const 85) (i32.const 10)  (i32.const 28)  (i32.const 6))
+    (call $set_pal (i32.const 86) (i32.const 16)  (i32.const 45)  (i32.const 10))
+    (call $set_pal (i32.const 87) (i32.const 24)  (i32.const 65)  (i32.const 16))
+    (call $set_pal (i32.const 88) (i32.const 34)  (i32.const 88)  (i32.const 24))
+    (call $set_pal (i32.const 89) (i32.const 45)  (i32.const 115) (i32.const 32))
+    (call $set_pal (i32.const 90) (i32.const 55)  (i32.const 142) (i32.const 40))
+    (call $set_pal (i32.const 91) (i32.const 68)  (i32.const 168) (i32.const 50))
+    (call $set_pal (i32.const 92) (i32.const 82)  (i32.const 192) (i32.const 62))
+    (call $set_pal (i32.const 93) (i32.const 95)  (i32.const 215) (i32.const 75))
+    (call $set_pal (i32.const 94) (i32.const 108) (i32.const 232) (i32.const 88))
+    (call $set_pal (i32.const 95) (i32.const 120) (i32.const 245) (i32.const 100))
+
+    ;; 96-101 = stem brown ramp (6 shades)
+    (call $set_pal (i32.const 96)  (i32.const 15)  (i32.const 8)   (i32.const 3))
+    (call $set_pal (i32.const 97)  (i32.const 32)  (i32.const 18)  (i32.const 7))
+    (call $set_pal (i32.const 98)  (i32.const 52)  (i32.const 32)  (i32.const 12))
+    (call $set_pal (i32.const 99)  (i32.const 80)  (i32.const 50)  (i32.const 20))
+    (call $set_pal (i32.const 100) (i32.const 110) (i32.const 72)  (i32.const 32))
+    (call $set_pal (i32.const 101) (i32.const 145) (i32.const 100) (i32.const 50))
   )
 
   (func $render_berrry (param $elapsed i32)
@@ -1136,12 +1152,12 @@
       (i32.const 40) (i32.const 10) (i32.const 3) (local.get $text_color))
 
     ;; Draw 3D Phong-shaded strawberry in middle
-    (call $draw_strawberry (i32.const 160) (i32.add (i32.const 105) (local.get $bob)) (local.get $t))
+    (call $draw_strawberry (i32.const 160) (i32.add (i32.const 115) (local.get $bob)) (local.get $t))
 
     ;; "WASMVGA-DEMOS.BERRRY.APP" at 1x, centered at bottom
     ;; 24 chars * 8px = 192px, x = (320-192)/2 = 64
     (call $draw_text (i32.const 0x108C0) (i32.const 24)
-      (i32.const 64) (i32.const 180) (i32.const 1) (i32.const 33))
+      (i32.const 64) (i32.const 180) (i32.const 1) (i32.const 39))
   )
 
   ;; Proper strawberry shape: two-part profile + elongated petals + seeds with dimples + rim glow
@@ -1170,15 +1186,15 @@
     (local.set $rot (i32.and (i32.shr_u (local.get $t) (i32.const 4)) (i32.const 255)))
 
     ;; Orbiting light: circles around berry to showcase Phong
-    ;; lx128 = -200 * sin(t), ly128 = -200 * cos(t), lz128 = 180 (front)
-    ;; sin_tab returns 0-255, subtract 128 → -128..127, *200/128 ≈ *25>>4
+    ;; Orbiting light, 50% further: reduced amplitude, higher z ratio
+    ;; sin_tab returns 0-255, subtract 128 → -128..127, *135/128 ≈ *17>>4
     (local.set $lx128 (i32.shr_s (i32.mul
       (i32.sub (call $sin_tab (i32.shr_u (local.get $t) (i32.const 4))) (i32.const 128))
-      (i32.const 25)) (i32.const 4)))
+      (i32.const 24)) (i32.const 4)))
     (local.set $ly128 (i32.shr_s (i32.mul
       (i32.sub (call $sin_tab (i32.add (i32.shr_u (local.get $t) (i32.const 4)) (i32.const 64))) (i32.const 128))
-      (i32.const 25)) (i32.const 4)))
-    (local.set $lz128 (i32.const 180))
+      (i32.const 24)) (i32.const 4)))
+    (local.set $lz128 (i32.const 130))
 
     ;; Bounding box: dy -72..+47, dx -40..+40
     (local.set $dy (i32.const -72))
@@ -1615,71 +1631,55 @@
                   ))
 
                 ;; ---- Color determination ----
-                ;; Priority: leaf/calyx (2,5) > stem (4) > seed-spec > seed-inner (1) > groove (bumpmapped) > specular > red ramp
-                (local.set $col (i32.const 10))
+                ;; All materials use full ramps with specular baked in (dark → color → white)
+                ;; Priority: leaf/calyx (2,5) > stem (4) > seed (1) > berry body (0)
+                (local.set $col (i32.const 48))
 
                 (if (i32.or (i32.eq (local.get $in_leaf) (i32.const 2)) (i32.eq (local.get $in_leaf) (i32.const 5)))
                   (then
-                    ;; Green leaf shading + vein
+                    ;; Green leaf: 12-shade ramp (84-95), matte (no spec), vein uses bottom half
+                    (local.set $shade (i32.div_u (local.get $dot_diff) (i32.const 21)))
+                    ;; Vein: cap at shade 4 (dark end of ramp)
                     (if (i32.eq (local.get $in_leaf) (i32.const 5))
-                      (then (local.set $col (i32.const 29)))
-                      (else
-                        ;; Smooth 8-shade green ramp (pal 40-47) from dot_diff
-                        ;; shade = dot_diff / 32, clamped 0-7
-                        (local.set $shade (i32.shr_u (local.get $dot_diff) (i32.const 5)))
-                        (if (i32.gt_s (local.get $shade) (i32.const 7))
-                          (then (local.set $shade (i32.const 7))))
-                        (local.set $col (i32.add (i32.const 40) (local.get $shade))))))
+                      (then
+                        (if (i32.gt_s (local.get $shade) (i32.const 4))
+                          (then (local.set $shade (i32.const 4))))))
+                    (if (i32.gt_s (local.get $shade) (i32.const 11))
+                      (then (local.set $shade (i32.const 11))))
+                    (if (i32.lt_s (local.get $shade) (i32.const 0))
+                      (then (local.set $shade (i32.const 0))))
+                    (local.set $col (i32.add (i32.const 84) (local.get $shade))))
                   (else (if (i32.eq (local.get $in_leaf) (i32.const 4))
                     (then
-                      ;; Stem: brown
-                      (local.set $col (i32.const 37))
-                    )
+                      ;; Stem: 6-shade brown ramp (96-101)
+                      (local.set $shade (i32.div_u (local.get $dot_diff) (i32.const 42)))
+                      (if (i32.gt_s (local.get $shade) (i32.const 5))
+                        (then (local.set $shade (i32.const 5))))
+                      (local.set $col (i32.add (i32.const 96) (local.get $shade))))
                     (else (if (i32.eq (local.get $in_leaf) (i32.const 1))
                       (then
-                        ;; Seed inner: check for specular highlight on light-facing side
-                        ;; Seed specular: tiny bright dot when light-facing (sdx*lx + sdy*ly > 0 and close to center)
-                        ;; Seed shading: use surface diffuse, spec only on lit side
-                        (if (i32.gt_s (local.get $dot_diff) (i32.const 100))
-                          (then (local.set $col (i32.const 30)))
-                          (else (local.set $col (i32.const 31))))
-                      )
+                        ;; Seed: 12-shade yellow ramp (72-83)
+                        ;; shade = dot_diff / 21 + spec/24
+                        (local.set $shade (i32.div_u (local.get $dot_diff) (i32.const 21)))
+                        (local.set $shade (i32.add (local.get $shade)
+                          (i32.div_u (local.get $dot_spec) (i32.const 24))))
+                        (if (i32.gt_s (local.get $shade) (i32.const 11))
+                          (then (local.set $shade (i32.const 11))))
+                        (if (i32.lt_s (local.get $shade) (i32.const 0))
+                          (then (local.set $shade (i32.const 0))))
+                        (local.set $col (i32.add (i32.const 72) (local.get $shade))))
                       (else
-                          ;; Berry body: glossy — spec boosts shade up the ramp, then into pink/white
-                          ;; Base shade from diffuse (0-15)
-                          (local.set $shade (i32.div_s (local.get $dot_diff) (i32.const 16)))
-                          ;; Add pixel dither ±1
-                          (local.set $shade (i32.add (local.get $shade)
-                            (i32.sub
-                              (i32.and
-                                (i32.shr_u
-                                  (i32.xor
-                                    (i32.mul (local.get $px) (i32.const 7))
-                                    (i32.mul (local.get $py) (i32.const 13)))
-                                  (i32.const 2))
-                                (i32.const 1))
-                              (i32.and
-                                (i32.shr_u
-                                  (i32.xor
-                                    (i32.mul (local.get $px) (i32.const 11))
-                                    (i32.mul (local.get $py) (i32.const 3)))
-                                  (i32.const 1))
-                                (i32.const 1)))))
-                          ;; Specular boost: add spec/12 to shade (smooth glossy lift)
+                          ;; Berry body: 24-shade red ramp (48-71) with glossy specular
+                          ;; shade = dot_diff / 11 + dither + spec/12
+                          (local.set $shade (i32.div_u (local.get $dot_diff) (i32.const 11)))
+                          ;; Specular boost
                           (local.set $shade (i32.add (local.get $shade)
                             (i32.div_u (local.get $dot_spec) (i32.const 12))))
-                          ;; shade 0-15 → red ramp, 16-17 → pink, 18+ → white
-                          (if (i32.gt_s (local.get $shade) (i32.const 17))
-                            (then (local.set $col (i32.const 33)))
-                            (else (if (i32.gt_s (local.get $shade) (i32.const 15))
-                              (then (local.set $col (i32.const 36)))
-                              (else
-                                (if (i32.gt_s (local.get $shade) (i32.const 15))
-                                  (then (local.set $shade (i32.const 15))))
-                                (if (i32.lt_s (local.get $shade) (i32.const 0))
-                                  (then (local.set $shade (i32.const 0))))
-                                (local.set $col (i32.add (i32.const 10) (local.get $shade)))
-                              ))))
+                          (if (i32.gt_s (local.get $shade) (i32.const 23))
+                            (then (local.set $shade (i32.const 23))))
+                          (if (i32.lt_s (local.get $shade) (i32.const 0))
+                            (then (local.set $shade (i32.const 0))))
+                          (local.set $col (i32.add (i32.const 48) (local.get $shade)))
                     ))
                   ))
                 ))
@@ -1699,8 +1699,8 @@
                     (if (i32.and
                           (i32.gt_s (local.get $shade) (i32.const 0))
                           (i32.and
-                            (i32.ge_s (local.get $col) (i32.add (i32.const 10) (local.get $shade)))
-                            (i32.le_s (local.get $col) (i32.const 25))))
+                            (i32.ge_s (local.get $col) (i32.add (i32.const 48) (local.get $shade)))
+                            (i32.le_s (local.get $col) (i32.const 71))))
                       (then (local.set $col (i32.sub (local.get $col) (local.get $shade)))))))
 
                 ;; Write pixel
