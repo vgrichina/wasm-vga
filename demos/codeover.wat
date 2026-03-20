@@ -1051,8 +1051,8 @@
     (call $set_pal (i32.const 34) (i32.const 0) (i32.const 221) (i32.const 136))
     ;; 35 = pink rim glow
     (call $set_pal (i32.const 35) (i32.const 255) (i32.const 180) (i32.const 190))
-    ;; 36 = pink specular highlight (glossy)
-    (call $set_pal (i32.const 36) (i32.const 255) (i32.const 180) (i32.const 185))
+    ;; 36 = glossy pink-white specular (warm, between bright red and white)
+    (call $set_pal (i32.const 36) (i32.const 255) (i32.const 210) (i32.const 200))
     ;; 37 = stem brown
     (call $set_pal (i32.const 37) (i32.const 80) (i32.const 50) (i32.const 20))
     ;; 38 = sparkle
@@ -1074,8 +1074,8 @@
     (call $set_pal (i32.const 21) (i32.const 228) (i32.const 88)  (i32.const 88))
     (call $set_pal (i32.const 22) (i32.const 237) (i32.const 105) (i32.const 100))
     (call $set_pal (i32.const 23) (i32.const 244) (i32.const 120) (i32.const 112))
-    (call $set_pal (i32.const 24) (i32.const 249) (i32.const 135) (i32.const 126))
-    (call $set_pal (i32.const 25) (i32.const 252) (i32.const 150) (i32.const 140))
+    (call $set_pal (i32.const 24) (i32.const 252) (i32.const 145) (i32.const 135))
+    (call $set_pal (i32.const 25) (i32.const 255) (i32.const 170) (i32.const 160))
     ;; 26-28 = green leaf ramp (8 shades: 40-47)
     ;; Keep 26-28 as before for backward compat, actual ramp at 40-47
     (call $set_pal (i32.const 26) (i32.const 20)  (i32.const 70)  (i32.const 15))
@@ -1162,10 +1162,10 @@
     ;; lx128 = -200 * sin(t), ly128 = -200 * cos(t), lz128 = 180 (front)
     ;; sin_tab returns 0-255, subtract 128 → -128..127, *200/128 ≈ *25>>4
     (local.set $lx128 (i32.shr_s (i32.mul
-      (i32.sub (call $sin_tab (i32.shr_u (local.get $t) (i32.const 3))) (i32.const 128))
+      (i32.sub (call $sin_tab (i32.shr_u (local.get $t) (i32.const 4))) (i32.const 128))
       (i32.const 25)) (i32.const 4)))
     (local.set $ly128 (i32.shr_s (i32.mul
-      (i32.sub (call $sin_tab (i32.add (i32.shr_u (local.get $t) (i32.const 3)) (i32.const 64))) (i32.const 128))
+      (i32.sub (call $sin_tab (i32.add (i32.shr_u (local.get $t) (i32.const 4)) (i32.const 64))) (i32.const 128))
       (i32.const 25)) (i32.const 4)))
     (local.set $lz128 (i32.const 180))
 
@@ -1428,7 +1428,7 @@
                 (if (i32.lt_s (local.get $dot_diff) (i32.const 0))
                   (then (local.set $dot_diff (i32.const 0))))
 
-                ;; Specular: 2*diffuse*nz>>7 - lz, clamped >=0, >>1, clamped <=255, ^4
+                ;; Specular: 2*diffuse*nz>>7 - lz, clamped >=0, >>1, clamped <=255, ^2 (glossy)
                 (local.set $dot_spec
                   (i32.sub
                     (i32.shr_s
@@ -1440,7 +1440,6 @@
                 (local.set $dot_spec (i32.shr_s (local.get $dot_spec) (i32.const 1)))
                 (if (i32.gt_s (local.get $dot_spec) (i32.const 255))
                   (then (local.set $dot_spec (i32.const 255))))
-                (local.set $dot_spec (i32.shr_u (i32.mul (local.get $dot_spec) (local.get $dot_spec)) (i32.const 8)))
                 (local.set $dot_spec (i32.shr_u (i32.mul (local.get $dot_spec) (local.get $dot_spec)) (i32.const 8)))
 
                 ;; Calyx zone: body pixels dy < -44 → green (just 1 row)
@@ -1635,43 +1634,41 @@
                           (else (local.set $col (i32.const 31))))
                       )
                       (else
-                          ;; Berry body (including bump-mapped grooves): glossy specular → red ramp
-                          (if (i32.gt_s (local.get $dot_spec) (i32.const 120))
+                          ;; Berry body: glossy — spec boosts shade up the ramp, then into pink/white
+                          ;; Base shade from diffuse (0-15)
+                          (local.set $shade (i32.div_s (local.get $dot_diff) (i32.const 16)))
+                          ;; Add pixel dither ±1
+                          (local.set $shade (i32.add (local.get $shade)
+                            (i32.sub
+                              (i32.and
+                                (i32.shr_u
+                                  (i32.xor
+                                    (i32.mul (local.get $px) (i32.const 7))
+                                    (i32.mul (local.get $py) (i32.const 13)))
+                                  (i32.const 2))
+                                (i32.const 1))
+                              (i32.and
+                                (i32.shr_u
+                                  (i32.xor
+                                    (i32.mul (local.get $px) (i32.const 11))
+                                    (i32.mul (local.get $py) (i32.const 3)))
+                                  (i32.const 1))
+                                (i32.const 1)))))
+                          ;; Specular boost: add spec/12 to shade (smooth glossy lift)
+                          (local.set $shade (i32.add (local.get $shade)
+                            (i32.div_u (local.get $dot_spec) (i32.const 12))))
+                          ;; shade 0-15 → red ramp, 16-17 → pink, 18+ → white
+                          (if (i32.gt_s (local.get $shade) (i32.const 17))
                             (then (local.set $col (i32.const 33)))
-                            (else (if (i32.gt_s (local.get $dot_spec) (i32.const 55))
+                            (else (if (i32.gt_s (local.get $shade) (i32.const 15))
                               (then (local.set $col (i32.const 36)))
-                              (else (if (i32.gt_s (local.get $dot_spec) (i32.const 25))
-                              (then
-                                ;; Warm glossy sheen: push red ramp to brightest end
-                                (local.set $col (i32.const 25)))
                               (else
-                                  ;; Red ramp 10-25 with subtle texture noise
-                                  ;; noise = ((px*7 ^ py*13) >> 2) & 1  — adds ±1 dither
-                                  (local.set $shade (i32.div_s (local.get $dot_diff) (i32.const 16)))
-                                  ;; Add pixel-coord based dither: ±1 variation
-                                  (local.set $shade (i32.add (local.get $shade)
-                                    (i32.sub
-                                      (i32.and
-                                        (i32.shr_u
-                                          (i32.xor
-                                            (i32.mul (local.get $px) (i32.const 7))
-                                            (i32.mul (local.get $py) (i32.const 13)))
-                                          (i32.const 2))
-                                        (i32.const 1))
-                                      (i32.and
-                                        (i32.shr_u
-                                          (i32.xor
-                                            (i32.mul (local.get $px) (i32.const 11))
-                                            (i32.mul (local.get $py) (i32.const 3)))
-                                          (i32.const 1))
-                                        (i32.const 1)))))
-                                  (if (i32.gt_s (local.get $shade) (i32.const 15))
-                                    (then (local.set $shade (i32.const 15))))
-                                  (if (i32.lt_s (local.get $shade) (i32.const 0))
-                                    (then (local.set $shade (i32.const 0))))
-                                  (local.set $col (i32.add (i32.const 10) (local.get $shade)))
-                                ))
-                          ))
+                                (if (i32.gt_s (local.get $shade) (i32.const 15))
+                                  (then (local.set $shade (i32.const 15))))
+                                (if (i32.lt_s (local.get $shade) (i32.const 0))
+                                  (then (local.set $shade (i32.const 0))))
+                                (local.set $col (i32.add (i32.const 10) (local.get $shade)))
+                              ))))
                     ))
                   ))
                 ))
