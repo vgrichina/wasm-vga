@@ -864,28 +864,13 @@
 
   ;; Bilinear sample the text texture at fixed-point coords (tx_fp, ty_fp)
   ;; Returns 0-256 brightness. Samples 4 neighboring integer texels and blends.
+  ;; Nearest-neighbor texture lookup (pixelated text, smooth perspective)
+  ;; Returns 0 or 255 — sharp texel edges, no bilinear blending
   (func $text_texel_fp (param $tx_fp i32) (param $ty_fp i32) (result i32)
-    (local $tx i32) (local $ty i32) (local $fx i32) (local $fy i32)
-    (local $s00 i32) (local $s10 i32) (local $s01 i32) (local $s11 i32)
-    (local $top i32) (local $bot i32)
-    (local.set $tx (i32.shr_s (local.get $tx_fp) (i32.const 8)))
-    (local.set $ty (i32.shr_s (local.get $ty_fp) (i32.const 8)))
-    (local.set $fx (i32.and (local.get $tx_fp) (i32.const 255)))
-    (local.set $fy (i32.and (local.get $ty_fp) (i32.const 255)))
-    (local.set $s00 (call $text_texel (local.get $tx) (local.get $ty)))
-    (local.set $s10 (call $text_texel (i32.add (local.get $tx) (i32.const 1)) (local.get $ty)))
-    (local.set $s01 (call $text_texel (local.get $tx) (i32.add (local.get $ty) (i32.const 1))))
-    (local.set $s11 (call $text_texel (i32.add (local.get $tx) (i32.const 1)) (i32.add (local.get $ty) (i32.const 1))))
-    (local.set $top (i32.add
-      (i32.mul (local.get $s00) (i32.sub (i32.const 256) (local.get $fx)))
-      (i32.mul (local.get $s10) (local.get $fx))))
-    (local.set $bot (i32.add
-      (i32.mul (local.get $s01) (i32.sub (i32.const 256) (local.get $fx)))
-      (i32.mul (local.get $s11) (local.get $fx))))
-    (i32.shr_u (i32.add
-      (i32.mul (local.get $top) (i32.sub (i32.const 256) (local.get $fy)))
-      (i32.mul (local.get $bot) (local.get $fy)))
-      (i32.const 8))
+    (i32.mul (call $text_texel
+      (i32.shr_s (i32.add (local.get $tx_fp) (i32.const 128)) (i32.const 8))
+      (i32.shr_s (i32.add (local.get $ty_fp) (i32.const 128)) (i32.const 8)))
+      (i32.const 255))
   )
 
   ;; Sample the 224×90 virtual text texture at integer coords (tx, ty)
