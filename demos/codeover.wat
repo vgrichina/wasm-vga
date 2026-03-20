@@ -304,95 +304,74 @@
     ))
   )
 
-  ;; Draw a keyword with falling-into-place animation
-  ;; Each char falls from top with ease-out, scrambling, then locks to correct letter
+  ;; Draw a keyword with rain-synced falling animation
+  ;; Each char rides its rain column's head down, locking when it reaches target_y
+  ;; State per char at state_addr: 0=waiting, 1=riding rain, 2=locked
   (func $draw_keyword (param $elapsed i32) (param $str_addr i32) (param $str_len i32)
                       (param $base_x i32) (param $target_y i32)
-                      (param $start_ms i32)
-    (local $i i32) (local $char_start i32) (local $fall_t i32)
-    (local $cur_y i32) (local $ch i32) (local $color i32)
-    (local $px i32) (local $inv i32) (local $ease i32)
-    (local $range i32)
-    (local $tj i32) (local $ty i32) (local $tc i32)
+                      (param $start_ms i32) (param $state_addr i32)
+    (local $i i32) (local $col i32) (local $px i32)
+    (local $ch i32) (local $state i32) (local $rain_y i32)
+    (local $sa i32)
 
     ;; Skip if not started
     (if (i32.lt_u (local.get $elapsed) (local.get $start_ms)) (then (return)))
 
-    (local.set $range (i32.add (local.get $target_y) (i32.const 8)))
-
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $str_len)))
-      (local.set $px (i32.add (local.get $base_x)
-        (i32.mul (local.get $i) (i32.const 8))))
-      (local.set $char_start (i32.add (local.get $start_ms)
-        (i32.mul (local.get $i) (i32.const 100))))
 
-      (if (i32.ge_u (local.get $elapsed) (local.get $char_start))
+      (local.set $col (i32.add (i32.shr_u (local.get $base_x) (i32.const 3))
+        (local.get $i)))
+      (local.set $px (i32.mul (local.get $col) (i32.const 8)))
+      (local.set $sa (i32.add (local.get $state_addr) (local.get $i)))
+      (local.set $state (i32.load8_u (local.get $sa)))
+
+      ;; Read rain column head y
+      (local.set $rain_y (i32.load8_u (i32.add (i32.const 0x38010)
+        (i32.mul (local.get $col) (i32.const 4)))))
+
+      (if (i32.eqz (local.get $state))
         (then
-          (local.set $fall_t (i32.sub (local.get $elapsed) (local.get $char_start)))
+          ;; WAITING: capture when rain head wraps near top
+          (if (i32.lt_u (local.get $rain_y) (i32.const 8))
+            (then (i32.store8 (local.get $sa) (i32.const 1))
+              (local.set $state (i32.const 1))))
+        ))
 
-          (if (i32.lt_u (local.get $fall_t) (i32.const 700))
+      (if (i32.eq (local.get $state) (i32.const 1))
+        (then
+          ;; RIDING: follow rain head, lock when it crosses target_y
+          (if (i32.ge_u (local.get $rain_y) (local.get $target_y))
             (then
-              ;; FALLING: ease-out quadratic from y=-8 to target_y over 700ms
-              (local.set $inv (i32.sub (i32.const 700) (local.get $fall_t)))
-              (local.set $ease (i32.sub (i32.const 490000)
-                (i32.mul (local.get $inv) (local.get $inv))))
-              (local.set $cur_y (i32.sub
-                (i32.div_u (i32.mul (local.get $range) (local.get $ease))
-                  (i32.const 490000))
-                (i32.const 8)))
-
-              ;; Scramble char: cycles fast
-              (local.set $ch (i32.add (i32.rem_u
-                (i32.and (i32.add
-                  (i32.mul (local.get $i) (i32.const 7))
-                  (i32.shr_u (local.get $elapsed) (i32.const 4)))
-                  (i32.const 0x7FFFFFFF))
-                (i32.const 94)) (i32.const 33)))
-
-              ;; Draw trail behind falling head (4 chars)
-              (local.set $tj (i32.const 1))
-              (block $td (loop $tl
-                (br_if $td (i32.gt_u (local.get $tj) (i32.const 4)))
-                (local.set $ty (i32.sub (local.get $cur_y)
-                  (i32.mul (local.get $tj) (i32.const 8))))
-                (if (i32.and (i32.ge_s (local.get $ty) (i32.const 0))
-                             (i32.lt_s (local.get $ty) (i32.const 192)))
-                  (then
-                    (local.set $tc (i32.add (i32.rem_u
-                      (i32.and (i32.add
-                        (i32.mul (local.get $tj) (i32.const 17))
-                        (i32.add (i32.mul (local.get $i) (i32.const 11))
-                          (i32.shr_u (local.get $elapsed) (i32.const 6))))
-                        (i32.const 0x7FFFFFFF))
-                      (i32.const 94)) (i32.const 33)))
-                    (call $draw_char_at (local.get $tc) (local.get $px)
-                      (local.get $ty)
-                      (select (i32.const 30)
-                        (select (i32.const 25)
-                          (select (i32.const 18) (i32.const 13)
-                            (i32.lt_u (local.get $tj) (i32.const 4)))
-                          (i32.lt_u (local.get $tj) (i32.const 3)))
-                        (i32.lt_u (local.get $tj) (i32.const 2))))))
-                (local.set $tj (i32.add (local.get $tj) (i32.const 1)))
-                (br $tl)
-              ))
-
-              ;; Draw head in white
-              (if (i32.and (i32.ge_s (local.get $cur_y) (i32.const 0))
-                           (i32.lt_s (local.get $cur_y) (i32.const 192)))
-                (then (call $draw_char_at (local.get $ch) (local.get $px)
-                  (local.get $cur_y) (i32.const 31))))
-            )
+              (i32.store8 (local.get $sa) (i32.const 2))
+              (local.set $state (i32.const 2)))
             (else
-              ;; LOCKED: correct char, flash white briefly then green
-              (local.set $ch (i32.load8_u (i32.add (local.get $str_addr) (local.get $i))))
-              (local.set $color (select (i32.const 31) (i32.const 32)
-                (i32.lt_u (local.get $fall_t) (i32.const 900))))
-              (call $draw_char_at (local.get $ch) (local.get $px)
-                (local.get $target_y) (local.get $color))
+              ;; Draw scramble char at rain head, flash real char every 4th tick
+              (local.set $ch
+                (select
+                  (i32.load8_u (i32.add (local.get $str_addr) (local.get $i)))
+                  (i32.add (i32.rem_u
+                    (i32.and (i32.add
+                      (i32.mul (local.get $i) (i32.const 7))
+                      (i32.shr_u (local.get $elapsed) (i32.const 4)))
+                      (i32.const 0x7FFFFFFF))
+                    (i32.const 94)) (i32.const 33))
+                  (i32.eqz (i32.rem_u
+                    (i32.shr_u (local.get $elapsed) (i32.const 6))
+                    (i32.const 4)))))
+              (if (i32.lt_u (local.get $rain_y) (i32.const 192))
+                (then (call $draw_char_at (local.get $ch) (local.get $px)
+                  (local.get $rain_y) (i32.const 31))))
             ))
+        ))
+
+      (if (i32.eq (local.get $state) (i32.const 2))
+        (then
+          ;; LOCKED: draw correct char in green
+          (local.set $ch (i32.load8_u (i32.add (local.get $str_addr) (local.get $i))))
+          (call $draw_char_at (local.get $ch) (local.get $px)
+            (local.get $target_y) (i32.const 32))
         ))
 
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -482,19 +461,15 @@
       (br $cl)
     ))
 
-    ;; Falling keywords — accumulate on screen, 8px-grid aligned
-    ;; "BERRRY.APP" (10×8=80px) center: x=120 (col 15), y=96
+    ;; Falling keywords — rain-synced, state buffers at 0x38200 (16B each)
     (call $draw_keyword (local.get $elapsed) (i32.const 0x10750) (i32.const 10)
-      (i32.const 120) (i32.const 96) (i32.const 500))
-    ;; "WASM" (4×8=32px) upper-left: x=24 (col 3), y=40
+      (i32.const 120) (i32.const 96) (i32.const 500) (i32.const 0x38200))
     (call $draw_keyword (local.get $elapsed) (i32.const 0x10960) (i32.const 4)
-      (i32.const 24) (i32.const 40) (i32.const 2000))
-    ;; "VGA" (3×8=24px) lower-right: x=232 (col 29), y=152
+      (i32.const 24) (i32.const 40) (i32.const 2000) (i32.const 0x38210))
     (call $draw_keyword (local.get $elapsed) (i32.const 0x10964) (i32.const 3)
-      (i32.const 232) (i32.const 152) (i32.const 3500))
-    ;; "MODE 13H" (8×8=64px) upper-right: x=176 (col 22), y=32
+      (i32.const 232) (i32.const 152) (i32.const 3500) (i32.const 0x38220))
     (call $draw_keyword (local.get $elapsed) (i32.const 0x10968) (i32.const 8)
-      (i32.const 176) (i32.const 32) (i32.const 5000))
+      (i32.const 176) (i32.const 32) (i32.const 5000) (i32.const 0x38230))
   )
 
   ;; =========================================================
@@ -1511,23 +1486,27 @@
                                   ;; Profile slope at seed_cy: slope = profile[idx-1] - profile[idx+1]
                                   ;; Then tilt: sdx_adj = sdx_128 - (sdy_128 * slope * sin_val) >> 7
                                   (if (i32.and
-                                        (i32.ge_s (local.get $seed_cy) (i32.const -44))
-                                        (i32.le_s (local.get $seed_cy) (i32.const 44)))
+                                        (i32.ge_s (local.get $seed_cy) (i32.const -43))
+                                        (i32.le_s (local.get $seed_cy) (i32.const 43)))
                                     (then
-                                      ;; slope = (profile[idx+1] - profile[idx-1]) / 2
-                                      ;; = d(rx)/d(dy), positive when widening downward
+                                      ;; slope = (profile[idx+2] - profile[idx-2]) over 4 samples
+                                      ;; Wider window smooths integer staircase in profile
                                       ;; cross = sdy_128 * slope * sin_val / 128
-                                      ;; = sdy_128 * (prof[idx+1]-prof[idx-1]) * sin_val / 256
-                                      ;; Reuse $seed_cx for (prof[idx+1] - prof[idx-1])
+                                      ;; Reuse $seed_cx for (prof[idx+2] - prof[idx-2])
                                       (local.set $seed_cx (i32.sub
-                                        (i32.load8_u (i32.add (i32.const 0x10A00) (i32.add (local.get $seed_cy) (i32.const 46))))
-                                        (i32.load8_u (i32.add (i32.const 0x10A00) (i32.add (local.get $seed_cy) (i32.const 44))))))
-                                      ;; sdx_adj = norm_sq - (guess * diff * sin_val) >> 8
-                                      ;; Two steps: (guess * diff) >> 4, then * sin_val >> 4
+                                        (i32.load8_u (i32.add (i32.const 0x10A00) (i32.add (local.get $seed_cy) (i32.const 47))))
+                                        (i32.load8_u (i32.add (i32.const 0x10A00) (i32.add (local.get $seed_cy) (i32.const 43))))))
+                                      ;; Clamp slope to [-4, 4] to prevent over-tilt at steep shoulder/tip
+                                      (if (i32.gt_s (local.get $seed_cx) (i32.const 4))
+                                        (then (local.set $seed_cx (i32.const 4))))
+                                      (if (i32.lt_s (local.get $seed_cx) (i32.const -4))
+                                        (then (local.set $seed_cx (i32.const -4))))
+                                      ;; sdx_adj = norm_sq - (guess * diff * sin_val) >> 9
+                                      ;; ±2 window gives 2x larger diff, so shift 5+4 instead of 4+4
                                       (local.set $norm_sq (i32.sub (local.get $norm_sq)
                                         (i32.shr_s
                                           (i32.mul
-                                            (i32.shr_s (i32.mul (local.get $guess) (local.get $seed_cx)) (i32.const 4))
+                                            (i32.shr_s (i32.mul (local.get $guess) (local.get $seed_cx)) (i32.const 5))
                                             (local.get $sdx))
                                           (i32.const 4))))
                                     ))
@@ -2180,12 +2159,12 @@
   ;; i:20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39
   ;; r:37 38 38 38 38 38 38 38 38 38 38 38 38 37 37 37 37 37 36 36
   ;; i:40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59
-  ;; r:36 36 35 34 34 34 34 34 33 32 32 31 31 30 30 30 29 29 28 27
+  ;; r:36 36 35 35 35 34 34 34 33 33 32 32 31 31 30 30 29 29 28 28
   ;; i:60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79
-  ;; r:27 26 25 25 24 23 23 22 21 21 20 19 19 18 17 17 16 15 15 14
+  ;; r:27 26 25 25 24 23 23 22 21 21 20 19 19 18 18 17 16 15 15 14
   ;; i:80 81 82 83 84 85 86 87 88 89 90
-  ;; r:13 12 12 10  9  8  7  6  4  2  0
-  (data (i32.const 0x10A00) "\00\0f\18\1b\1c\1d\1e\1f\20\21\22\22\23\23\24\24\24\25\25\25\25\26\26\26\26\26\26\26\26\26\26\26\26\25\25\25\25\25\24\24\24\24\23\22\22\22\22\22\21\20\20\1f\1f\1e\1e\1e\1d\1d\1c\1b\1b\1a\19\19\18\17\17\16\15\15\14\13\13\12\11\11\10\0f\0f\0e\0d\0c\0c\0a\09\08\07\06\04\02\00")
+  ;; r:13 12 12 11 10  9  7  6  4  2  0
+  (data (i32.const 0x10A00) "\00\0f\18\1b\1c\1d\1e\1f\20\21\22\22\23\23\24\24\24\25\25\25\25\26\26\26\26\26\26\26\26\26\26\26\26\25\25\25\25\25\24\24\24\24\23\23\23\22\22\22\21\21\20\20\1f\1f\1e\1e\1d\1d\1c\1c\1b\1a\19\19\18\17\17\16\15\15\14\13\13\12\12\11\10\0f\0f\0e\0d\0c\0c\0b\0a\09\07\06\04\02\00")
 
   ;; Strawberry seed table at 0x10B00 — generated by $init_seeds at runtime
   ;; Format: u16 count, then count*(dy:i8, angle:u8)
