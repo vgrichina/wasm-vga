@@ -315,15 +315,19 @@
   ;; Draw a keyword with rain-synced falling animation
   ;; Each char rides its rain column's head down, locking when it reaches target_y
   ;; State per char at state_addr: 0=waiting, 1=riding rain, 2=locked
+  ;; deadline_ms: force-lock any unlocked chars by this time (guarantees glow window)
   (func $draw_keyword (param $elapsed i32) (param $str_addr i32) (param $str_len i32)
                       (param $base_x i32) (param $target_y i32)
                       (param $start_ms i32) (param $state_addr i32)
+                      (param $deadline_ms i32)
     (local $i i32) (local $col i32) (local $px i32)
     (local $ch i32) (local $state i32) (local $rain_y i32)
-    (local $sa i32)
+    (local $sa i32) (local $past_deadline i32)
 
     ;; Skip if not started
     (if (i32.lt_u (local.get $elapsed) (local.get $start_ms)) (then (return)))
+
+    (local.set $past_deadline (i32.ge_u (local.get $elapsed) (local.get $deadline_ms)))
 
     (local.set $i (i32.const 0))
     (block $done (loop $lp
@@ -334,6 +338,12 @@
       (local.set $px (i32.mul (local.get $col) (i32.const 8)))
       (local.set $sa (i32.add (local.get $state_addr) (local.get $i)))
       (local.set $state (i32.load8_u (local.get $sa)))
+
+      ;; Force-lock if past deadline
+      (if (i32.and (local.get $past_deadline) (i32.lt_u (local.get $state) (i32.const 2)))
+        (then
+          (i32.store8 (local.get $sa) (i32.const 2))
+          (local.set $state (i32.const 2))))
 
       ;; Read rain column head y
       (local.set $rain_y (i32.load8_u (i32.add (i32.const 0x38010)
@@ -469,15 +479,16 @@
       (br $cl)
     ))
 
-    ;; Falling keywords — rain-synced, state buffers at 0x38200 (16B each)
+    ;; Falling keywords — rain-synced, with deadlines for guaranteed glow
+    ;; All locked by 5500ms → 2.5s glow before section ends at 8000ms
     (call $draw_keyword (local.get $elapsed) (i32.const 0x10750) (i32.const 10)
-      (i32.const 120) (i32.const 96) (i32.const 500) (i32.const 0x38200))
+      (i32.const 120) (i32.const 96) (i32.const 300) (i32.const 0x38200) (i32.const 3000))
     (call $draw_keyword (local.get $elapsed) (i32.const 0x10960) (i32.const 4)
-      (i32.const 24) (i32.const 40) (i32.const 2000) (i32.const 0x38210))
+      (i32.const 24) (i32.const 40) (i32.const 1000) (i32.const 0x38210) (i32.const 3500))
     (call $draw_keyword (local.get $elapsed) (i32.const 0x10964) (i32.const 3)
-      (i32.const 232) (i32.const 152) (i32.const 3500) (i32.const 0x38220))
+      (i32.const 232) (i32.const 152) (i32.const 2000) (i32.const 0x38220) (i32.const 4500))
     (call $draw_keyword (local.get $elapsed) (i32.const 0x10968) (i32.const 8)
-      (i32.const 176) (i32.const 32) (i32.const 5000) (i32.const 0x38230))
+      (i32.const 176) (i32.const 32) (i32.const 3000) (i32.const 0x38230) (i32.const 5500))
   )
 
   ;; =========================================================
