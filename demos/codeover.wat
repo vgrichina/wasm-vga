@@ -274,6 +274,14 @@
     (call $set_pal (i32.const 31) (i32.const 255) (i32.const 255) (i32.const 255))
     ;; 32 = berrry green for reveal text
     (call $set_pal (i32.const 32) (i32.const 0) (i32.const 221) (i32.const 136))
+    ;; Reset keyword letter states (0x38200-0x3823F)
+    (local.set $i (i32.const 0))
+    (block $rd (loop $rl
+      (br_if $rd (i32.ge_u (local.get $i) (i32.const 64)))
+      (i32.store (i32.add (i32.const 0x38200) (local.get $i)) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 4)))
+      (br $rl)
+    ))
   )
 
   ;; Draw a single 8x8 char at pixel (px, py) with given color
@@ -1043,8 +1051,8 @@
     (call $set_pal (i32.const 34) (i32.const 0) (i32.const 221) (i32.const 136))
     ;; 35 = pink rim glow
     (call $set_pal (i32.const 35) (i32.const 255) (i32.const 180) (i32.const 190))
-    ;; 36 = pink specular highlight
-    (call $set_pal (i32.const 36) (i32.const 255) (i32.const 200) (i32.const 210))
+    ;; 36 = pink specular highlight (glossy)
+    (call $set_pal (i32.const 36) (i32.const 255) (i32.const 180) (i32.const 185))
     ;; 37 = stem brown
     (call $set_pal (i32.const 37) (i32.const 80) (i32.const 50) (i32.const 20))
     ;; 38 = sparkle
@@ -1627,11 +1635,15 @@
                           (else (local.set $col (i32.const 31))))
                       )
                       (else
-                          ;; Berry body (including bump-mapped grooves): specular → red ramp
-                          (if (i32.gt_s (local.get $dot_spec) (i32.const 160))
+                          ;; Berry body (including bump-mapped grooves): glossy specular → red ramp
+                          (if (i32.gt_s (local.get $dot_spec) (i32.const 120))
                             (then (local.set $col (i32.const 33)))
-                            (else (if (i32.gt_s (local.get $dot_spec) (i32.const 80))
+                            (else (if (i32.gt_s (local.get $dot_spec) (i32.const 55))
                               (then (local.set $col (i32.const 36)))
+                              (else (if (i32.gt_s (local.get $dot_spec) (i32.const 25))
+                              (then
+                                ;; Warm glossy sheen: push red ramp to brightest end
+                                (local.set $col (i32.const 25)))
                               (else
                                   ;; Red ramp 10-25 with subtle texture noise
                                   ;; noise = ((px*7 ^ py*13) >> 2) & 1  — adds ±1 dither
