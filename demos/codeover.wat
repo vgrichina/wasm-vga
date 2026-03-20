@@ -188,9 +188,9 @@
       ;; tier = i/2 (0,1→dim, 2,3→med, 4,5→bright)
       (local.set $base (i32.add (i32.const 60)
         (i32.mul (i32.div_u (local.get $i) (i32.const 2)) (i32.const 75))))
-      ;; bright = base + (wave-128)>>2, clamped 30-255
+      ;; bright = base + (wave-128)>>4, clamped 30-255 (subtle shimmer)
       (local.set $bright (i32.add (local.get $base)
-        (i32.shr_s (i32.sub (local.get $wave) (i32.const 128)) (i32.const 2))))
+        (i32.shr_s (i32.sub (local.get $wave) (i32.const 128)) (i32.const 4))))
       (if (i32.lt_s (local.get $bright) (i32.const 30))
         (then (local.set $bright (i32.const 30))))
       (if (i32.gt_s (local.get $bright) (i32.const 255))
@@ -205,21 +205,71 @@
       (br $pl)
     ))
 
-    ;; Plot 120 stars at deterministic positions
+    ;; Plot 80 primary stars with xor-shift hash (no diagonal banding)
     (local.set $i (i32.const 0))
     (block $sd (loop $sl
-      (br_if $sd (i32.ge_u (local.get $i) (i32.const 120)))
-      (local.set $x (i32.rem_u (i32.add
-        (i32.mul (local.get $i) (i32.const 197)) (i32.const 53)) (i32.const 320)))
-      (local.set $y (i32.rem_u (i32.add
-        (i32.mul (local.get $i) (i32.const 53)) (i32.const 71)) (local.get $max_y)))
-      ;; layer = 1 + (i % 6)
-      (local.set $layer (i32.add (i32.rem_u (local.get $i) (i32.const 6)) (i32.const 1)))
+      (br_if $sd (i32.ge_u (local.get $i) (i32.const 80)))
+      ;; Hash x: h = i*0x45d9f3b; h ^= h>>16; h ^= h>>8
+      (local.set $x (i32.mul (local.get $i) (i32.const 0x45d9f3b)))
+      (local.set $x (i32.xor (local.get $x) (i32.shr_u (local.get $x) (i32.const 16))))
+      (local.set $x (i32.xor (local.get $x) (i32.shr_u (local.get $x) (i32.const 8))))
+      (local.set $x (i32.rem_u (i32.and (local.get $x) (i32.const 0x7FFFFFFF)) (i32.const 320)))
+      ;; Hash y: different multiplier for independence
+      (local.set $y (i32.mul (local.get $i) (i32.const 0x27d4eb2d)))
+      (local.set $y (i32.xor (local.get $y) (i32.shr_u (local.get $y) (i32.const 16))))
+      (local.set $y (i32.xor (local.get $y) (i32.shr_u (local.get $y) (i32.const 8))))
+      (local.set $y (i32.rem_u (i32.and (local.get $y) (i32.const 0x7FFFFFFF)) (local.get $max_y)))
+      ;; layer = 1 + (hash(i) % 6) — use mixed bits for tier
+      (local.set $layer (i32.add (i32.const 1)
+        (i32.rem_u (i32.and
+          (i32.xor (i32.mul (local.get $i) (i32.const 0x9e3779b9))
+            (i32.shr_u (i32.mul (local.get $i) (i32.const 0x9e3779b9)) (i32.const 13)))
+          (i32.const 0x7FFFFFFF)) (i32.const 6))))
       (i32.store8 (i32.add (i32.const 0x0340)
         (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x)))
         (local.get $layer))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $sl)
+    ))
+
+    ;; Cluster pass: 60 dim companion stars near bright primaries (i < 30)
+    ;; Creates natural clumping — a few dense patches amid sparse field
+    (local.set $i (i32.const 0))
+    (block $cd (loop $cl
+      (br_if $cd (i32.ge_u (local.get $i) (i32.const 60)))
+      ;; Pick parent star: i/2 (so 2 companions per parent, first 30 parents)
+      (local.set $base (i32.shr_u (local.get $i) (i32.const 1)))
+      ;; Recompute parent x,y
+      (local.set $x (i32.mul (local.get $base) (i32.const 0x45d9f3b)))
+      (local.set $x (i32.xor (local.get $x) (i32.shr_u (local.get $x) (i32.const 16))))
+      (local.set $x (i32.xor (local.get $x) (i32.shr_u (local.get $x) (i32.const 8))))
+      (local.set $x (i32.rem_u (i32.and (local.get $x) (i32.const 0x7FFFFFFF)) (i32.const 320)))
+      (local.set $y (i32.mul (local.get $base) (i32.const 0x27d4eb2d)))
+      (local.set $y (i32.xor (local.get $y) (i32.shr_u (local.get $y) (i32.const 16))))
+      (local.set $y (i32.xor (local.get $y) (i32.shr_u (local.get $y) (i32.const 8))))
+      (local.set $y (i32.rem_u (i32.and (local.get $y) (i32.const 0x7FFFFFFF)) (local.get $max_y)))
+      ;; Offset: hash-based ±3..8 pixels from parent
+      (local.set $wave (i32.mul (i32.add (local.get $i) (i32.const 200)) (i32.const 0x6c62272e)))
+      (local.set $wave (i32.xor (local.get $wave) (i32.shr_u (local.get $wave) (i32.const 15))))
+      (local.set $x (i32.add (local.get $x)
+        (i32.sub (i32.rem_u (i32.and (local.get $wave) (i32.const 0x7FFF)) (i32.const 17)) (i32.const 8))))
+      (local.set $wave (i32.mul (local.get $wave) (i32.const 0x846ca68b)))
+      (local.set $y (i32.add (local.get $y)
+        (i32.sub (i32.rem_u (i32.and (local.get $wave) (i32.const 0x7FFF)) (i32.const 17)) (i32.const 8))))
+      ;; Clamp to screen
+      (if (i32.lt_s (local.get $x) (i32.const 0)) (then (local.set $x (i32.const 0))))
+      (if (i32.ge_s (local.get $x) (i32.const 320)) (then (local.set $x (i32.const 319))))
+      (if (i32.lt_s (local.get $y) (i32.const 0)) (then (local.set $y (i32.const 0))))
+      (if (i32.ge_s (local.get $y) (local.get $max_y))
+        (then (local.set $y (i32.sub (local.get $max_y) (i32.const 1)))))
+      ;; Always dim tier (1 or 2)
+      (local.set $layer (i32.add (i32.const 1)
+        (i32.and (local.get $i) (i32.const 1))))
+      (i32.store8 (i32.add (i32.const 0x0340)
+        (i32.add (i32.mul (local.get $y) (i32.const 320)) (local.get $x)))
+        (local.get $layer))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $cl)
     ))
   )
 
