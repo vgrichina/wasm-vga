@@ -519,13 +519,13 @@
           (i32.sub (i32.rem_u (call $rng) (i32.const 5)) (i32.const 2))))
         ;; Width varies: thicker in middle, thinner at edges
         (local.set $dist (call $abs (i32.sub (local.get $y) (i32.const 64))))
-        (local.set $r (i32.sub (i32.const 6) (i32.shr_u (local.get $dist) (i32.const 3))))
-        (if (i32.lt_s (local.get $r) (i32.const 2)) (then (local.set $r (i32.const 2))))
-        ;; Gap at y=50-54 (north choke) and y=76-80 (south choke)
+        (local.set $r (i32.sub (i32.const 3) (i32.shr_u (local.get $dist) (i32.const 4))))
+        (if (i32.lt_s (local.get $r) (i32.const 1)) (then (local.set $r (i32.const 1))))
+        ;; Gap at y=46-56 (north choke) and y=74-84 (south choke)
         (if (i32.and
               (i32.or
-                (i32.and (i32.ge_s (local.get $y) (i32.const 48)) (i32.le_s (local.get $y) (i32.const 53)))
-                (i32.and (i32.ge_s (local.get $y) (i32.const 77)) (i32.le_s (local.get $y) (i32.const 82))))
+                (i32.and (i32.ge_s (local.get $y) (i32.const 46)) (i32.le_s (local.get $y) (i32.const 56)))
+                (i32.and (i32.ge_s (local.get $y) (i32.const 74)) (i32.le_s (local.get $y) (i32.const 84))))
               (i32.const 1))
           (then (local.set $r (i32.const 0))) ;; no mountain at choke
         )
@@ -1380,6 +1380,245 @@
       (then (local.get $a)) (else (local.get $b)))
   )
 
+  ;; === FLOW FIELD BFS ===
+  ;; Flow field at 0x1B000 (128x128 bytes, each = direction 0-7 or 255=unvisited)
+  ;; BFS queue at 0x1F000 (16384 entries × 4 bytes = 64K, each entry = i32 tile index)
+  ;; Flow field target tile stored at 0x1AFC0 (4 bytes)
+  ;; Directions: 0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW
+  ;; Each direction points TOWARD the target (reverse of BFS expansion direction)
+
+  ;; Build flow field from target world position (wx, wy)
+  (func $build_flow_field (param $wx i32) (param $wy i32)
+    (local $target_tile i32)
+    (local $head i32) (local $tail i32)
+    (local $cur i32) (local $cx i32) (local $cy i32)
+    (local $dir i32) (local $nx i32) (local $ny i32)
+    (local $ni i32) (local $i i32)
+    ;; Direction deltas: N(0,-1) NE(1,-1) E(1,0) SE(1,1) S(0,1) SW(-1,1) W(-1,0) NW(-1,-1)
+    ;; Reverse dir = (dir+4)%8
+
+    ;; Convert world to tile
+    (local.set $cx (i32.shr_u (local.get $wx) (i32.const 3)))
+    (local.set $cy (i32.shr_u (local.get $wy) (i32.const 3)))
+    (if (i32.or (i32.ge_u (local.get $cx) (i32.const 128)) (i32.ge_u (local.get $cy) (i32.const 128)))
+      (then (return))
+    )
+    (local.set $target_tile (i32.add (i32.mul (local.get $cy) (i32.const 128)) (local.get $cx)))
+
+    ;; Store target for cache check
+    (i32.store (i32.const 0x1AFC0) (local.get $target_tile))
+
+    ;; Clear flow field to 255
+    (local.set $i (i32.const 0))
+    (block $clr_brk
+      (loop $clr_lp
+        (br_if $clr_brk (i32.ge_s (local.get $i) (i32.const 16384)))
+        (i32.store8 (i32.add (i32.const 0x1B000) (local.get $i)) (i32.const 255))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $clr_lp)
+      )
+    )
+
+    ;; Seed BFS with target tile (direction = 8 meaning "you are here")
+    (i32.store8 (i32.add (i32.const 0x1B000) (local.get $target_tile)) (i32.const 8))
+    (i32.store (i32.const 0x1F000) (local.get $target_tile))
+    (local.set $head (i32.const 0))
+    (local.set $tail (i32.const 1))
+
+    ;; BFS loop
+    (block $bfs_brk
+      (loop $bfs_lp
+        (br_if $bfs_brk (i32.ge_s (local.get $head) (local.get $tail)))
+        ;; Dequeue
+        (local.set $cur (i32.load (i32.add (i32.const 0x1F000) (i32.mul (local.get $head) (i32.const 4)))))
+        (local.set $head (i32.add (local.get $head) (i32.const 1)))
+        (local.set $cx (i32.rem_u (local.get $cur) (i32.const 128)))
+        (local.set $cy (i32.div_u (local.get $cur) (i32.const 128)))
+
+        ;; Try all 8 neighbors
+        (local.set $dir (i32.const 0))
+        (block $dir_brk
+          (loop $dir_lp
+            (br_if $dir_brk (i32.ge_s (local.get $dir) (i32.const 8)))
+
+            ;; Compute neighbor tile (nx, ny) based on direction
+            (local.set $nx (local.get $cx))
+            (local.set $ny (local.get $cy))
+            ;; X: dirs 1,2,3 = +1; dirs 5,6,7 = -1
+            (if (i32.or (i32.or (i32.eq (local.get $dir) (i32.const 1))
+                                (i32.eq (local.get $dir) (i32.const 2)))
+                        (i32.eq (local.get $dir) (i32.const 3)))
+              (then (local.set $nx (i32.add (local.get $cx) (i32.const 1))))
+            )
+            (if (i32.or (i32.or (i32.eq (local.get $dir) (i32.const 5))
+                                (i32.eq (local.get $dir) (i32.const 6)))
+                        (i32.eq (local.get $dir) (i32.const 7)))
+              (then (local.set $nx (i32.sub (local.get $cx) (i32.const 1))))
+            )
+            ;; Y: dirs 0,1,7 = -1; dirs 3,4,5 = +1
+            (if (i32.or (i32.or (i32.eq (local.get $dir) (i32.const 0))
+                                (i32.eq (local.get $dir) (i32.const 1)))
+                        (i32.eq (local.get $dir) (i32.const 7)))
+              (then (local.set $ny (i32.sub (local.get $cy) (i32.const 1))))
+            )
+            (if (i32.or (i32.or (i32.eq (local.get $dir) (i32.const 3))
+                                (i32.eq (local.get $dir) (i32.const 4)))
+                        (i32.eq (local.get $dir) (i32.const 5)))
+              (then (local.set $ny (i32.add (local.get $cy) (i32.const 1))))
+            )
+
+            ;; Bounds check
+            (if (i32.and
+                  (i32.and (i32.ge_s (local.get $nx) (i32.const 0)) (i32.lt_s (local.get $nx) (i32.const 128)))
+                  (i32.and (i32.ge_s (local.get $ny) (i32.const 0)) (i32.lt_s (local.get $ny) (i32.const 128))))
+              (then
+                (local.set $ni (i32.add (i32.mul (local.get $ny) (i32.const 128)) (local.get $nx)))
+                ;; If unvisited and passable
+                (if (i32.and
+                      (i32.eq (i32.load8_u (i32.add (i32.const 0x1B000) (local.get $ni))) (i32.const 255))
+                      (call $is_passable (i32.mul (local.get $nx) (i32.const 8)) (i32.mul (local.get $ny) (i32.const 8))))
+                  (then
+                    ;; Store reverse direction: to go toward target, go opposite of expansion dir
+                    ;; Reverse = (dir + 4) & 7
+                    (i32.store8 (i32.add (i32.const 0x1B000) (local.get $ni))
+                      (i32.and (i32.add (local.get $dir) (i32.const 4)) (i32.const 7)))
+                    ;; Enqueue
+                    (if (i32.lt_s (local.get $tail) (i32.const 16384))
+                      (then
+                        (i32.store (i32.add (i32.const 0x1F000) (i32.mul (local.get $tail) (i32.const 4))) (local.get $ni))
+                        (local.set $tail (i32.add (local.get $tail) (i32.const 1)))
+                      )
+                    )
+                  )
+                )
+              )
+            )
+
+            (local.set $dir (i32.add (local.get $dir) (i32.const 1)))
+            (br $dir_lp)
+          )
+        )
+        (br $bfs_lp)
+      )
+    )
+  )
+
+  ;; Move unit using flow field if target matches, else greedy best-neighbor
+  (func $move_toward (param $addr i32) (param $tx i32) (param $ty i32) (param $spd i32)
+    (local $ux i32) (local $uy i32)
+    (local $tile_x i32) (local $tile_y i32)
+    (local $flow_dir i32)
+    (local $nx i32) (local $ny i32)
+    (local $target_tile i32)
+    (local $dir i32) (local $best_dist i32) (local $dist i32)
+    (local $best_x i32) (local $best_y i32)
+
+    (local.set $ux (i32.load16_s (i32.add (local.get $addr) (i32.const 4))))
+    (local.set $uy (i32.load16_s (i32.add (local.get $addr) (i32.const 6))))
+    (local.set $tile_x (i32.shr_u (local.get $ux) (i32.const 3)))
+    (local.set $tile_y (i32.shr_u (local.get $uy) (i32.const 3)))
+
+    ;; Check if flow field matches this unit's target
+    (local.set $target_tile (i32.add
+      (i32.mul (i32.shr_u (local.get $ty) (i32.const 3)) (i32.const 128))
+      (i32.shr_u (local.get $tx) (i32.const 3))))
+    (local.set $flow_dir (i32.const 255))
+
+    (if (i32.and
+          (i32.eq (i32.load (i32.const 0x1AFC0)) (local.get $target_tile))
+          (i32.and (i32.lt_u (local.get $tile_x) (i32.const 128))
+                   (i32.lt_u (local.get $tile_y) (i32.const 128))))
+      (then
+        (local.set $flow_dir (i32.load8_u (i32.add (i32.const 0x1B000)
+          (i32.add (i32.mul (local.get $tile_y) (i32.const 128)) (local.get $tile_x)))))
+      )
+    )
+
+    ;; Use flow field if valid direction (0-7)
+    (if (i32.lt_u (local.get $flow_dir) (i32.const 8))
+      (then
+        (local.set $nx (local.get $ux))
+        (local.set $ny (local.get $uy))
+        ;; X: dirs 1,2,3 = +spd; dirs 5,6,7 = -spd
+        (if (i32.or (i32.or (i32.eq (local.get $flow_dir) (i32.const 1))
+                            (i32.eq (local.get $flow_dir) (i32.const 2)))
+                    (i32.eq (local.get $flow_dir) (i32.const 3)))
+          (then (local.set $nx (i32.add (local.get $ux) (local.get $spd))))
+        )
+        (if (i32.or (i32.or (i32.eq (local.get $flow_dir) (i32.const 5))
+                            (i32.eq (local.get $flow_dir) (i32.const 6)))
+                    (i32.eq (local.get $flow_dir) (i32.const 7)))
+          (then (local.set $nx (i32.sub (local.get $ux) (local.get $spd))))
+        )
+        ;; Y: dirs 0,1,7 = -spd; dirs 3,4,5 = +spd
+        (if (i32.or (i32.or (i32.eq (local.get $flow_dir) (i32.const 0))
+                            (i32.eq (local.get $flow_dir) (i32.const 1)))
+                    (i32.eq (local.get $flow_dir) (i32.const 7)))
+          (then (local.set $ny (i32.sub (local.get $uy) (local.get $spd))))
+        )
+        (if (i32.or (i32.or (i32.eq (local.get $flow_dir) (i32.const 3))
+                            (i32.eq (local.get $flow_dir) (i32.const 4)))
+                    (i32.eq (local.get $flow_dir) (i32.const 5)))
+          (then (local.set $ny (i32.add (local.get $uy) (local.get $spd))))
+        )
+        (i32.store16 (i32.add (local.get $addr) (i32.const 4)) (local.get $nx))
+        (i32.store16 (i32.add (local.get $addr) (i32.const 6)) (local.get $ny))
+        (return)
+      )
+    )
+
+    ;; Fallback: greedy best-neighbor (try all 8 directions)
+    (local.set $best_dist (i32.const 0x7FFFFFFF))
+    (local.set $best_x (local.get $ux))
+    (local.set $best_y (local.get $uy))
+    (local.set $dir (i32.const 0))
+    (block $brk
+      (loop $lp
+        (br_if $brk (i32.ge_s (local.get $dir) (i32.const 8)))
+        (local.set $nx (local.get $ux))
+        (local.set $ny (local.get $uy))
+        (if (i32.or (i32.or (i32.eq (local.get $dir) (i32.const 1))
+                            (i32.eq (local.get $dir) (i32.const 2)))
+                    (i32.eq (local.get $dir) (i32.const 3)))
+          (then (local.set $nx (i32.add (local.get $ux) (local.get $spd))))
+        )
+        (if (i32.or (i32.or (i32.eq (local.get $dir) (i32.const 5))
+                            (i32.eq (local.get $dir) (i32.const 6)))
+                    (i32.eq (local.get $dir) (i32.const 7)))
+          (then (local.set $nx (i32.sub (local.get $ux) (local.get $spd))))
+        )
+        (if (i32.or (i32.or (i32.eq (local.get $dir) (i32.const 0))
+                            (i32.eq (local.get $dir) (i32.const 1)))
+                    (i32.eq (local.get $dir) (i32.const 7)))
+          (then (local.set $ny (i32.sub (local.get $uy) (local.get $spd))))
+        )
+        (if (i32.or (i32.or (i32.eq (local.get $dir) (i32.const 3))
+                            (i32.eq (local.get $dir) (i32.const 4)))
+                    (i32.eq (local.get $dir) (i32.const 5)))
+          (then (local.set $ny (i32.add (local.get $uy) (local.get $spd))))
+        )
+        (if (call $is_passable (local.get $nx) (local.get $ny))
+          (then
+            (local.set $dist (i32.add
+              (call $abs (i32.sub (local.get $tx) (local.get $nx)))
+              (call $abs (i32.sub (local.get $ty) (local.get $ny)))))
+            (if (i32.lt_s (local.get $dist) (local.get $best_dist))
+              (then
+                (local.set $best_dist (local.get $dist))
+                (local.set $best_x (local.get $nx))
+                (local.set $best_y (local.get $ny))
+              )
+            )
+          )
+        )
+        (local.set $dir (i32.add (local.get $dir) (i32.const 1)))
+        (br $lp)
+      )
+    )
+    (i32.store16 (i32.add (local.get $addr) (i32.const 4)) (local.get $best_x))
+    (i32.store16 (i32.add (local.get $addr) (i32.const 6)) (local.get $best_y))
+  )
+
   ;; ============ UPDATE UNITS ============
   (func $update_units
     (local $i i32)
@@ -1471,42 +1710,7 @@
                         )
                       )
                       (else
-                        ;; Move toward target with terrain check
-                        (local.set $dx (i32.const 0))
-                        (local.set $dy (i32.const 0))
-                        (if (i32.gt_s (i32.sub (local.get $tx) (local.get $ux)) (i32.const 0))
-                          (then (local.set $dx (local.get $spd)))
-                        )
-                        (if (i32.lt_s (i32.sub (local.get $tx) (local.get $ux)) (i32.const 0))
-                          (then (local.set $dx (i32.sub (i32.const 0) (local.get $spd))))
-                        )
-                        (if (i32.gt_s (i32.sub (local.get $ty) (local.get $uy)) (i32.const 0))
-                          (then (local.set $dy (local.get $spd)))
-                        )
-                        (if (i32.lt_s (i32.sub (local.get $ty) (local.get $uy)) (i32.const 0))
-                          (then (local.set $dy (i32.sub (i32.const 0) (local.get $spd))))
-                        )
-                        ;; Try both axes
-                        (if (call $is_passable (i32.add (local.get $ux) (local.get $dx)) (i32.add (local.get $uy) (local.get $dy)))
-                          (then
-                            (local.set $ux (i32.add (local.get $ux) (local.get $dx)))
-                            (local.set $uy (i32.add (local.get $uy) (local.get $dy)))
-                          )
-                          (else
-                            ;; Try x only
-                            (if (i32.and (local.get $dx) (call $is_passable (i32.add (local.get $ux) (local.get $dx)) (local.get $uy)))
-                              (then (local.set $ux (i32.add (local.get $ux) (local.get $dx))))
-                              (else
-                                ;; Try y only
-                                (if (i32.and (local.get $dy) (call $is_passable (local.get $ux) (i32.add (local.get $uy) (local.get $dy))))
-                                  (then (local.set $uy (i32.add (local.get $uy) (local.get $dy))))
-                                )
-                              )
-                            )
-                          )
-                        )
-                        (i32.store16 (i32.add (local.get $addr) (i32.const 4)) (local.get $ux))
-                        (i32.store16 (i32.add (local.get $addr) (i32.const 6)) (local.get $uy))
+                        (call $move_toward (local.get $addr) (local.get $tx) (local.get $ty) (local.get $spd))
                       )
                     )
                   )
@@ -1550,39 +1754,7 @@
                         (i32.store8 (i32.add (local.get $addr) (i32.const 22)) (local.get $atk_timer))
                       )
                       (else
-                        ;; Move toward gold with terrain check
-                        (local.set $dx (i32.const 0))
-                        (local.set $dy (i32.const 0))
-                        (if (i32.gt_s (i32.sub (local.get $tx) (local.get $ux)) (i32.const 0))
-                          (then (local.set $dx (local.get $spd)))
-                        )
-                        (if (i32.lt_s (i32.sub (local.get $tx) (local.get $ux)) (i32.const 0))
-                          (then (local.set $dx (i32.sub (i32.const 0) (local.get $spd))))
-                        )
-                        (if (i32.gt_s (i32.sub (local.get $ty) (local.get $uy)) (i32.const 0))
-                          (then (local.set $dy (local.get $spd)))
-                        )
-                        (if (i32.lt_s (i32.sub (local.get $ty) (local.get $uy)) (i32.const 0))
-                          (then (local.set $dy (i32.sub (i32.const 0) (local.get $spd))))
-                        )
-                        (if (call $is_passable (i32.add (local.get $ux) (local.get $dx)) (i32.add (local.get $uy) (local.get $dy)))
-                          (then
-                            (local.set $ux (i32.add (local.get $ux) (local.get $dx)))
-                            (local.set $uy (i32.add (local.get $uy) (local.get $dy)))
-                          )
-                          (else
-                            (if (i32.and (local.get $dx) (call $is_passable (i32.add (local.get $ux) (local.get $dx)) (local.get $uy)))
-                              (then (local.set $ux (i32.add (local.get $ux) (local.get $dx))))
-                              (else
-                                (if (i32.and (local.get $dy) (call $is_passable (local.get $ux) (i32.add (local.get $uy) (local.get $dy))))
-                                  (then (local.set $uy (i32.add (local.get $uy) (local.get $dy))))
-                                )
-                              )
-                            )
-                          )
-                        )
-                        (i32.store16 (i32.add (local.get $addr) (i32.const 4)) (local.get $ux))
-                        (i32.store16 (i32.add (local.get $addr) (i32.const 6)) (local.get $uy))
+                        (call $move_toward (local.get $addr) (local.get $tx) (local.get $ty) (local.get $spd))
                       )
                     )
                   )
@@ -1638,43 +1810,11 @@
                                 (i32.store8 (i32.add (local.get $addr) (i32.const 22)) (local.get $atk_timer))
                               )
                               (else
-                                ;; Move toward target with terrain check
-                                (local.set $dx (i32.const 0))
-                                (local.set $dy (i32.const 0))
-                                (if (i32.gt_s (i32.sub
-                                    (i32.load16_s (i32.add (local.get $taddr) (i32.const 4))) (local.get $ux)) (i32.const 0))
-                                  (then (local.set $dx (local.get $spd)))
-                                )
-                                (if (i32.lt_s (i32.sub
-                                    (i32.load16_s (i32.add (local.get $taddr) (i32.const 4))) (local.get $ux)) (i32.const 0))
-                                  (then (local.set $dx (i32.sub (i32.const 0) (local.get $spd))))
-                                )
-                                (if (i32.gt_s (i32.sub
-                                    (i32.load16_s (i32.add (local.get $taddr) (i32.const 6))) (local.get $uy)) (i32.const 0))
-                                  (then (local.set $dy (local.get $spd)))
-                                )
-                                (if (i32.lt_s (i32.sub
-                                    (i32.load16_s (i32.add (local.get $taddr) (i32.const 6))) (local.get $uy)) (i32.const 0))
-                                  (then (local.set $dy (i32.sub (i32.const 0) (local.get $spd))))
-                                )
-                                (if (call $is_passable (i32.add (local.get $ux) (local.get $dx)) (i32.add (local.get $uy) (local.get $dy)))
-                                  (then
-                                    (local.set $ux (i32.add (local.get $ux) (local.get $dx)))
-                                    (local.set $uy (i32.add (local.get $uy) (local.get $dy)))
-                                  )
-                                  (else
-                                    (if (i32.and (local.get $dx) (call $is_passable (i32.add (local.get $ux) (local.get $dx)) (local.get $uy)))
-                                      (then (local.set $ux (i32.add (local.get $ux) (local.get $dx))))
-                                      (else
-                                        (if (i32.and (local.get $dy) (call $is_passable (local.get $ux) (i32.add (local.get $uy) (local.get $dy))))
-                                          (then (local.set $uy (i32.add (local.get $uy) (local.get $dy))))
-                                        )
-                                      )
-                                    )
-                                  )
-                                )
-                                (i32.store16 (i32.add (local.get $addr) (i32.const 4)) (local.get $ux))
-                                (i32.store16 (i32.add (local.get $addr) (i32.const 6)) (local.get $uy))
+                                ;; Move toward attack target
+                                (call $move_toward (local.get $addr)
+                                  (i32.load16_s (i32.add (local.get $taddr) (i32.const 4)))
+                                  (i32.load16_s (i32.add (local.get $taddr) (i32.const 6)))
+                                  (local.get $spd))
                               )
                             )
                           )
@@ -1839,16 +1979,16 @@
           )
         )
 
-        ;; Send to attack player base area
+        ;; Build flow field toward player base for enemy pathfinding
+        (call $build_flow_field (i32.const 96) (i32.const 816))
+
+        ;; Send to attack player town hall (exact position for flow field match)
         (if (i32.ge_s (local.get $uid) (i32.const 0))
           (then
             (local.set $addr (i32.add (i32.const 0x14400) (i32.mul (local.get $uid) (i32.const 32))))
             (i32.store8 (i32.add (local.get $addr) (i32.const 3)) (i32.const 1)) ;; moving
-            ;; Target near player base with some randomness
-            (i32.store16 (i32.add (local.get $addr) (i32.const 8))
-              (i32.add (i32.const 96) (i32.sub (i32.rem_u (call $rng) (i32.const 100)) (i32.const 50))))
-            (i32.store16 (i32.add (local.get $addr) (i32.const 10))
-              (i32.add (i32.const 816) (i32.sub (i32.rem_u (call $rng) (i32.const 100)) (i32.const 50))))
+            (i32.store16 (i32.add (local.get $addr) (i32.const 8)) (i32.const 96))
+            (i32.store16 (i32.add (local.get $addr) (i32.const 10)) (i32.const 816))
           )
         )
       )
@@ -2128,6 +2268,11 @@
                 (local.set $i (i32.add (local.get $i) (i32.const 1)))
                 (br $en_lp)
               )
+            )
+
+            ;; Build flow field for move target (used by all moving units)
+            (if (i32.lt_s (local.get $clicked_enemy) (i32.const 0))
+              (then (call $build_flow_field (local.get $world_x) (local.get $world_y)))
             )
 
             ;; Command selected units
