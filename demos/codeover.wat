@@ -960,14 +960,14 @@
       (if (i32.and (i32.ge_s (local.get $ty_fp) (i32.const 0))
                    (i32.lt_s (local.get $ty_fp) (i32.const 23040)))
         (then
-          ;; left_fp in fixed-point: 1.5x wider chars
-          ;; = 40960 - df*57600/169
+          ;; left_fp in fixed-point: ~1.275x wider chars (85% of 1.5x)
+          ;; = 40960 - df*48960/169
           (local.set $left_fp (i32.sub (i32.const 40960)
-            (i32.div_u (i32.mul (local.get $df) (i32.const 57600)) (i32.const 169))))
+            (i32.div_u (i32.mul (local.get $df) (i32.const 48960)) (i32.const 169))))
           ;; Integer left/right for loop bounds only
           (local.set $left (i32.shr_s (local.get $left_fp) (i32.const 8)))
           (local.set $screen_half (i32.div_u
-            (i32.mul (local.get $df) (i32.const 225)) (i32.const 169)))
+            (i32.mul (local.get $df) (i32.const 191)) (i32.const 169)))
           (local.set $right (i32.add (i32.const 160) (local.get $screen_half)))
           (if (i32.lt_s (local.get $left) (i32.const 0))
             (then (local.set $left (i32.const 0))))
@@ -993,7 +993,7 @@
             (br_if $xd (i32.ge_u (local.get $sx) (local.get $right)))
 
             ;; text_x fixed-point using left_fp for smooth horizontal mapping
-            ;; tx_fp = (sx*256 - left_fp) * 253 / (df * 3)  [1.5x wider chars]
+            ;; tx_fp = (sx*256 - left_fp) * 253 / (df * 3)  [~1.275x wider chars (85% of 1.5x)]
             (local.set $tx_fp (i32.div_u
               (i32.mul (i32.sub (i32.mul (local.get $sx) (i32.const 256)) (local.get $left_fp)) (i32.const 253))
               (i32.mul (local.get $df) (i32.const 3))))
