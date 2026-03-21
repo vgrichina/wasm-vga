@@ -15,9 +15,11 @@
   ;; Lighting: 64x64 lightmap (4 cells/tile) with point lights, muzzle flash
   ;; Dithering: Bayer 4×4 interpolates between floor(shade) and ceil(shade)
   ;;
-  ;; CONST: 0x10340 map, 0x10440 bayer, 0x10450 ramp RGB, 0x10480 textures
-  ;;        0x14580 lightmap (64x64 = 4096 bytes)
+  ;; CONST: 0x10340 map(16x16), 0x10440 bayer, 0x10450 ramp RGB, 0x10480 textures(7×4096)
+  ;;        0x17C80 demon sprite(256), 0x17D80 lightmap(64x64=4096)
+  ;; Textures: 0=drywall 1=cubicle 2=server 3=demon 4=floor 5=ceiling 6=door
   ;; DYNAMIC: 0x3F000 zbuf, 0x3F500 player, 0x3F520 enemies, 0x3F5A0+ state
+  ;;          0x3F5D0 doors (4×16 bytes: mx,my,open_frac_u8,timer)
 
   ;; ---- sin_approx (3-step reduction + Taylor) ----
   (func $sin_approx (param $x f64) (result f64)
@@ -73,6 +75,18 @@
         (i32.add (i32.mul (local.get $y) (i32.const 16)) (local.get $x))))))
   )
 
+  ;; Check if tile is solid (blocked for movement). Open doors are passable.
+  (func $is_solid (param $x i32) (param $y i32) (result i32)
+    (local $t i32)
+    (local.set $t (call $map_get (local.get $x) (local.get $y)))
+    (if (result i32) (i32.eqz (local.get $t))
+      (then (i32.const 0))
+      (else (if (result i32) (i32.eq (local.get $t) (i32.const 5))
+        (then (select (i32.const 0) (i32.const 1)
+          (i32.gt_u (call $door_openness (local.get $x) (local.get $y)) (i32.const 200))))
+        (else (i32.const 1)))))
+  )
+
   (func $tex_addr (param $id i32) (param $u i32) (param $v i32) (result i32)
     (i32.add (i32.const 0x10480)
       (i32.add (i32.mul (local.get $id) (i32.const 4096))
@@ -81,7 +95,7 @@
   )
 
   (func $wall_ahead (param $px f64) (param $py f64) (param $a f64) (param $d f64) (result i32)
-    (call $map_get
+    (call $is_solid
       (i32.trunc_f64_s (f64.add (local.get $px) (f64.mul (call $cos_approx (local.get $a)) (local.get $d))))
       (i32.trunc_f64_s (f64.add (local.get $py) (f64.mul (call $sin_approx (local.get $a)) (local.get $d)))))
   )
@@ -97,9 +111,24 @@
     (if (i32.lt_s (local.get $ly) (i32.const 0)) (then (local.set $ly (i32.const 0))))
     (if (i32.ge_s (local.get $ly) (i32.const 64)) (then (local.set $ly (i32.const 63))))
     (f64.div (f64.convert_i32_u (i32.load8_u
-      (i32.add (i32.const 0x14580)
+      (i32.add (i32.const 0x17D80)
         (i32.add (i32.mul (local.get $ly) (i32.const 64)) (local.get $lx)))))
       (f64.const 16.0))
+  )
+
+  ;; Get door openness (0-255) for map position, or 0 if no door there
+  (func $door_openness (param $mx i32) (param $my i32) (result i32)
+    (local $i i32) (local $a i32)
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (i32.load (i32.const 0x3F600))))
+      (local.set $a (i32.add (i32.const 0x3F5D0) (i32.mul (local.get $i) (i32.const 16))))
+      (if (i32.and (i32.eq (i32.load (local.get $a)) (local.get $mx))
+                   (i32.eq (i32.load (i32.add (local.get $a) (i32.const 4))) (local.get $my)))
+        (then (return (i32.load8_u (i32.add (local.get $a) (i32.const 8))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (i32.const 0)
   )
 
   (func $draw_rect (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $c i32)
@@ -246,6 +275,92 @@
       (br $vl)))
   )
 
+  ;; Tex 4: Office carpet — ramp 5 (brown) with ramp 14 (tan) flecks and grid
+  (func $gen_tex_floor
+    (local $u i32) (local $v i32) (local $c i32)
+    (local.set $v (i32.const 0))
+    (block $vd (loop $vl (br_if $vd (i32.ge_u (local.get $v) (i32.const 64)))
+      (local.set $u (i32.const 0))
+      (block $ud (loop $ul (br_if $ud (i32.ge_u (local.get $u) (i32.const 64)))
+        ;; Base brown carpet: ramp 5 shade 7-10
+        (local.set $c (i32.add (i32.const 87) (i32.and (call $rand) (i32.const 3))))
+        ;; Tile grid every 32px — darker grout lines
+        (if (i32.or (i32.eqz (i32.and (local.get $u) (i32.const 31)))
+                    (i32.eqz (i32.and (local.get $v) (i32.const 31))))
+          (then (local.set $c (i32.add (i32.const 83) (i32.and (call $rand) (i32.const 1))))))
+        ;; Tan flecks (ramp 14)
+        (if (i32.eqz (i32.and (call $rand) (i32.const 31)))
+          (then (local.set $c (i32.add (i32.const 230) (i32.and (call $rand) (i32.const 3))))))
+        (i32.store8 (call $tex_addr (i32.const 4) (local.get $u) (local.get $v)) (local.get $c))
+        (local.set $u (i32.add (local.get $u) (i32.const 1)))
+        (br $ul)))
+      (local.set $v (i32.add (local.get $v) (i32.const 1)))
+      (br $vl)))
+  )
+
+  ;; Tex 5: Ceiling tiles — ramp 6 (fluorescent) with ramp 0 (gray) grid and ramp 15 (warm white) fixture
+  (func $gen_tex_ceiling
+    (local $u i32) (local $v i32) (local $c i32)
+    (local.set $v (i32.const 0))
+    (block $vd (loop $vl (br_if $vd (i32.ge_u (local.get $v) (i32.const 64)))
+      (local.set $u (i32.const 0))
+      (block $ud (loop $ul (br_if $ud (i32.ge_u (local.get $u) (i32.const 64)))
+        ;; Base: ramp 6 shade 9-11
+        (local.set $c (i32.add (i32.const 105) (i32.and (call $rand) (i32.const 1))))
+        ;; Subtle stipple noise
+        (if (i32.eqz (i32.and (call $rand) (i32.const 7)))
+          (then (local.set $c (i32.add (i32.const 103) (i32.and (call $rand) (i32.const 1))))))
+        ;; Metal grid lines every 32px (ramp 0 gray shade 7)
+        (if (i32.or (i32.eqz (i32.and (local.get $u) (i32.const 31)))
+                    (i32.eqz (i32.and (local.get $v) (i32.const 31))))
+          (then (local.set $c (i32.const 7))))
+        ;; Fluorescent light fixture at center (u:12-20, v:12-20)
+        (if (i32.and
+              (i32.and (i32.gt_u (local.get $u) (i32.const 12)) (i32.lt_u (local.get $u) (i32.const 20)))
+              (i32.and (i32.gt_u (local.get $v) (i32.const 12)) (i32.lt_u (local.get $v) (i32.const 20))))
+          (then (local.set $c (i32.add (i32.const 250) (i32.and (call $rand) (i32.const 3))))))
+        (i32.store8 (call $tex_addr (i32.const 5) (local.get $u) (local.get $v)) (local.get $c))
+        (local.set $u (i32.add (local.get $u) (i32.const 1)))
+        (br $ul)))
+      (local.set $v (i32.add (local.get $v) (i32.const 1)))
+      (br $vl)))
+  )
+
+  ;; Tex 6: Steel door — ramp 10 (steel) with ramp 0 (gray) handle and ramp 5 (brown) frame
+  (func $gen_tex_door
+    (local $u i32) (local $v i32) (local $c i32)
+    (local.set $v (i32.const 0))
+    (block $vd (loop $vl (br_if $vd (i32.ge_u (local.get $v) (i32.const 64)))
+      (local.set $u (i32.const 0))
+      (block $ud (loop $ul (br_if $ud (i32.ge_u (local.get $u) (i32.const 64)))
+        ;; Steel body: ramp 10 shade 8-11
+        (local.set $c (i32.add (i32.const 168) (i32.and (call $rand) (i32.const 3))))
+        ;; Horizontal panel lines every 16 rows
+        (if (i32.lt_u (i32.and (local.get $v) (i32.const 15)) (i32.const 1))
+          (then (local.set $c (i32.const 165))))
+        ;; Left/right frame edges (ramp 5 brown)
+        (if (i32.or (i32.lt_u (local.get $u) (i32.const 3)) (i32.gt_u (local.get $u) (i32.const 60)))
+          (then (local.set $c (i32.add (i32.const 85) (i32.and (call $rand) (i32.const 1))))))
+        ;; Handle (ramp 0 shade 12-14) at right side, middle height
+        (if (i32.and
+              (i32.and (i32.gt_u (local.get $u) (i32.const 48)) (i32.lt_u (local.get $u) (i32.const 54)))
+              (i32.and (i32.gt_u (local.get $v) (i32.const 28)) (i32.lt_u (local.get $v) (i32.const 36))))
+          (then (local.set $c (i32.add (i32.const 12) (i32.and (call $rand) (i32.const 1))))))
+        ;; Keycard slot (ramp 4 red) above handle
+        (if (i32.and
+              (i32.and (i32.gt_u (local.get $u) (i32.const 49)) (i32.lt_u (local.get $u) (i32.const 53)))
+              (i32.and (i32.gt_u (local.get $v) (i32.const 22)) (i32.lt_u (local.get $v) (i32.const 27))))
+          (then (local.set $c (i32.const 75))))
+        ;; Top highlight
+        (if (i32.and (i32.gt_u (local.get $u) (i32.const 3)) (i32.lt_u (local.get $v) (i32.const 2)))
+          (then (local.set $c (i32.const 173))))
+        (i32.store8 (call $tex_addr (i32.const 6) (local.get $u) (local.get $v)) (local.get $c))
+        (local.set $u (i32.add (local.get $u) (i32.const 1)))
+        (br $ul)))
+      (local.set $v (i32.add (local.get $v) (i32.const 1)))
+      (br $vl)))
+  )
+
   ;; ---- Init ----
   (func (export "init")
     (local $ramp i32) (local $shade i32) (local $idx i32)
@@ -280,8 +395,11 @@
     (call $gen_tex_cubicle)
     (call $gen_tex_server)
     (call $gen_tex_demon)
+    (call $gen_tex_floor)
+    (call $gen_tex_ceiling)
+    (call $gen_tex_door)
 
-    ;; === Generate 64x64 lightmap at 0x14580 ===
+    ;; === Generate 64x64 lightmap at 0x17D80 ===
     ;; 9 point lights, inverse-square falloff
     ;; Light source data: 9 lights × 4 values (x, y, intensity, falloff) = 36 f64s
     ;; Stored inline via a light source loop
@@ -289,7 +407,7 @@
     (block $lyd (loop $lyl (br_if $lyd (i32.ge_u (local.get $ly) (i32.const 64)))
       (local.set $lx (i32.const 0))
       (block $lxd (loop $lxl (br_if $lxd (i32.ge_u (local.get $lx) (i32.const 64)))
-        (local.set $laddr (i32.add (i32.const 0x14580)
+        (local.set $laddr (i32.add (i32.const 0x17D80)
           (i32.add (i32.mul (local.get $ly) (i32.const 64)) (local.get $lx))))
         ;; World position of this lightmap cell center
         (local.set $wx (f64.add (f64.div (f64.convert_i32_u (local.get $lx)) (f64.const 4.0)) (f64.const 0.125)))
@@ -398,6 +516,25 @@
     ;; Autopilot on, turn_dir = 1
     (i32.store (i32.const 0x3F5A8) (i32.const 1))
     (i32.store (i32.const 0x3F5B0) (i32.const 1))
+
+    ;; Doors at 0x3F5D0: 3 doors × 16 bytes (map_x i32, map_y i32, openness u8 at +8, timer i32 at +12)
+    ;; Door 0: (4, 6)
+    (i32.store (i32.const 0x3F5D0) (i32.const 4))
+    (i32.store (i32.const 0x3F5D4) (i32.const 6))
+    (i32.store (i32.const 0x3F5D8) (i32.const 0))
+    (i32.store (i32.const 0x3F5DC) (i32.const 0))
+    ;; Door 1: (4, 9)
+    (i32.store (i32.const 0x3F5E0) (i32.const 4))
+    (i32.store (i32.const 0x3F5E4) (i32.const 9))
+    (i32.store (i32.const 0x3F5E8) (i32.const 0))
+    (i32.store (i32.const 0x3F5EC) (i32.const 0))
+    ;; Door 2: (12, 9)
+    (i32.store (i32.const 0x3F5F0) (i32.const 12))
+    (i32.store (i32.const 0x3F5F4) (i32.const 9))
+    (i32.store (i32.const 0x3F5F8) (i32.const 0))
+    (i32.store (i32.const 0x3F5FC) (i32.const 0))
+    ;; Door count
+    (i32.store (i32.const 0x3F600) (i32.const 3))
   )
 
   ;; ---- Shooting hitscan ----
@@ -486,6 +623,7 @@
     (local $addr i32)
     (local $flash_intensity f64) (local $lmap_val f64)
     (local $floor_wx f64) (local $floor_wy f64)
+    (local $di i32) (local $daddr i32) (local $door_open f64) (local $door_hit_pos f64)
 
     ;; Load player
     (local.set $px (f64.promote_f32 (f32.load (i32.const 0x3F500))))
@@ -545,6 +683,21 @@
               (f64.mul (f64.convert_i32_s (i32.load (i32.const 0x3F5B0))) (f64.const 0.003))))))
         (local.set $cos_a (call $cos_approx (local.get $pa)))
         (local.set $sin_a (call $sin_approx (local.get $pa)))
+        ;; Auto-open doors: find door ahead and open it
+        (local.set $map_x (i32.trunc_f64_s (f64.add (local.get $px) (f64.mul (local.get $cos_a) (f64.const 1.5)))))
+        (local.set $map_y (i32.trunc_f64_s (f64.add (local.get $py) (f64.mul (local.get $sin_a) (f64.const 1.5)))))
+        (if (i32.eq (call $map_get (local.get $map_x) (local.get $map_y)) (i32.const 5))
+          (then
+            (local.set $di (i32.const 0))
+            (block $aod (loop $aol (br_if $aod (i32.ge_u (local.get $di) (i32.load (i32.const 0x3F600))))
+              (local.set $daddr (i32.add (i32.const 0x3F5D0) (i32.mul (local.get $di) (i32.const 16))))
+              (if (i32.and
+                    (i32.eq (i32.load (local.get $daddr)) (local.get $map_x))
+                    (i32.eq (i32.load (i32.add (local.get $daddr) (i32.const 4))) (local.get $map_y)))
+                (then (if (i32.eqz (i32.load (i32.add (local.get $daddr) (i32.const 12))))
+                  (then (i32.store (i32.add (local.get $daddr) (i32.const 12)) (i32.const 120))))))
+              (local.set $di (i32.add (local.get $di) (i32.const 1)))
+              (br $aol)))))
         ;; Auto-shoot
         (if (i32.eqz (i32.and (i32.load (i32.const 0x00)) (i32.const 31)))
           (then (if (i32.eqz (i32.load (i32.const 0x3F5B4)))
@@ -581,14 +734,14 @@
               (call $note (i32.const 1) (i32.const 440) (i32.const 50) (i32.const 180))
               (call $try_shoot (local.get $px) (local.get $py) (local.get $pa))))))))
 
-    ;; Collision
+    ;; Collision (uses $is_solid so open doors are passable)
     (local.set $new_px (f64.add (local.get $px) (local.get $move_dx)))
-    (if (i32.eqz (call $map_get
+    (if (i32.eqz (call $is_solid
           (i32.trunc_f64_s (f64.add (local.get $new_px) (select (f64.const 0.2) (f64.const -0.2) (f64.gt (local.get $move_dx) (f64.const 0.0)))))
           (i32.trunc_f64_s (local.get $py))))
       (then (local.set $px (local.get $new_px))))
     (local.set $new_py (f64.add (local.get $py) (local.get $move_dy)))
-    (if (i32.eqz (call $map_get
+    (if (i32.eqz (call $is_solid
           (i32.trunc_f64_s (local.get $px))
           (i32.trunc_f64_s (f64.add (local.get $new_py) (select (f64.const 0.2) (f64.const -0.2) (f64.gt (local.get $move_dy) (f64.const 0.0)))))))
       (then (local.set $py (local.get $new_py))))
@@ -623,9 +776,9 @@
               (local.set $edy (f64.div (local.get $edy) (local.get $edist)))
               (local.set $new_px (f64.add (local.get $ex) (f64.mul (local.get $edx) (f64.const 0.012))))
               (local.set $new_py (f64.add (local.get $ey) (f64.mul (local.get $edy) (f64.const 0.012))))
-              (if (i32.eqz (call $map_get (i32.trunc_f64_s (local.get $new_px)) (i32.trunc_f64_s (local.get $ey))))
+              (if (i32.eqz (call $is_solid (i32.trunc_f64_s (local.get $new_px)) (i32.trunc_f64_s (local.get $ey))))
                 (then (f32.store (local.get $addr) (f32.demote_f64 (local.get $new_px)))))
-              (if (i32.eqz (call $map_get (i32.trunc_f64_s (local.get $ex)) (i32.trunc_f64_s (local.get $new_py))))
+              (if (i32.eqz (call $is_solid (i32.trunc_f64_s (local.get $ex)) (i32.trunc_f64_s (local.get $new_py))))
                 (then (f32.store (i32.add (local.get $addr) (i32.const 4)) (f32.demote_f64 (local.get $new_py)))))))
           (if (i32.and (f64.lt (local.get $edist) (f64.const 0.8))
                        (i32.gt_s (i32.load (i32.const 0x3F50C)) (i32.const 0)))
@@ -640,6 +793,62 @@
                   (f64.sub (local.get $ey) (f64.mul (local.get $edy) (f64.const 1.0)))))))))))
       (local.set $ei (i32.add (local.get $ei) (i32.const 1)))
       (br $elp)))
+
+    ;; === Door update ===
+    ;; Door state: openness u8 at +8, timer i32 at +12
+    ;; timer > 0: opening or holding open (counts down)
+    ;; timer = 0 and openness > 0: closing (auto-close)
+    ;; timer = 0 and openness = 0: closed
+    ;;
+    ;; Space/Enter opens the NEAREST door within 2 tiles
+    (if (i32.and (local.get $new_press) (i32.const 0x30))
+      (then
+        (local.set $di (i32.const 0))
+        (local.set $edist (f64.const 100.0))
+        (local.set $addr (i32.const -1))
+        (block $dd (loop $dl (br_if $dd (i32.ge_u (local.get $di) (i32.load (i32.const 0x3F600))))
+          (local.set $daddr (i32.add (i32.const 0x3F5D0) (i32.mul (local.get $di) (i32.const 16))))
+          (local.set $edx (f64.sub (f64.add (f64.convert_i32_s (i32.load (local.get $daddr))) (f64.const 0.5)) (local.get $px)))
+          (local.set $edy (f64.sub (f64.add (f64.convert_i32_s (i32.load (i32.add (local.get $daddr) (i32.const 4)))) (f64.const 0.5)) (local.get $py)))
+          (local.set $fdist (f64.add (f64.mul (local.get $edx) (local.get $edx)) (f64.mul (local.get $edy) (local.get $edy))))
+          (if (i32.and (f64.lt (local.get $fdist) (f64.const 4.0))
+                       (f64.lt (local.get $fdist) (local.get $edist)))
+            (then
+              (local.set $edist (local.get $fdist))
+              (local.set $addr (local.get $daddr))))
+          (local.set $di (i32.add (local.get $di) (i32.const 1)))
+          (br $dl)))
+        ;; Open the nearest door (if found and currently closed)
+        (if (i32.ge_s (local.get $addr) (i32.const 0))
+          (then
+            (if (i32.eqz (i32.load (i32.add (local.get $addr) (i32.const 12))))
+              (then
+                (i32.store (i32.add (local.get $addr) (i32.const 12)) (i32.const 120))
+                (call $note (i32.const 3) (i32.const 150) (i32.const 300) (i32.const 120))))))))
+    ;; Animate all doors
+    (local.set $di (i32.const 0))
+    (block $dad (loop $dal (br_if $dad (i32.ge_u (local.get $di) (i32.load (i32.const 0x3F600))))
+      (local.set $daddr (i32.add (i32.const 0x3F5D0) (i32.mul (local.get $di) (i32.const 16))))
+      (if (i32.gt_s (i32.load (i32.add (local.get $daddr) (i32.const 12))) (i32.const 0))
+        (then
+          ;; Timer active: open if not fully open, else just count down (hold open)
+          (if (i32.lt_u (i32.load8_u (i32.add (local.get $daddr) (i32.const 8))) (i32.const 250))
+            (then (i32.store8 (i32.add (local.get $daddr) (i32.const 8))
+              (i32.add (i32.load8_u (i32.add (local.get $daddr) (i32.const 8))) (i32.const 5))))
+            (else (i32.store8 (i32.add (local.get $daddr) (i32.const 8)) (i32.const 255))))
+          (i32.store (i32.add (local.get $daddr) (i32.const 12))
+            (i32.sub (i32.load (i32.add (local.get $daddr) (i32.const 12))) (i32.const 1)))))
+      ;; Timer=0 and open: auto-close
+      (if (i32.and
+            (i32.eqz (i32.load (i32.add (local.get $daddr) (i32.const 12))))
+            (i32.gt_u (i32.load8_u (i32.add (local.get $daddr) (i32.const 8))) (i32.const 0)))
+        (then
+          (if (i32.gt_u (i32.load8_u (i32.add (local.get $daddr) (i32.const 8))) (i32.const 4))
+            (then (i32.store8 (i32.add (local.get $daddr) (i32.const 8))
+              (i32.sub (i32.load8_u (i32.add (local.get $daddr) (i32.const 8))) (i32.const 5))))
+            (else (i32.store8 (i32.add (local.get $daddr) (i32.const 8)) (i32.const 0))))))
+      (local.set $di (i32.add (local.get $di) (i32.const 1)))
+      (br $dal)))
 
     ;; === Dynamic lighting setup ===
     ;; Muzzle flash intensity (fades from 1.0 to 0.0 over 6 frames)
@@ -708,7 +917,26 @@
             (local.set $side (i32.const 1))))
         (local.set $wall_type (call $map_get (local.get $map_x) (local.get $map_y)))
         (if (i32.gt_u (local.get $wall_type) (i32.const 0))
-          (then (local.set $hit (i32.const 1))))
+          (then
+            (if (i32.eq (local.get $wall_type) (i32.const 5))
+              (then
+                ;; Door: check if ray passes through open gap
+                ;; Get fractional hit position along the wall face
+                (local.set $door_open (f64.div
+                  (f64.convert_i32_u (call $door_openness (local.get $map_x) (local.get $map_y)))
+                  (f64.const 255.0)))
+                ;; Compute wall_x (fractional position on wall face)
+                (if (i32.eqz (local.get $side))
+                  (then (local.set $door_hit_pos (f64.add (local.get $py)
+                    (f64.mul (f64.sub (local.get $side_dist_x) (local.get $delta_dist_x)) (local.get $ray_dy)))))
+                  (else (local.set $door_hit_pos (f64.add (local.get $px)
+                    (f64.mul (f64.sub (local.get $side_dist_y) (local.get $delta_dist_y)) (local.get $ray_dx))))))
+                (local.set $door_hit_pos (f64.sub (local.get $door_hit_pos) (f64.floor (local.get $door_hit_pos))))
+                ;; Door slides from left: if hit_pos < open fraction, ray passes through
+                (if (f64.lt (local.get $door_hit_pos) (local.get $door_open))
+                  (then (nop))  ;; ray passes through — don't set hit
+                  (else (local.set $hit (i32.const 1)))))
+              (else (local.set $hit (i32.const 1))))))
         (local.set $dda_steps (i32.add (local.get $dda_steps) (i32.const 1)))
         (br $hl)))
 
@@ -736,9 +964,18 @@
         (else (local.set $wall_x (f64.add (local.get $px) (f64.mul (local.get $perp_dist) (local.get $ray_dx))))))
       (local.set $wall_x (f64.sub (local.get $wall_x) (f64.floor (local.get $wall_x))))
       (local.set $tex_u (i32.and (i32.trunc_f64_s (f64.mul (local.get $wall_x) (f64.const 64.0))) (i32.const 63)))
-      (local.set $tex_id (i32.sub (local.get $wall_type) (i32.const 1)))
+      ;; Map wall_type to texture: 1→0, 2→1, 3→2, 4→3, 5(door)→6
+      (local.set $tex_id (if (result i32) (i32.eq (local.get $wall_type) (i32.const 5))
+        (then (i32.const 6))
+        (else (i32.sub (local.get $wall_type) (i32.const 1)))))
+      ;; Door texture sliding: offset U by open fraction so texture moves with door panel
+      (if (i32.eq (local.get $wall_type) (i32.const 5))
+        (then (local.set $tex_u (i32.and
+          (i32.add (local.get $tex_u)
+            (i32.shr_u (i32.mul (call $door_openness (local.get $map_x) (local.get $map_y)) (i32.const 64)) (i32.const 8)))
+          (i32.const 63)))))
       (if (i32.lt_s (local.get $tex_id) (i32.const 0)) (then (local.set $tex_id (i32.const 0))))
-      (if (i32.gt_s (local.get $tex_id) (i32.const 3)) (then (local.set $tex_id (i32.const 3))))
+      (if (i32.gt_s (local.get $tex_id) (i32.const 6)) (then (local.set $tex_id (i32.const 6))))
 
       ;; === Wall light: lightmap at wall face (step back 0.3 into open space) + flash ===
       ;; Hit point minus 0.3 * ray_dir = sample in the open cell facing the wall
@@ -758,28 +995,34 @@
       (if (f64.lt (local.get $light) (f64.const 0.05))
         (then (local.set $light (f64.const 0.05))))
 
-      ;; --- Draw ceiling: ramp 6 (fluorescent), base shade 14 ---
+      ;; --- Draw ceiling: textured (tex 5) with lightmap ---
       (local.set $row (i32.const 0))
       (block $cd (loop $cl
         (br_if $cd (i32.or (i32.ge_s (local.get $row) (local.get $draw_start))
                            (i32.ge_s (local.get $row) (i32.const 200))))
-        ;; Ceiling distance from vertical perspective
         (local.set $fhalf (f64.convert_i32_s (i32.sub (i32.const 100) (local.get $row))))
         (if (f64.lt (local.get $fhalf) (f64.const 1.0)) (then (local.set $fhalf (f64.const 1.0))))
         (local.set $fdist (f64.div (f64.const 50.0) (local.get $fhalf)))
-        ;; Ceiling world position for lightmap lookup
+        ;; Ceiling world position
         (local.set $floor_wx (f64.add (local.get $px)
           (f64.mul (call $cos_approx (local.get $ray_angle)) (local.get $fdist))))
         (local.set $floor_wy (f64.add (local.get $py)
           (f64.mul (call $sin_approx (local.get $ray_angle)) (local.get $fdist))))
+        ;; Sample ceiling texture (tex 5)
+        (local.set $tex_u (i32.and (i32.trunc_f64_s (f64.mul (local.get $floor_wx) (f64.const 64.0))) (i32.const 63)))
+        (local.set $tex_v (i32.and (i32.trunc_f64_s (f64.mul (local.get $floor_wy) (f64.const 64.0))) (i32.const 63)))
+        (local.set $tex_color (i32.load8_u (call $tex_addr (i32.const 5) (local.get $tex_u) (local.get $tex_v))))
+        (local.set $ramp (i32.shr_u (local.get $tex_color) (i32.const 4)))
+        (local.set $base_shade (i32.and (local.get $tex_color) (i32.const 15)))
+        ;; Lightmap + distance + flash
         (local.set $lmap_val (call $lmap_get (local.get $floor_wx) (local.get $floor_wy)))
-        (local.set $lit (f64.mul (f64.const 14.0)
-          (f64.add
-            (f64.mul (local.get $lmap_val)
-              (f64.div (f64.const 1.0) (f64.add (f64.const 1.0) (f64.mul (local.get $fdist) (f64.const 0.05)))))
-            (f64.mul (local.get $flash_intensity)
-              (f64.div (f64.const 2.0) (f64.add (f64.const 1.0) (f64.mul (local.get $fdist) (f64.const 0.5))))))))
-        ;; Dither: shade_lo, frac, bayer
+        (local.set $light (f64.add
+          (f64.mul (local.get $lmap_val)
+            (f64.div (f64.const 1.0) (f64.add (f64.const 1.0) (f64.mul (local.get $fdist) (f64.const 0.05)))))
+          (f64.mul (local.get $flash_intensity)
+            (f64.div (f64.const 2.0) (f64.add (f64.const 1.0) (f64.mul (local.get $fdist) (f64.const 0.5)))))))
+        (local.set $lit (f64.mul (f64.convert_i32_u (local.get $base_shade)) (local.get $light)))
+        ;; Dither
         (local.set $shade_lo (i32.trunc_f64_s (local.get $lit)))
         (if (i32.lt_s (local.get $shade_lo) (i32.const 0)) (then (local.set $shade_lo (i32.const 0))))
         (if (i32.gt_s (local.get $shade_lo) (i32.const 14)) (then (local.set $shade_lo (i32.const 14))))
@@ -793,10 +1036,9 @@
           (i32.gt_s (local.get $frac) (local.get $bayer))))
         (if (i32.gt_s (local.get $final_shade) (i32.const 15))
           (then (local.set $final_shade (i32.const 15))))
-        ;; Pixel = ramp 6 * 16 + shade = 96 + shade
         (i32.store8 (i32.add (i32.const 0x0340)
           (i32.add (i32.mul (local.get $row) (i32.const 320)) (local.get $col)))
-          (i32.add (i32.const 96) (local.get $final_shade)))
+          (i32.add (i32.shl (local.get $ramp) (i32.const 4)) (local.get $final_shade)))
         (local.set $row (i32.add (local.get $row) (i32.const 1)))
         (br $cl)))
 
@@ -837,24 +1079,31 @@
         (local.set $row (i32.add (local.get $row) (i32.const 1)))
         (br $wl)))
 
-      ;; --- Draw floor: ramp 5 (brown), base shade 10 ---
+      ;; --- Draw floor: textured (tex 4) with lightmap ---
       (local.set $row (select (local.get $draw_end) (i32.const 0) (i32.ge_s (local.get $draw_end) (i32.const 0))))
       (block $fd (loop $fl (br_if $fd (i32.ge_s (local.get $row) (i32.const 200)))
         (local.set $fhalf (f64.convert_i32_s (i32.sub (local.get $row) (i32.const 99))))
         (if (f64.lt (local.get $fhalf) (f64.const 1.0)) (then (local.set $fhalf (f64.const 1.0))))
         (local.set $fdist (f64.div (f64.const 50.0) (local.get $fhalf)))
-        ;; Floor world position for lightmap
+        ;; Floor world position
         (local.set $floor_wx (f64.add (local.get $px)
           (f64.mul (call $cos_approx (local.get $ray_angle)) (local.get $fdist))))
         (local.set $floor_wy (f64.add (local.get $py)
           (f64.mul (call $sin_approx (local.get $ray_angle)) (local.get $fdist))))
+        ;; Sample floor texture (tex 4)
+        (local.set $tex_u (i32.and (i32.trunc_f64_s (f64.mul (local.get $floor_wx) (f64.const 64.0))) (i32.const 63)))
+        (local.set $tex_v (i32.and (i32.trunc_f64_s (f64.mul (local.get $floor_wy) (f64.const 64.0))) (i32.const 63)))
+        (local.set $tex_color (i32.load8_u (call $tex_addr (i32.const 4) (local.get $tex_u) (local.get $tex_v))))
+        (local.set $ramp (i32.shr_u (local.get $tex_color) (i32.const 4)))
+        (local.set $base_shade (i32.and (local.get $tex_color) (i32.const 15)))
+        ;; Lightmap + distance + flash
         (local.set $lmap_val (call $lmap_get (local.get $floor_wx) (local.get $floor_wy)))
-        (local.set $lit (f64.mul (f64.const 10.0)
-          (f64.add
-            (f64.mul (local.get $lmap_val)
-              (f64.div (f64.const 1.0) (f64.add (f64.const 1.0) (f64.mul (local.get $fdist) (f64.const 0.12)))))
-            (f64.mul (local.get $flash_intensity)
-              (f64.div (f64.const 2.0) (f64.add (f64.const 1.0) (f64.mul (local.get $fdist) (f64.const 0.5))))))))
+        (local.set $light (f64.add
+          (f64.mul (local.get $lmap_val)
+            (f64.div (f64.const 1.0) (f64.add (f64.const 1.0) (f64.mul (local.get $fdist) (f64.const 0.12)))))
+          (f64.mul (local.get $flash_intensity)
+            (f64.div (f64.const 2.0) (f64.add (f64.const 1.0) (f64.mul (local.get $fdist) (f64.const 0.5)))))))
+        (local.set $lit (f64.mul (f64.convert_i32_u (local.get $base_shade)) (local.get $light)))
         ;; Dither
         (local.set $shade_lo (i32.trunc_f64_s (local.get $lit)))
         (if (i32.lt_s (local.get $shade_lo) (i32.const 0)) (then (local.set $shade_lo (i32.const 0))))
@@ -869,10 +1118,9 @@
           (i32.gt_s (local.get $frac) (local.get $bayer))))
         (if (i32.gt_s (local.get $final_shade) (i32.const 15))
           (then (local.set $final_shade (i32.const 15))))
-        ;; Pixel = ramp 5 * 16 + shade = 80 + shade
         (i32.store8 (i32.add (i32.const 0x0340)
           (i32.add (i32.mul (local.get $row) (i32.const 320)) (local.get $col)))
-          (i32.add (i32.const 80) (local.get $final_shade)))
+          (i32.add (i32.shl (local.get $ramp) (i32.const 4)) (local.get $final_shade)))
         (local.set $row (i32.add (local.get $row) (i32.const 1)))
         (br $fl)))
 
@@ -936,7 +1184,7 @@
                               (if (i32.gt_u (local.get $tex_v) (i32.const 15)) (then (local.set $tex_v (i32.const 15))))
                               (if (i32.gt_u (local.get $tex_u) (i32.const 15)) (then (local.set $tex_u (i32.const 15))))
                               ;; Look up sprite (0 = transparent)
-                              (local.set $ecolor (i32.load8_u (i32.add (i32.const 0x14480)
+                              (local.set $ecolor (i32.load8_u (i32.add (i32.const 0x17C80)
                                 (i32.add (i32.mul (local.get $tex_v) (i32.const 16)) (local.get $tex_u)))))
                               (if (local.get $ecolor)
                                 (then
@@ -1068,7 +1316,9 @@
   )
 
   ;; ---- Data segments ----
-  ;; Map 16x16 at 0x10340: 1=drywall 2=cubicle 3=server 4=demon
+  ;; Map 16x16 at 0x10340: 1=drywall 2=cubicle 3=server 4=demon 5=door
+  ;;   Row 6: door at (4,6) between north office and south corridor
+  ;;   Row 9: doors at (4,9) and (12,9) between corridors and south rooms
   (data (i32.const 0x10340)
     "\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01"
     "\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01"
@@ -1076,10 +1326,10 @@
     "\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01"
     "\01\00\02\02\00\02\02\00\00\03\03\03\00\00\00\01"
     "\01\00\00\00\00\00\00\00\00\03\00\03\00\00\00\01"
-    "\01\01\01\01\00\01\01\01\00\03\03\03\00\01\01\01"
+    "\01\01\01\01\05\01\01\01\00\03\03\03\00\01\01\01"
     "\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01"
     "\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01"
-    "\01\01\01\01\00\01\01\01\00\01\01\01\00\01\01\01"
+    "\01\01\01\01\05\01\01\01\00\01\01\01\05\01\01\01"
     "\01\00\00\00\00\00\00\00\00\04\00\04\04\00\00\01"
     "\01\00\02\02\00\02\02\00\00\04\00\00\00\00\00\01"
     "\01\00\00\00\00\00\00\00\00\04\00\04\04\00\00\01"
@@ -1096,10 +1346,10 @@
   ;; 6:Fluoresc  7:Crimson   8:Yellow    9:Purple    10:Steel    11:Green
   ;; 12:Orange   13:Cyan     14:Tan      15:WarmWht
   ;;
-  ;; Enemy demon sprite 16x16 at 0x14480 (256 bytes, 0=transparent)
+  ;; Enemy demon sprite 16x16 at 0x17C80 (256 bytes, 0=transparent)
   ;; H=0xEB(bone) C=0x7A(crimson) E=0x8E(eye) T=0x0D(teeth)
   ;; B=0x4A(blood) A=0x9A(purple) P=0x98(belt)
-  (data (i32.const 0x14480)
+  (data (i32.const 0x17C80)
     "\00\00\00\EB\00\00\00\00\00\00\00\00\EB\00\00\00"  ;; horns
     "\00\00\EB\EB\EB\00\00\00\00\00\EB\EB\EB\00\00\00"  ;; horn stems
     "\00\00\00\00\7A\7A\7A\7A\7A\7A\00\00\00\00\00\00"  ;; head top
