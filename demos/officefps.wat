@@ -752,7 +752,7 @@
                 (i32.trunc_f64_s (f64.div (f64.mul (local.get $etz) (f64.const 200.0)) (local.get $etx)))))
               (local.set $eheight (i32.trunc_f64_s (f64.div (f64.const 160.0) (local.get $etx))))
               (if (i32.gt_s (local.get $eheight) (i32.const 200)) (then (local.set $eheight (i32.const 200))))
-              (local.set $ewidth (i32.div_s (i32.mul (local.get $eheight) (i32.const 6)) (i32.const 10)))
+              (local.set $ewidth (i32.div_s (i32.mul (local.get $eheight) (i32.const 8)) (i32.const 10)))
               (local.set $ecol_start (i32.sub (local.get $escr_x) (i32.shr_u (local.get $ewidth) (i32.const 1))))
               (local.set $ecol_end (i32.add (local.get $escr_x) (i32.shr_u (local.get $ewidth) (i32.const 1))))
               (local.set $erow_start (i32.sub (i32.const 100) (i32.shr_u (local.get $eheight) (i32.const 1))))
@@ -774,39 +774,20 @@
                         (block $erd (loop $erl (br_if $erd (i32.ge_s (local.get $erow) (local.get $erow_end)))
                           (if (i32.and (i32.ge_s (local.get $erow) (i32.const 0)) (i32.lt_s (local.get $erow) (i32.const 190)))
                             (then
-                              ;; Relative v (0-9) and u (0-9)
+                              ;; 16x16 sprite lookup
                               (local.set $tex_v (i32.div_u
-                                (i32.mul (i32.sub (local.get $erow) (local.get $erow_start)) (i32.const 10))
+                                (i32.mul (i32.sub (local.get $erow) (local.get $erow_start)) (i32.const 16))
                                 (select (local.get $eheight) (i32.const 1) (i32.gt_s (local.get $eheight) (i32.const 0)))))
                               (local.set $tex_u (i32.div_u
-                                (i32.mul (i32.sub (local.get $ecol) (local.get $ecol_start)) (i32.const 10))
+                                (i32.mul (i32.sub (local.get $ecol) (local.get $ecol_start)) (i32.const 16))
                                 (select (local.get $ewidth) (i32.const 1) (i32.gt_s (local.get $ewidth) (i32.const 0)))))
-                              ;; Shape: skip corners
-                              (if (i32.eqz (i32.or
-                                    (i32.and (i32.lt_u (local.get $tex_v) (i32.const 2))
-                                             (i32.or (i32.lt_u (local.get $tex_u) (i32.const 2))
-                                                     (i32.gt_u (local.get $tex_u) (i32.const 8))))
-                                    (i32.and (i32.gt_u (local.get $tex_v) (i32.const 8))
-                                             (i32.or (i32.lt_u (local.get $tex_u) (i32.const 3))
-                                                     (i32.gt_u (local.get $tex_u) (i32.const 7))))))
+                              (if (i32.gt_u (local.get $tex_v) (i32.const 15)) (then (local.set $tex_v (i32.const 15))))
+                              (if (i32.gt_u (local.get $tex_u) (i32.const 15)) (then (local.set $tex_u (i32.const 15))))
+                              ;; Look up sprite (0 = transparent)
+                              (local.set $ecolor (i32.load8_u (i32.add (i32.const 0x14480)
+                                (i32.add (i32.mul (local.get $tex_v) (i32.const 16)) (local.get $tex_u)))))
+                              (if (local.get $ecolor)
                                 (then
-                                  ;; Color: ramp 7 (crimson) with yellow eyes (ramp 8)
-                                  (local.set $ecolor
-                                    (if (result i32) (i32.lt_u (local.get $tex_v) (i32.const 3))
-                                      (then
-                                        (if (result i32) (i32.and
-                                              (i32.eq (local.get $tex_v) (i32.const 1))
-                                              (i32.or
-                                                (i32.and (i32.ge_u (local.get $tex_u) (i32.const 3))
-                                                         (i32.le_u (local.get $tex_u) (i32.const 4)))
-                                                (i32.and (i32.ge_u (local.get $tex_u) (i32.const 6))
-                                                         (i32.le_u (local.get $tex_u) (i32.const 7)))))
-                                          (then (i32.const 142))   ;; eyes: ramp 8 shade 14
-                                          (else (i32.const 123)))) ;; head: ramp 7 shade 11
-                                      (else
-                                        (if (result i32) (i32.lt_u (local.get $tex_v) (i32.const 7))
-                                          (then (i32.const 120))   ;; body: ramp 7 shade 8
-                                          (else (i32.const 117)))))) ;; legs: ramp 7 shade 5
                                   ;; Apply dithered lighting
                                   (local.set $ramp (i32.shr_u (local.get $ecolor) (i32.const 4)))
                                   (local.set $base_shade (i32.and (local.get $ecolor) (i32.const 15)))
@@ -834,26 +815,70 @@
       (local.set $ei (i32.add (local.get $ei) (i32.const 1)))
       (br $erlp)))
 
-    ;; === WEAPON (fixed lighting, close to camera) ===
+    ;; === WEAPON (detailed shotgun with hand) ===
     (local.set $bob (i32.const 0))
     (if (i32.or (i32.and (local.get $keys) (i32.const 3)) (i32.load (i32.const 0x3F5A8)))
       (then (local.set $bob (i32.and (i32.shr_u (i32.load (i32.const 0x00)) (i32.const 2)) (i32.const 3)))))
     (local.set $wep_y (i32.sub (i32.const 0) (i32.add (local.get $bob) (i32.load (i32.const 0x3F5B8)))))
-    ;; Body (ramp 10 shade 8 = 168)
-    (call $draw_rect (i32.const 148) (i32.add (i32.const 168) (local.get $wep_y)) (i32.const 24) (i32.const 16) (i32.const 168))
-    ;; Barrel (ramp 10 shade 10 = 170)
-    (call $draw_rect (i32.const 155) (i32.add (i32.const 148) (local.get $wep_y)) (i32.const 10) (i32.const 20) (i32.const 170))
-    ;; Sight (ramp 10 shade 5 = 165)
-    (call $draw_rect (i32.const 158) (i32.add (i32.const 143) (local.get $wep_y)) (i32.const 4) (i32.const 5) (i32.const 165))
-    ;; Handle (ramp 10 shade 4 = 164)
-    (call $draw_rect (i32.const 152) (i32.add (i32.const 184) (local.get $wep_y)) (i32.const 12) (i32.const 16) (i32.const 164))
-    ;; Highlight (ramp 10 shade 13 = 173)
-    (call $draw_rect (i32.const 172) (i32.add (i32.const 168) (local.get $wep_y)) (i32.const 2) (i32.const 16) (i32.const 173))
-    ;; Muzzle flash (ramp 8 yellow + ramp 12 orange)
+    ;; Hand — skin (ramp 14 tan)
+    (call $draw_rect (i32.const 140) (i32.add (i32.const 182) (local.get $wep_y)) (i32.const 36) (i32.const 18) (i32.const 233))
+    (call $draw_rect (i32.const 142) (i32.add (i32.const 180) (local.get $wep_y)) (i32.const 32) (i32.const 4) (i32.const 234))
+    ;; Thumb (left side)
+    (call $draw_rect (i32.const 137) (i32.add (i32.const 176) (local.get $wep_y)) (i32.const 5) (i32.const 10) (i32.const 232))
+    ;; Fingers wrapping around grip
+    (call $draw_rect (i32.const 145) (i32.add (i32.const 174) (local.get $wep_y)) (i32.const 28) (i32.const 3) (i32.const 235))
+    (call $draw_rect (i32.const 147) (i32.add (i32.const 171) (local.get $wep_y)) (i32.const 24) (i32.const 3) (i32.const 234))
+    ;; Knuckle highlights
+    (call $draw_rect (i32.const 148) (i32.add (i32.const 178) (local.get $wep_y)) (i32.const 6) (i32.const 2) (i32.const 236))
+    (call $draw_rect (i32.const 158) (i32.add (i32.const 178) (local.get $wep_y)) (i32.const 6) (i32.const 2) (i32.const 236))
+    ;; Grip (ramp 10 steel, dark — cross-hatched)
+    (call $draw_rect (i32.const 150) (i32.add (i32.const 168) (local.get $wep_y)) (i32.const 18) (i32.const 6) (i32.const 163))
+    (call $draw_rect (i32.const 152) (i32.add (i32.const 170) (local.get $wep_y)) (i32.const 14) (i32.const 2) (i32.const 165))
+    ;; Trigger guard (thin arc)
+    (call $draw_rect (i32.const 148) (i32.add (i32.const 174) (local.get $wep_y)) (i32.const 2) (i32.const 8) (i32.const 166))
+    (call $draw_rect (i32.const 170) (i32.add (i32.const 174) (local.get $wep_y)) (i32.const 2) (i32.const 8) (i32.const 166))
+    (call $draw_rect (i32.const 150) (i32.add (i32.const 182) (local.get $wep_y)) (i32.const 20) (i32.const 1) (i32.const 166))
+    ;; Trigger (ramp 10 shade 3)
+    (call $draw_rect (i32.const 160) (i32.add (i32.const 176) (local.get $wep_y)) (i32.const 3) (i32.const 5) (i32.const 163))
+    ;; Receiver body (main gun body)
+    (call $draw_rect (i32.const 142) (i32.add (i32.const 152) (local.get $wep_y)) (i32.const 36) (i32.const 16) (i32.const 168))
+    ;; Receiver top (lighter)
+    (call $draw_rect (i32.const 142) (i32.add (i32.const 150) (local.get $wep_y)) (i32.const 36) (i32.const 3) (i32.const 170))
+    ;; Right side highlight
+    (call $draw_rect (i32.const 176) (i32.add (i32.const 152) (local.get $wep_y)) (i32.const 3) (i32.const 14) (i32.const 171))
+    ;; Left side shadow
+    (call $draw_rect (i32.const 142) (i32.add (i32.const 154) (local.get $wep_y)) (i32.const 2) (i32.const 12) (i32.const 164))
+    ;; Ejection port (dark slot)
+    (call $draw_rect (i32.const 163) (i32.add (i32.const 156) (local.get $wep_y)) (i32.const 10) (i32.const 4) (i32.const 161))
+    (call $draw_rect (i32.const 164) (i32.add (i32.const 157) (local.get $wep_y)) (i32.const 8) (i32.const 2) (i32.const 160))
+    ;; Hammer (rear)
+    (call $draw_rect (i32.const 143) (i32.add (i32.const 148) (local.get $wep_y)) (i32.const 6) (i32.const 4) (i32.const 166))
+    ;; Barrel
+    (call $draw_rect (i32.const 152) (i32.add (i32.const 130) (local.get $wep_y)) (i32.const 16) (i32.const 20) (i32.const 170))
+    ;; Barrel bore (dark center)
+    (call $draw_rect (i32.const 157) (i32.add (i32.const 128) (local.get $wep_y)) (i32.const 6) (i32.const 4) (i32.const 161))
+    (call $draw_rect (i32.const 158) (i32.add (i32.const 129) (local.get $wep_y)) (i32.const 4) (i32.const 2) (i32.const 160))
+    ;; Barrel highlight (left edge)
+    (call $draw_rect (i32.const 152) (i32.add (i32.const 132) (local.get $wep_y)) (i32.const 2) (i32.const 16) (i32.const 172))
+    ;; Front sight post
+    (call $draw_rect (i32.const 158) (i32.add (i32.const 124) (local.get $wep_y)) (i32.const 4) (i32.const 4) (i32.const 167))
+    (call $draw_rect (i32.const 159) (i32.add (i32.const 122) (local.get $wep_y)) (i32.const 2) (i32.const 3) (i32.const 169))
+    ;; Muzzle flash — star/cross pattern (ramp 8 yellow + ramp 12 orange + ramp 15 warm white)
     (if (i32.gt_s (i32.load (i32.const 0x3F5B8)) (i32.const 3))
       (then
-        (call $draw_rect (i32.const 150) (i32.add (i32.const 128) (local.get $wep_y)) (i32.const 20) (i32.const 15) (i32.const 143))
-        (call $draw_rect (i32.const 155) (i32.add (i32.const 120) (local.get $wep_y)) (i32.const 10) (i32.const 8) (i32.const 206))))
+        ;; Outer orange cross
+        (call $draw_rect (i32.const 148) (i32.add (i32.const 118) (local.get $wep_y)) (i32.const 24) (i32.const 10) (i32.const 204))
+        (call $draw_rect (i32.const 154) (i32.add (i32.const 108) (local.get $wep_y)) (i32.const 12) (i32.const 24) (i32.const 205))
+        ;; Inner yellow
+        (call $draw_rect (i32.const 152) (i32.add (i32.const 116) (local.get $wep_y)) (i32.const 16) (i32.const 6) (i32.const 142))
+        (call $draw_rect (i32.const 156) (i32.add (i32.const 112) (local.get $wep_y)) (i32.const 8) (i32.const 14) (i32.const 143))
+        ;; White-hot center
+        (call $draw_rect (i32.const 157) (i32.add (i32.const 116) (local.get $wep_y)) (i32.const 6) (i32.const 4) (i32.const 255))
+        ;; Diagonal flare lines
+        (call $draw_rect (i32.const 146) (i32.add (i32.const 114) (local.get $wep_y)) (i32.const 4) (i32.const 3) (i32.const 206))
+        (call $draw_rect (i32.const 170) (i32.add (i32.const 114) (local.get $wep_y)) (i32.const 4) (i32.const 3) (i32.const 206))
+        (call $draw_rect (i32.const 146) (i32.add (i32.const 122) (local.get $wep_y)) (i32.const 4) (i32.const 3) (i32.const 206))
+        (call $draw_rect (i32.const 170) (i32.add (i32.const 122) (local.get $wep_y)) (i32.const 4) (i32.const 3) (i32.const 206))))
 
     ;; Crosshair (ramp 0 shade 15 = white)
     (i32.store8 (i32.add (i32.const 0x0340) (i32.add (i32.mul (i32.const 100) (i32.const 320)) (i32.const 159))) (i32.const 15))
@@ -918,6 +943,28 @@
   ;; 0:Gray      1:Beige     2:BlueGray  3:Teal      4:BloodRed  5:Brown
   ;; 6:Fluoresc  7:Crimson   8:Yellow    9:Purple    10:Steel    11:Green
   ;; 12:Orange   13:Cyan     14:Tan      15:WarmWht
+  ;;
+  ;; Enemy demon sprite 16x16 at 0x14480 (256 bytes, 0=transparent)
+  ;; H=0xEB(bone) C=0x7A(crimson) E=0x8E(eye) T=0x0D(teeth)
+  ;; B=0x4A(blood) A=0x9A(purple) P=0x98(belt)
+  (data (i32.const 0x14480)
+    "\00\00\00\EB\00\00\00\00\00\00\00\00\EB\00\00\00"  ;; horns
+    "\00\00\EB\EB\EB\00\00\00\00\00\EB\EB\EB\00\00\00"  ;; horn stems
+    "\00\00\00\00\7A\7A\7A\7A\7A\7A\00\00\00\00\00\00"  ;; head top
+    "\00\00\00\7A\7A\7A\7A\7A\7A\7A\7A\00\00\00\00\00"  ;; head
+    "\00\00\00\7A\8E\7A\7A\7A\7A\8E\7A\00\00\00\00\00"  ;; eyes
+    "\00\00\00\00\7A\7A\0D\0D\7A\7A\00\00\00\00\00\00"  ;; mouth/teeth
+    "\00\00\7A\7A\7A\7A\7A\7A\7A\7A\7A\7A\00\00\00\00"  ;; shoulders
+    "\00\9A\7A\7A\7A\7A\7A\7A\7A\7A\7A\7A\9A\00\00\00"  ;; arms extended
+    "\00\9A\00\00\4A\4A\4A\4A\4A\4A\00\00\9A\00\00\00"  ;; torso + arms
+    "\00\00\00\00\4A\4A\4A\4A\4A\4A\00\00\00\00\00\00"  ;; waist
+    "\00\00\00\00\98\98\98\98\98\98\00\00\00\00\00\00"  ;; belt
+    "\00\00\00\4A\4A\4A\00\00\4A\4A\4A\00\00\00\00\00"  ;; upper legs
+    "\00\00\00\4A\4A\00\00\00\00\4A\4A\00\00\00\00\00"  ;; legs apart
+    "\00\00\00\4A\4A\00\00\00\00\4A\4A\00\00\00\00\00"  ;; lower legs
+    "\00\00\9A\4A\4A\00\00\00\00\4A\4A\9A\00\00\00\00"  ;; feet + claws
+    "\00\9A\9A\00\00\00\00\00\00\00\00\9A\9A\00\00\00") ;; claw tips
+
   (data (i32.const 0x10450)
     "\FF\FF\FF"  ;; 0  gray/white
     "\D2\B4\8C"  ;; 1  beige
