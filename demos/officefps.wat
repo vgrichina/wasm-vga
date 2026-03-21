@@ -412,12 +412,7 @@
         ;; World position of this lightmap cell center
         (local.set $wx (f64.add (f64.div (f64.convert_i32_u (local.get $lx)) (f64.const 4.0)) (f64.const 0.125)))
         (local.set $wy (f64.add (f64.div (f64.convert_i32_u (local.get $ly)) (f64.const 4.0)) (f64.const 0.125)))
-        ;; Check if this cell is inside a wall → light = 0
-        (if (i32.gt_u (call $map_get
-              (i32.trunc_f64_s (local.get $wx))
-              (i32.trunc_f64_s (local.get $wy))) (i32.const 0))
-          (then (i32.store8 (local.get $laddr) (i32.const 0)))
-          (else
+        ;; Compute light for all cells (including walls — needed for ceiling/floor projections)
             ;; Base ambient
             (local.set $lval (f64.const 0.45))
             ;; Light #0: (4.5, 1.5) warm white, int=1.4, fall=0.15
@@ -483,7 +478,7 @@
             ;; Clamp to 1.5 and store as u8 (val * 16)
             (if (f64.gt (local.get $lval) (f64.const 1.5))
               (then (local.set $lval (f64.const 1.5))))
-            (i32.store8 (local.get $laddr) (i32.trunc_f64_s (f64.mul (local.get $lval) (f64.const 16.0))))))
+            (i32.store8 (local.get $laddr) (i32.trunc_f64_s (f64.mul (local.get $lval) (f64.const 16.0))))
         (local.set $lx (i32.add (local.get $lx) (i32.const 1)))
         (br $lxl)))
       (local.set $ly (i32.add (local.get $ly) (i32.const 1)))
