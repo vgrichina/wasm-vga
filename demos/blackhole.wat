@@ -298,10 +298,12 @@
     (if (i32.le_s (i32.load (i32.const 0x10370)) (i32.const 0))
       (then
         ;; Low ominous drone — sine wave, deep frequency
-        (call $note (i32.const 0) (i32.const 38) (i32.const 3000) (i32.const 40))
+        (call $note (i32.const 0) (i32.const 38) (i32.const 3000) (i32.const 80))
         ;; Dissonant undertone
-        (call $note (i32.const 0) (i32.const 41) (i32.const 2800) (i32.const 30))
-        (i32.store (i32.const 0x10370) (i32.const 120))))
+        (call $note (i32.const 0) (i32.const 41) (i32.const 2800) (i32.const 60))
+        ;; Sub-bass pulse
+        (call $note (i32.const 0) (i32.const 25) (i32.const 2000) (i32.const 70))
+        (i32.store (i32.const 0x10370) (i32.const 100))))
 
     ;; Eerie ambient sounds (random, every ~60-200 frames)
     (local.set $sound_timer (i32.sub (i32.load (i32.const 0x1036C)) (i32.const 1)))
@@ -313,31 +315,31 @@
         (if (i32.lt_u (i32.and (local.get $rnd) (i32.const 7)) (i32.const 2))
           (then
             ;; High eerie whistle — triangle wave, ghostly
-            (call $note (i32.const 3) (i32.const 1200) (i32.const 800) (i32.const 15))
-            (call $note (i32.const 3) (i32.const 1207) (i32.const 900) (i32.const 12))))
+            (call $note (i32.const 3) (i32.const 1200) (i32.const 1000) (i32.const 30))
+            (call $note (i32.const 3) (i32.const 1207) (i32.const 1100) (i32.const 25))))
         (if (i32.and
               (i32.ge_u (i32.and (local.get $rnd) (i32.const 7)) (i32.const 2))
               (i32.lt_u (i32.and (local.get $rnd) (i32.const 7)) (i32.const 4)))
           (then
             ;; Deep metallic groan — sawtooth, very low
-            (call $note (i32.const 2) (i32.const 55) (i32.const 1500) (i32.const 35))
-            (call $note (i32.const 0) (i32.const 57) (i32.const 1200) (i32.const 25))))
+            (call $note (i32.const 2) (i32.const 55) (i32.const 2000) (i32.const 70))
+            (call $note (i32.const 0) (i32.const 57) (i32.const 1800) (i32.const 50))))
         (if (i32.and
               (i32.ge_u (i32.and (local.get $rnd) (i32.const 7)) (i32.const 4))
               (i32.lt_u (i32.and (local.get $rnd) (i32.const 7)) (i32.const 6)))
           (then
             ;; Descending tone — like something falling in
-            (call $note (i32.const 0) (i32.const 300) (i32.const 600) (i32.const 20))
-            (call $note (i32.const 0) (i32.const 180) (i32.const 800) (i32.const 25))
-            (call $note (i32.const 0) (i32.const 80) (i32.const 1200) (i32.const 30))))
+            (call $note (i32.const 0) (i32.const 300) (i32.const 800) (i32.const 40))
+            (call $note (i32.const 0) (i32.const 180) (i32.const 1000) (i32.const 50))
+            (call $note (i32.const 0) (i32.const 80) (i32.const 1500) (i32.const 60))))
         (if (i32.ge_u (i32.and (local.get $rnd) (i32.const 7)) (i32.const 6))
           (then
             ;; Dissonant chord — tritone, unsettling
-            (call $note (i32.const 3) (i32.const 220) (i32.const 2000) (i32.const 18))
-            (call $note (i32.const 3) (i32.const 311) (i32.const 2000) (i32.const 18))))
-        ;; Next sound in 60-200 frames
-        (i32.store (i32.const 0x1036C) (i32.add (i32.const 60)
-          (i32.rem_u (i32.and (call $rand) (i32.const 0x7FFFFFFF)) (i32.const 140))))))
+            (call $note (i32.const 3) (i32.const 220) (i32.const 2500) (i32.const 35))
+            (call $note (i32.const 3) (i32.const 311) (i32.const 2500) (i32.const 35))))
+        ;; Next sound in 40-130 frames
+        (i32.store (i32.const 0x1036C) (i32.add (i32.const 40)
+          (i32.rem_u (i32.and (call $rand) (i32.const 0x7FFFFFFF)) (i32.const 90))))))
 
     ;; --- Compute camera position from orbit params ---
     (local.set $cos_tilt (call $cos_a (local.get $orbit_tilt)))
