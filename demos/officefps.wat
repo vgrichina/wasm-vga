@@ -1015,11 +1015,14 @@
         (local.set $fhalf (f64.convert_i32_s (i32.sub (i32.const 100) (local.get $row))))
         (if (f64.lt (local.get $fhalf) (f64.const 1.0)) (then (local.set $fhalf (f64.const 1.0))))
         (local.set $fdist (f64.div (f64.const 50.0) (local.get $fhalf)))
-        ;; Ceiling world position
+        ;; Ceiling world position — correct for fisheye by dividing perpendicular dist
+        ;; by cos(ray_angle - pa) to get actual ray distance
         (local.set $floor_wx (f64.add (local.get $px)
-          (f64.mul (call $cos_approx (local.get $ray_angle)) (local.get $fdist))))
+          (f64.mul (local.get $ray_dx) (f64.div (local.get $fdist)
+            (call $cos_approx (f64.sub (local.get $ray_angle) (local.get $pa)))))))
         (local.set $floor_wy (f64.add (local.get $py)
-          (f64.mul (call $sin_approx (local.get $ray_angle)) (local.get $fdist))))
+          (f64.mul (local.get $ray_dy) (f64.div (local.get $fdist)
+            (call $cos_approx (f64.sub (local.get $ray_angle) (local.get $pa)))))))
         ;; Sample ceiling texture (tex 5)
         (local.set $tex_u (i32.and (i32.trunc_f64_s (f64.mul (local.get $floor_wx) (f64.const 64.0))) (i32.const 63)))
         (local.set $tex_v (i32.and (i32.trunc_f64_s (f64.mul (local.get $floor_wy) (f64.const 64.0))) (i32.const 63)))
@@ -1097,11 +1100,13 @@
         (local.set $fhalf (f64.convert_i32_s (i32.sub (local.get $row) (i32.const 99))))
         (if (f64.lt (local.get $fhalf) (f64.const 1.0)) (then (local.set $fhalf (f64.const 1.0))))
         (local.set $fdist (f64.div (f64.const 50.0) (local.get $fhalf)))
-        ;; Floor world position
+        ;; Floor world position — correct for fisheye
         (local.set $floor_wx (f64.add (local.get $px)
-          (f64.mul (call $cos_approx (local.get $ray_angle)) (local.get $fdist))))
+          (f64.mul (local.get $ray_dx) (f64.div (local.get $fdist)
+            (call $cos_approx (f64.sub (local.get $ray_angle) (local.get $pa)))))))
         (local.set $floor_wy (f64.add (local.get $py)
-          (f64.mul (call $sin_approx (local.get $ray_angle)) (local.get $fdist))))
+          (f64.mul (local.get $ray_dy) (f64.div (local.get $fdist)
+            (call $cos_approx (f64.sub (local.get $ray_angle) (local.get $pa)))))))
         ;; Sample floor texture (tex 4)
         (local.set $tex_u (i32.and (i32.trunc_f64_s (f64.mul (local.get $floor_wx) (f64.const 64.0))) (i32.const 63)))
         (local.set $tex_v (i32.and (i32.trunc_f64_s (f64.mul (local.get $floor_wy) (f64.const 64.0))) (i32.const 63)))
