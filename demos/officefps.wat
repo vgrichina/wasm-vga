@@ -624,6 +624,10 @@
     (local $flash_intensity f64) (local $lmap_val f64)
     (local $floor_wx f64) (local $floor_wy f64)
     (local $di i32) (local $daddr i32) (local $door_open f64) (local $door_hit_pos f64)
+    ;; Half-wall tracking
+    (local $half_hit i32) (local $half_perp f64) (local $half_side i32)
+    (local $half_map_x i32) (local $half_map_y i32) (local $half_type i32)
+    (local $half_h i32) (local $half_start i32) (local $half_end i32)
 
     ;; Load player
     (local.set $px (f64.promote_f32 (f32.load (i32.const 0x3F500))))
@@ -903,6 +907,7 @@
       ;; --- DDA ---
       (local.set $hit (i32.const 0))
       (local.set $side (i32.const 0))
+      (local.set $half_hit (i32.const 0))
       (local.set $dda_steps (i32.const 0))
       (block $hd (loop $hl
         (br_if $hd (i32.or (local.get $hit) (i32.ge_u (local.get $dda_steps) (i32.const 64))))
@@ -921,22 +926,34 @@
             (if (i32.eq (local.get $wall_type) (i32.const 5))
               (then
                 ;; Door: check if ray passes through open gap
-                ;; Get fractional hit position along the wall face
                 (local.set $door_open (f64.div
                   (f64.convert_i32_u (call $door_openness (local.get $map_x) (local.get $map_y)))
                   (f64.const 255.0)))
-                ;; Compute wall_x (fractional position on wall face)
                 (if (i32.eqz (local.get $side))
                   (then (local.set $door_hit_pos (f64.add (local.get $py)
                     (f64.mul (f64.sub (local.get $side_dist_x) (local.get $delta_dist_x)) (local.get $ray_dy)))))
                   (else (local.set $door_hit_pos (f64.add (local.get $px)
                     (f64.mul (f64.sub (local.get $side_dist_y) (local.get $delta_dist_y)) (local.get $ray_dx))))))
                 (local.set $door_hit_pos (f64.sub (local.get $door_hit_pos) (f64.floor (local.get $door_hit_pos))))
-                ;; Door slides from left: if hit_pos < open fraction, ray passes through
                 (if (f64.lt (local.get $door_hit_pos) (local.get $door_open))
-                  (then (nop))  ;; ray passes through — don't set hit
+                  (then (nop))
                   (else (local.set $hit (i32.const 1)))))
-              (else (local.set $hit (i32.const 1))))))
+            (else (if (i32.eq (local.get $wall_type) (i32.const 7))
+              (then
+                ;; Half-height wall: save hit info, continue DDA to find full wall behind
+                (if (i32.eqz (local.get $half_hit))  ;; only save first half-wall
+                  (then
+                    (local.set $half_hit (i32.const 1))
+                    (local.set $half_type (local.get $wall_type))
+                    (local.set $half_side (local.get $side))
+                    (local.set $half_map_x (local.get $map_x))
+                    (local.set $half_map_y (local.get $map_y))
+                    (if (i32.eqz (local.get $side))
+                      (then (local.set $half_perp (f64.sub (local.get $side_dist_x) (local.get $delta_dist_x))))
+                      (else (local.set $half_perp (f64.sub (local.get $side_dist_y) (local.get $delta_dist_y)))))
+                    (if (f64.lt (local.get $half_perp) (f64.const 0.001))
+                      (then (local.set $half_perp (f64.const 0.001)))))))
+              (else (local.set $hit (i32.const 1))))))))
         (local.set $dda_steps (i32.add (local.get $dda_steps) (i32.const 1)))
         (br $hl)))
 
@@ -1123,6 +1140,79 @@
           (i32.add (i32.shl (local.get $ramp) (i32.const 4)) (local.get $final_shade)))
         (local.set $row (i32.add (local.get $row) (i32.const 1)))
         (br $fl)))
+
+      ;; --- Draw half-height wall if hit ---
+      (if (local.get $half_hit)
+        (then
+          ;; Compute half-wall geometry: only bottom half of a full-height wall
+          (local.set $half_h (i32.trunc_f64_s (f64.div (f64.const 200.0) (local.get $half_perp))))
+          (if (i32.gt_s (local.get $half_h) (i32.const 400))
+            (then (local.set $half_h (i32.const 400))))
+          ;; Half wall: from midpoint (row 100) down to where full wall bottom would be
+          (local.set $half_start (i32.const 100))  ;; top of half wall = screen center
+          (local.set $half_end (i32.add (i32.const 100) (i32.shr_u (local.get $half_h) (i32.const 1))))
+          ;; Texture U for half wall
+          (if (i32.eqz (local.get $half_side))
+            (then (local.set $wall_x (f64.add (local.get $py) (f64.mul (local.get $half_perp) (local.get $ray_dy)))))
+            (else (local.set $wall_x (f64.add (local.get $px) (f64.mul (local.get $half_perp) (local.get $ray_dx))))))
+          (local.set $wall_x (f64.sub (local.get $wall_x) (f64.floor (local.get $wall_x))))
+          (local.set $tex_u (i32.and (i32.trunc_f64_s (f64.mul (local.get $wall_x) (f64.const 64.0))) (i32.const 63)))
+          ;; Half wall uses cubicle texture (tex 1)
+          (local.set $tex_id (i32.const 1))
+          ;; Light for half wall
+          (local.set $lmap_val (call $lmap_get
+            (f64.sub (f64.add (local.get $px) (f64.mul (local.get $half_perp) (local.get $ray_dx)))
+              (f64.mul (local.get $ray_dx) (f64.const 0.3)))
+            (f64.sub (f64.add (local.get $py) (f64.mul (local.get $half_perp) (local.get $ray_dy)))
+              (f64.mul (local.get $ray_dy) (f64.const 0.3)))))
+          (local.set $light (f64.mul (local.get $lmap_val)
+            (f64.div (f64.const 1.0) (f64.add (f64.const 1.0) (f64.mul (local.get $half_perp) (f64.const 0.12))))))
+          (if (local.get $half_side)
+            (then (local.set $light (f64.mul (local.get $light) (f64.const 0.7)))))
+          (local.set $light (f64.add (local.get $light)
+            (f64.mul (local.get $flash_intensity)
+              (f64.div (f64.const 3.0) (f64.add (f64.const 1.0) (f64.mul (local.get $half_perp) (f64.const 0.8)))))))
+          (if (f64.lt (local.get $light) (f64.const 0.05))
+            (then (local.set $light (f64.const 0.05))))
+          ;; Draw half wall rows
+          (local.set $row (select (local.get $half_start) (i32.const 0) (i32.ge_s (local.get $half_start) (i32.const 0))))
+          (block $hwd (loop $hwl
+            (br_if $hwd (i32.or (i32.ge_s (local.get $row) (local.get $half_end))
+                                (i32.ge_s (local.get $row) (i32.const 200))))
+            ;; Texture V: map row within the half wall to bottom half of texture (v 32-63)
+            (local.set $tex_v (i32.add (i32.const 32) (i32.and
+              (i32.div_s (i32.mul (i32.sub (local.get $row) (local.get $half_start)) (i32.const 32))
+                (select (i32.sub (local.get $half_end) (local.get $half_start)) (i32.const 1)
+                  (i32.gt_s (i32.sub (local.get $half_end) (local.get $half_start)) (i32.const 0))))
+              (i32.const 31))))
+            (local.set $tex_color (i32.load8_u (call $tex_addr (local.get $tex_id) (local.get $tex_u) (local.get $tex_v))))
+            (local.set $ramp (i32.shr_u (local.get $tex_color) (i32.const 4)))
+            (local.set $base_shade (i32.and (local.get $tex_color) (i32.const 15)))
+            (local.set $lit (f64.mul (f64.convert_i32_u (local.get $base_shade)) (local.get $light)))
+            (local.set $shade_lo (i32.trunc_f64_s (local.get $lit)))
+            (if (i32.lt_s (local.get $shade_lo) (i32.const 0)) (then (local.set $shade_lo (i32.const 0))))
+            (if (i32.gt_s (local.get $shade_lo) (i32.const 14)) (then (local.set $shade_lo (i32.const 14))))
+            (local.set $frac (i32.trunc_f64_s (f64.mul
+              (f64.sub (local.get $lit) (f64.convert_i32_s (local.get $shade_lo))) (f64.const 16.0))))
+            (local.set $bayer (i32.load8_u (i32.add (i32.const 0x10440)
+              (i32.add (i32.mul (i32.and (local.get $row) (i32.const 3)) (i32.const 4))
+                       (i32.and (local.get $col) (i32.const 3))))))
+            (local.set $final_shade (select
+              (i32.add (local.get $shade_lo) (i32.const 1)) (local.get $shade_lo)
+              (i32.gt_s (local.get $frac) (local.get $bayer))))
+            (if (i32.gt_s (local.get $final_shade) (i32.const 15))
+              (then (local.set $final_shade (i32.const 15))))
+            (i32.store8 (i32.add (i32.const 0x0340)
+              (i32.add (i32.mul (local.get $row) (i32.const 320)) (local.get $col)))
+              (i32.add (i32.shl (local.get $ramp) (i32.const 4)) (local.get $final_shade)))
+            (local.set $row (i32.add (local.get $row) (i32.const 1)))
+            (br $hwl)))
+          ;; Also draw a top edge (1px bright highlight)
+          (if (i32.and (i32.ge_s (local.get $half_start) (i32.const 0)) (i32.lt_s (local.get $half_start) (i32.const 200)))
+            (then (i32.store8 (i32.add (i32.const 0x0340)
+              (i32.add (i32.mul (local.get $half_start) (i32.const 320)) (local.get $col)))
+              (i32.const 170))))  ;; steel highlight on top edge
+        ))
 
       (local.set $col (i32.add (local.get $col) (i32.const 1)))
       (br $rlp)))
@@ -1316,24 +1406,24 @@
   )
 
   ;; ---- Data segments ----
-  ;; Map 16x16 at 0x10340: 1=drywall 2=cubicle 3=server 4=demon 5=door
-  ;;   Row 6: door at (4,6) between north office and south corridor
-  ;;   Row 9: doors at (4,9) and (12,9) between corridors and south rooms
+  ;; Map 16x16 at 0x10340: 1=drywall 2=cubicle 3=server 4=demon 5=door 7=half-wall
+  ;;   Row 6: door at (4,6)   Row 9: doors at (4,9) and (12,9)
+  ;;   7=half-height cubicle partitions you can see over
   (data (i32.const 0x10340)
     "\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01"
     "\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01"
-    "\01\00\02\02\00\02\02\00\00\00\00\00\00\00\00\01"
+    "\01\00\07\07\00\07\07\00\00\00\00\00\00\00\00\01"
     "\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01"
-    "\01\00\02\02\00\02\02\00\00\03\03\03\00\00\00\01"
+    "\01\00\07\07\00\07\07\00\00\03\03\03\00\00\00\01"
     "\01\00\00\00\00\00\00\00\00\03\00\03\00\00\00\01"
     "\01\01\01\01\05\01\01\01\00\03\03\03\00\01\01\01"
     "\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01"
     "\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01"
     "\01\01\01\01\05\01\01\01\00\01\01\01\05\01\01\01"
     "\01\00\00\00\00\00\00\00\00\04\00\04\04\00\00\01"
-    "\01\00\02\02\00\02\02\00\00\04\00\00\00\00\00\01"
+    "\01\00\07\07\00\07\07\00\00\04\00\00\00\00\00\01"
     "\01\00\00\00\00\00\00\00\00\04\00\04\04\00\00\01"
-    "\01\00\02\02\00\02\02\00\00\00\00\00\00\00\00\01"
+    "\01\00\07\07\00\07\07\00\00\00\00\00\00\00\00\01"
     "\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01"
     "\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01\01")
 
