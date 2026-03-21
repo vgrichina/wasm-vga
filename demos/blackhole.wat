@@ -144,7 +144,7 @@
     ;; Init camera state
     (f64.store (i32.const 0x10344) (f64.const 0.0))    ;; orbit_angle
     (f64.store (i32.const 0x1034C) (f64.const 0.25))   ;; orbit_tilt (slightly above disk)
-    (f64.store (i32.const 0x10354) (f64.const 14.0))   ;; orbit_dist
+    (f64.store (i32.const 0x10354) (f64.const 28.0))   ;; orbit_dist
     (i32.store (i32.const 0x1035C) (i32.const 0))      ;; prev_mouse_x
     (i32.store (i32.const 0x10360) (i32.const 0))      ;; prev_mouse_y
     (i32.store (i32.const 0x10364) (i32.const 60))      ;; idle_counter (start high)
@@ -244,8 +244,8 @@
           (f64.mul (f64.const 0.15) (call $sin_a
             (f64.mul (f64.convert_i32_u (local.get $frame_count)) (f64.const 0.004))))))
         ;; Gentle distance oscillation
-        (local.set $orbit_dist (f64.add (f64.const 14.0)
-          (f64.mul (f64.const 3.0) (call $sin_a
+        (local.set $orbit_dist (f64.add (f64.const 28.0)
+          (f64.mul (f64.const 6.0) (call $sin_a
             (f64.mul (f64.convert_i32_u (local.get $frame_count)) (f64.const 0.002)))))))
       (else
         ;; === MANUAL CONTROL ===
@@ -284,8 +284,8 @@
     ;; Clamp distance to [3.0, 30.0]
     (if (f64.lt (local.get $orbit_dist) (f64.const 3.0))
       (then (local.set $orbit_dist (f64.const 3.0))))
-    (if (f64.gt (local.get $orbit_dist) (f64.const 30.0))
-      (then (local.set $orbit_dist (f64.const 30.0))))
+    (if (f64.gt (local.get $orbit_dist) (f64.const 120.0))
+      (then (local.set $orbit_dist (f64.const 120.0))))
 
     ;; Save camera state
     (f64.store (i32.const 0x10344) (local.get $orbit_angle))
@@ -421,7 +421,7 @@
         ;; Ray march loop
         (local.set $step (i32.const 0))
         (block $ray_done (loop $ray_lp
-          (br_if $ray_done (i32.ge_u (local.get $step) (i32.const 64)))
+          (br_if $ray_done (i32.ge_u (local.get $step) (i32.const 200)))
 
           ;; Distance from black hole
           (local.set $r2 (f64.add (f64.add
@@ -430,18 +430,18 @@
             (f64.mul (local.get $pos_z) (local.get $pos_z))))
           (local.set $r (f64.sqrt (local.get $r2)))
 
-          ;; Event horizon (rs = 1.0)
-          (if (f64.lt (local.get $r) (f64.const 0.6))
+          ;; Event horizon (rs = 2*GM = 1.0)
+          (if (f64.lt (local.get $r) (f64.const 1.0))
             (then
               (local.set $color (i32.const 0))
               (br $ray_done)))
 
-          ;; Adaptive step size
-          (local.set $dt (f64.mul (local.get $r) (f64.const 0.12)))
-          (if (f64.lt (local.get $dt) (f64.const 0.015))
-            (then (local.set $dt (f64.const 0.015))))
-          (if (f64.gt (local.get $dt) (f64.const 0.6))
-            (then (local.set $dt (f64.const 0.6))))
+          ;; Adaptive step size (conservative near BH, fast when far)
+          (local.set $dt (f64.mul (local.get $r) (f64.const 0.08)))
+          (if (f64.lt (local.get $dt) (f64.const 0.01))
+            (then (local.set $dt (f64.const 0.01))))
+          (if (f64.gt (local.get $dt) (f64.const 2.0))
+            (then (local.set $dt (f64.const 2.0))))
 
           ;; Schwarzschild geodesic: a = -(GM/r³ + 3*GM*L²/r⁵) * pos
           (local.set $r3 (f64.mul (local.get $r2) (local.get $r)))
@@ -472,6 +472,15 @@
           (local.set $vel_z (f64.add (local.get $vel_z)
             (f64.mul (f64.mul (local.get $factor) (local.get $pos_z)) (local.get $dt))))
 
+          ;; Re-normalize velocity to |v|=c=1 (light speed is constant)
+          (local.set $ray_len (f64.sqrt (f64.add (f64.add
+            (f64.mul (local.get $vel_x) (local.get $vel_x))
+            (f64.mul (local.get $vel_y) (local.get $vel_y)))
+            (f64.mul (local.get $vel_z) (local.get $vel_z)))))
+          (local.set $vel_x (f64.div (local.get $vel_x) (local.get $ray_len)))
+          (local.set $vel_y (f64.div (local.get $vel_y) (local.get $ray_len)))
+          (local.set $vel_z (f64.div (local.get $vel_z) (local.get $ray_len)))
+
           ;; Save old y for disk crossing detection
           (local.set $old_y (local.get $pos_y))
 
@@ -489,12 +498,12 @@
               (local.set $disk_r (f64.sqrt (local.get $disk_r2)))
 
               (if (i32.and
-                    (f64.gt (local.get $disk_r) (f64.const 2.0))
+                    (f64.gt (local.get $disk_r) (f64.const 3.0))
                     (f64.lt (local.get $disk_r) (f64.const 12.0)))
                 (then
                   ;; Temperature: inner=hot(1), outer=cool(0)
                   (local.set $t (f64.sub (f64.const 1.0)
-                    (f64.div (f64.sub (local.get $disk_r) (f64.const 2.0)) (f64.const 10.0))))
+                    (f64.div (f64.sub (local.get $disk_r) (f64.const 3.0)) (f64.const 9.0))))
 
                   ;; Doppler shift
                   (local.set $doppler (f64.div
@@ -546,12 +555,12 @@
                   (br $ray_done)))))
 
           ;; --- Escape check ---
-          (if (f64.gt (local.get $r) (f64.const 30.0))
+          (if (f64.gt (local.get $r) (f64.const 120.0))
             (then
               ;; Procedural starfield
-              (local.set $ix (i32.trunc_f64_s (f64.mul (local.get $vel_x) (f64.const 80.0))))
-              (local.set $iy (i32.trunc_f64_s (f64.mul (local.get $vel_y) (f64.const 80.0))))
-              (local.set $iz (i32.trunc_f64_s (f64.mul (local.get $vel_z) (f64.const 80.0))))
+              (local.set $ix (i32.trunc_f64_s (f64.mul (local.get $vel_x) (f64.const 400.0))))
+              (local.set $iy (i32.trunc_f64_s (f64.mul (local.get $vel_y) (f64.const 400.0))))
+              (local.set $iz (i32.trunc_f64_s (f64.mul (local.get $vel_z) (f64.const 400.0))))
               (local.set $hash (i32.add
                 (i32.mul (local.get $ix) (i32.const 374761393))
                 (i32.add
@@ -562,7 +571,7 @@
               (local.set $hash (i32.mul (local.get $hash) (i32.const 1274126177)))
               (local.set $hash (i32.xor (local.get $hash)
                 (i32.shr_u (local.get $hash) (i32.const 16))))
-              (if (i32.lt_u (i32.and (local.get $hash) (i32.const 0xFF)) (i32.const 8))
+              (if (i32.lt_u (i32.and (local.get $hash) (i32.const 0xFFF)) (i32.const 5))
                 (then
                   (local.set $color (i32.add (i32.const 4)
                     (i32.and (i32.shr_u (local.get $hash) (i32.const 8)) (i32.const 7)))))
