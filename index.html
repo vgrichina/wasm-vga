@@ -108,7 +108,17 @@
     cursor: pointer;
     transition: border-color 0.2s, color 0.2s;
   }
-  #fs-btn:hover, #info-btn:hover, #src-btn:hover, #mute-btn:hover, #rec-btn:hover { border-color: var(--accent-dim); color: var(--text); }
+  #fs-btn:hover, #info-btn:hover, #src-btn:hover, #mute-btn:hover, #rec-btn:hover, #pause-btn:hover { border-color: var(--accent-dim); color: var(--text); }
+  #pause-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 4px 7px;
+    font-size: 13px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+  }
   #rec-btn {
     background: none;
     border: 1px solid var(--border);
@@ -393,6 +403,7 @@
       <option value="officefps">officefps</option>
     </select>
     <button id="mute-btn" onclick="toggleMute()" title="Toggle Sound" style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:4px 7px;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;border-radius:4px;cursor:pointer;transition:border-color 0.2s,color 0.2s;">SND</button>
+    <button id="pause-btn" onclick="togglePause()" title="Pause (P)">&#9208;</button>
     <button id="rec-btn" onclick="toggleRecord()" title="Record Video">REC</button>
     <button id="fs-btn" onclick="toggleFullscreen()" title="Fullscreen">[&nbsp;]</button>
     <button id="src-btn" onclick="toggleSource()" title="View Source">&lt;/&gt;</button>

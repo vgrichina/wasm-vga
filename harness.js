@@ -24,6 +24,7 @@ const rgba = imgData.data;
 let memory, memU8, memU32, wasmInstance;
 let animId = null;
 let frameCount = 0, fpsFrames = 0, lastFpsTime = 0;
+let paused = false;
 
 // --- Sound engine ---
 let audioCtx = null, masterGain = null, isMuted = false, audioDest = null;
@@ -282,6 +283,8 @@ function blitFramebuffer() {
 }
 
 function loop(ts) {
+  if (paused) { animId = requestAnimationFrame(loop); return; }
+
   // write control block
   memU32[0] = frameCount++;         // frame counter (monotonic)
   fpsFrames++;
@@ -302,6 +305,12 @@ function loop(ts) {
   }
 
   animId = requestAnimationFrame(loop);
+}
+
+function togglePause() {
+  paused = !paused;
+  const btn = document.getElementById('pause-btn');
+  if (btn) btn.textContent = paused ? '\u25B6' : '\u23F8';
 }
 
 // --- Mouse tracking ---
@@ -367,6 +376,7 @@ function setKeyBit(bit, down) {
 }
 // Use capture phase so we get keys before select/button elements consume them
 window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyP') { e.preventDefault(); togglePause(); return; }
   const bit = KEY_MAP[e.code];
   if (bit !== undefined) {
     e.preventDefault();
