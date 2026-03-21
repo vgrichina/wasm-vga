@@ -80,6 +80,48 @@ async function main() {
   const buf = PNG.sync.write(png);
   fs.writeFileSync(output, buf);
   console.log(`Saved ${output} (${totalFrames} frames simulated, elapsed=${targetMs}ms)`);
+
+  // --fb-row <row>: dump framebuffer row as ramp.shade pairs, showing transitions
+  const fbRowIdx = process.argv.indexOf('--fb-row');
+  if (fbRowIdx !== -1) {
+    const row = parseInt(process.argv[fbRowIdx + 1]) || 100;
+    console.log(`\nFramebuffer row ${row} (ramp.shade):`);
+    let prev = -1, runStart = 0;
+    const runs = [];
+    for (let c = 0; c <= 320; c++) {
+      const v = c < 320 ? memU8[FB_OFFSET + row * 320 + c] : -1;
+      if (v !== prev) {
+        if (prev !== -1) runs.push(`c${runStart}-${c-1}:${(prev>>4)}.${prev&0xf}`);
+        prev = v; runStart = c;
+      }
+    }
+    console.log(runs.join(' '));
+  }
+
+  // --dump <addr> <len>: hex dump memory region
+  // --dump-f32 <addr> <count>: dump as f32 values
+  const dumpIdx = process.argv.indexOf('--dump');
+  if (dumpIdx !== -1) {
+    const addr = parseInt(process.argv[dumpIdx + 1], 16) || parseInt(process.argv[dumpIdx + 1]);
+    const len = parseInt(process.argv[dumpIdx + 2]) || 64;
+    console.log(`\nMemory dump at 0x${addr.toString(16)} (${len} bytes):`);
+    for (let i = 0; i < len; i += 16) {
+      const hex = Array.from(memU8.slice(addr + i, addr + i + Math.min(16, len - i)))
+        .map(b => b.toString(16).padStart(2, '0')).join(' ');
+      console.log(`  ${(addr + i).toString(16).padStart(5, '0')}: ${hex}`);
+    }
+  }
+  const dumpF32Idx = process.argv.indexOf('--dump-f32');
+  if (dumpF32Idx !== -1) {
+    const addr = parseInt(process.argv[dumpF32Idx + 1], 16) || parseInt(process.argv[dumpF32Idx + 1]);
+    const count = parseInt(process.argv[dumpF32Idx + 2]) || 8;
+    const memF32 = new Float32Array(memory.buffer);
+    console.log(`\nF32 dump at 0x${addr.toString(16)} (${count} values):`);
+    for (let i = 0; i < count; i++) {
+      const off = addr + i * 4;
+      console.log(`  0x${off.toString(16).padStart(5, '0')}: ${memF32[off / 4]}`);
+    }
+  }
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

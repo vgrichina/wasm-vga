@@ -150,9 +150,10 @@
       (br $l)))
   )
 
-  ;; ---- Text renderer for debug textures ----
+  ;; ---- Text renderer for debug textures (2x scale) ----
   ;; Font data at 0x17500, string data at 0x17530
   ;; 4x5 pixel font, 9 glyphs: T H I S _ N O D M
+  ;; Each font pixel drawn as 2x2 block → 8x10 per char, 10px spacing
   (func $draw_text (param $tex_id i32) (param $str_addr i32) (param $str_len i32)
                    (param $ox i32) (param $oy i32) (param $color i32)
     (local $ci i32) (local $glyph i32) (local $row i32) (local $bits i32) (local $col i32)
@@ -169,11 +170,15 @@
         (block $cd (loop $cl (br_if $cd (i32.ge_u (local.get $col) (i32.const 4)))
           (if (i32.and (local.get $bits) (i32.shl (i32.const 1) (i32.sub (i32.const 3) (local.get $col))))
             (then
-              (local.set $px (i32.add (local.get $ox) (i32.add (i32.mul (local.get $ci) (i32.const 5)) (local.get $col))))
-              (local.set $py (i32.add (local.get $oy) (local.get $row)))
-              (if (i32.and (i32.lt_u (local.get $px) (i32.const 64)) (i32.lt_u (local.get $py) (i32.const 64)))
-                (then (i32.store8 (call $tex_addr (local.get $tex_id) (local.get $px) (local.get $py))
-                  (local.get $color))))))
+              ;; Draw 2x2 block
+              (local.set $px (i32.add (local.get $ox) (i32.shl (i32.add (i32.mul (local.get $ci) (i32.const 5)) (local.get $col)) (i32.const 1))))
+              (local.set $py (i32.add (local.get $oy) (i32.shl (local.get $row) (i32.const 1))))
+              (if (i32.and (i32.lt_u (local.get $px) (i32.const 63)) (i32.lt_u (local.get $py) (i32.const 63)))
+                (then
+                  (i32.store8 (call $tex_addr (local.get $tex_id) (local.get $px) (local.get $py)) (local.get $color))
+                  (i32.store8 (call $tex_addr (local.get $tex_id) (i32.add (local.get $px) (i32.const 1)) (local.get $py)) (local.get $color))
+                  (i32.store8 (call $tex_addr (local.get $tex_id) (local.get $px) (i32.add (local.get $py) (i32.const 1))) (local.get $color))
+                  (i32.store8 (call $tex_addr (local.get $tex_id) (i32.add (local.get $px) (i32.const 1)) (i32.add (local.get $py) (i32.const 1))) (local.get $color))))))
           (local.set $col (i32.add (local.get $col) (i32.const 1)))
           (br $cl)))
         (local.set $row (i32.add (local.get $row) (i32.const 1)))
@@ -446,9 +451,9 @@
 
     ;; Generate textures
     (call $gen_tex_drywall)
-    ;; Draw debug text on drywall: "THIS IS" at y=8, "NOT DOOM" at y=48
-    (call $draw_text (i32.const 0) (i32.const 0x17530) (i32.const 7) (i32.const 15) (i32.const 8) (i32.const 0x01))
-    (call $draw_text (i32.const 0) (i32.const 0x17538) (i32.const 8) (i32.const 12) (i32.const 48) (i32.const 0x01))
+    ;; Draw debug text on drywall (2x scale): "TEST" at y=2, "DOOM" at y=42
+    (call $draw_text (i32.const 0) (i32.const 0x17530) (i32.const 4) (i32.const 2) (i32.const 2) (i32.const 0x01))
+    (call $draw_text (i32.const 0) (i32.const 0x17534) (i32.const 4) (i32.const 2) (i32.const 42) (i32.const 0x01))
     (call $gen_tex_cubicle)
     (call $gen_tex_server)
     (call $gen_tex_demon)
@@ -680,7 +685,8 @@
     (local $half_hit i32) (local $half_perp f64) (local $half_side i32)
     (local $half_map_x i32) (local $half_map_y i32) (local $half_type i32)
     (local $half_h i32) (local $half_start i32) (local $half_end i32)
-    (local $tex_v_step f64) (local $tex_v_acc f64)
+    (local $tex_v_step f64) (local $tex_v_acc f64) (local $wall_tex_u i32)
+    (local $camera_x f64)
 
     ;; Load player
     (local.set $px (f64.promote_f32 (f32.load (i32.const 0x3F500))))
@@ -913,15 +919,23 @@
       (f64.convert_i32_u (i32.load (i32.const 0x3F5B8))) (f64.const 6.0)))
 
     ;; ===== RAYCASTING with dithered ramp lighting =====
+    ;; Camera plane vectors (lodev-style): proper perspective, no fisheye
+    ;; plane = perpendicular to dir, scaled by tan(FOV/2) = tan(30°) ≈ 0.57735
+    ;; dir = (cos_a, sin_a), plane = (-sin_a, cos_a) * 0.57735
     (local.set $col (i32.const 0))
     (block $rdone (loop $rlp (br_if $rdone (i32.ge_u (local.get $col) (i32.const 320)))
 
-      ;; --- Ray setup ---
+      ;; --- Ray setup (camera plane method for correct perspective) ---
+      ;; camera_x = 2*col/320 - 1, ranges -1 to +1
+      ;; ray = dir + plane * camera_x  (NOT unit length — DDA gives perpendicular dist)
+      ;; plane = (-sin_a, cos_a) * tan(FOV/2) ≈ (-sin_a, cos_a) * 0.57735
+      (local.set $camera_x (f64.sub (f64.mul (f64.convert_i32_s (local.get $col)) (f64.div (f64.const 2.0) (f64.const 320.0))) (f64.const 1.0)))
+      (local.set $ray_dx (f64.add (local.get $cos_a) (f64.mul (f64.mul (f64.neg (local.get $sin_a)) (f64.const 0.57735)) (local.get $camera_x))))
+      (local.set $ray_dy (f64.add (local.get $sin_a) (f64.mul (f64.mul (local.get $cos_a) (f64.const 0.57735)) (local.get $camera_x))))
+      ;; ray_angle still needed for floor/ceiling casting
       (local.set $ray_angle (f64.add (local.get $pa)
         (f64.mul (f64.sub (f64.convert_i32_s (local.get $col)) (f64.const 160.0))
                  (f64.div (f64.const 1.047) (f64.const 320.0)))))
-      (local.set $ray_dx (call $cos_approx (local.get $ray_angle)))
-      (local.set $ray_dy (call $sin_approx (local.get $ray_angle)))
       (local.set $map_x (i32.trunc_f64_s (local.get $px)))
       (local.set $map_y (i32.trunc_f64_s (local.get $py)))
 
@@ -1022,7 +1036,7 @@
         (f32.demote_f64 (local.get $perp_dist)))
 
       ;; Wall geometry (unclamped for correct tex_v mapping)
-      (local.set $wall_h (i32.trunc_f64_s (f64.div (f64.const 200.0) (local.get $perp_dist))))
+      (local.set $wall_h (i32.trunc_f64_s (f64.div (f64.const 277.13) (local.get $perp_dist))))
       (if (i32.gt_s (local.get $wall_h) (i32.const 10000))
         (then (local.set $wall_h (i32.const 10000))))
       (local.set $draw_start (i32.sub (i32.const 100) (i32.shr_u (local.get $wall_h) (i32.const 1))))
@@ -1034,6 +1048,8 @@
         (else (local.set $wall_x (f64.add (local.get $px) (f64.mul (local.get $perp_dist) (local.get $ray_dx))))))
       (local.set $wall_x (f64.sub (local.get $wall_x) (f64.floor (local.get $wall_x))))
       (local.set $tex_u (i32.and (i32.trunc_f64_s (f64.mul (local.get $wall_x) (f64.const 64.0))) (i32.const 63)))
+      ;; Debug: store tex_u per column at 0x3E000
+      (i32.store8 (i32.add (i32.const 0x3E000) (local.get $col)) (local.get $tex_u))
       ;; Map wall_type to texture: 1→0, 2→1, 3→2, 4→3, 5(door)→6
       (local.set $tex_id (if (result i32) (i32.eq (local.get $wall_type) (i32.const 5))
         (then (i32.const 6))
@@ -1065,6 +1081,9 @@
       (if (f64.lt (local.get $light) (f64.const 0.05))
         (then (local.set $light (f64.const 0.05))))
 
+      ;; Save wall tex_u before ceiling/floor loops overwrite it
+      (local.set $wall_tex_u (local.get $tex_u))
+
       ;; --- Draw ceiling: textured (tex 5) with lightmap ---
       (local.set $row (i32.const 0))
       (block $cd (loop $cl
@@ -1072,15 +1091,12 @@
                            (i32.ge_s (local.get $row) (i32.const 200))))
         (local.set $fhalf (f64.convert_i32_s (i32.sub (i32.const 100) (local.get $row))))
         (if (f64.lt (local.get $fhalf) (f64.const 1.0)) (then (local.set $fhalf (f64.const 1.0))))
-        (local.set $fdist (f64.div (f64.const 50.0) (local.get $fhalf)))
-        ;; Ceiling world position — correct for fisheye by dividing perpendicular dist
-        ;; by cos(ray_angle - pa) to get actual ray distance
+        (local.set $fdist (f64.div (f64.const 138.56) (local.get $fhalf)))
+        ;; Ceiling world position — camera plane rays already correct for perspective
         (local.set $floor_wx (f64.add (local.get $px)
-          (f64.mul (local.get $ray_dx) (f64.div (local.get $fdist)
-            (call $cos_approx (f64.sub (local.get $ray_angle) (local.get $pa)))))))
+          (f64.mul (local.get $ray_dx) (local.get $fdist))))
         (local.set $floor_wy (f64.add (local.get $py)
-          (f64.mul (local.get $ray_dy) (f64.div (local.get $fdist)
-            (call $cos_approx (f64.sub (local.get $ray_angle) (local.get $pa)))))))
+          (f64.mul (local.get $ray_dy) (local.get $fdist))))
         ;; Sample ceiling texture (tex 5)
         (local.set $tex_u (i32.and (i32.trunc_f64_s (f64.mul (local.get $floor_wx) (f64.const 64.0))) (i32.const 63)))
         (local.set $tex_v (i32.and (i32.trunc_f64_s (f64.mul (local.get $floor_wy) (f64.const 64.0))) (i32.const 63)))
@@ -1116,8 +1132,10 @@
         (br $cl)))
 
       ;; --- Draw wall with dithered ramp lighting ---
+      ;; Restore wall tex_u (ceiling/floor loops overwrote $tex_u)
+      (local.set $tex_u (local.get $wall_tex_u))
       ;; Precompute tex_v step (float, avoids per-pixel integer division)
-      (local.set $tex_v_step (f64.mul (local.get $perp_dist) (f64.const 0.32)))
+      (local.set $tex_v_step (f64.mul (local.get $perp_dist) (f64.const 0.231)))
       (local.set $row (select (local.get $draw_start) (i32.const 0) (i32.ge_s (local.get $draw_start) (i32.const 0))))
       (local.set $tex_v_acc (f64.mul
         (f64.convert_i32_s (i32.sub (local.get $row) (local.get $draw_start)))
@@ -1128,6 +1146,12 @@
         ;; Texture sample
         (local.set $tex_v (i32.and (i32.trunc_f64_s (local.get $tex_v_acc)) (i32.const 63)))
         (local.set $tex_color (i32.load8_u (call $tex_addr (local.get $tex_id) (local.get $tex_u) (local.get $tex_v))))
+        ;; Debug: at row 80, store tex_color, tex_v, tex_id per column
+        (if (i32.eq (local.get $row) (i32.const 80))
+          (then
+            (i32.store8 (i32.add (i32.const 0x3E140) (local.get $col)) (local.get $tex_color))
+            (i32.store8 (i32.add (i32.const 0x3E280) (local.get $col)) (local.get $tex_v))
+            (i32.store8 (i32.add (i32.const 0x3E3C0) (local.get $col)) (local.get $tex_id))))
         ;; Extract ramp and base shade
         (local.set $ramp (i32.shr_u (local.get $tex_color) (i32.const 4)))
         (local.set $base_shade (i32.and (local.get $tex_color) (i32.const 15)))
@@ -1160,14 +1184,12 @@
       (block $fd (loop $fl (br_if $fd (i32.ge_s (local.get $row) (i32.const 200)))
         (local.set $fhalf (f64.convert_i32_s (i32.sub (local.get $row) (i32.const 99))))
         (if (f64.lt (local.get $fhalf) (f64.const 1.0)) (then (local.set $fhalf (f64.const 1.0))))
-        (local.set $fdist (f64.div (f64.const 50.0) (local.get $fhalf)))
-        ;; Floor world position — correct for fisheye
+        (local.set $fdist (f64.div (f64.const 138.56) (local.get $fhalf)))
+        ;; Floor world position — camera plane rays already correct for perspective
         (local.set $floor_wx (f64.add (local.get $px)
-          (f64.mul (local.get $ray_dx) (f64.div (local.get $fdist)
-            (call $cos_approx (f64.sub (local.get $ray_angle) (local.get $pa)))))))
+          (f64.mul (local.get $ray_dx) (local.get $fdist))))
         (local.set $floor_wy (f64.add (local.get $py)
-          (f64.mul (local.get $ray_dy) (f64.div (local.get $fdist)
-            (call $cos_approx (f64.sub (local.get $ray_angle) (local.get $pa)))))))
+          (f64.mul (local.get $ray_dy) (local.get $fdist))))
         ;; Sample floor texture (tex 4)
         (local.set $tex_u (i32.and (i32.trunc_f64_s (f64.mul (local.get $floor_wx) (f64.const 64.0))) (i32.const 63)))
         (local.set $tex_v (i32.and (i32.trunc_f64_s (f64.mul (local.get $floor_wy) (f64.const 64.0))) (i32.const 63)))
@@ -1206,7 +1228,7 @@
       (if (local.get $half_hit)
         (then
           ;; Compute half-wall geometry: only bottom half of a full-height wall
-          (local.set $half_h (i32.trunc_f64_s (f64.div (f64.const 200.0) (local.get $half_perp))))
+          (local.set $half_h (i32.trunc_f64_s (f64.div (f64.const 277.13) (local.get $half_perp))))
           (if (i32.gt_s (local.get $half_h) (i32.const 10000))
             (then (local.set $half_h (i32.const 10000))))
           ;; Half wall: from midpoint (row 100) down to where full wall bottom would be
@@ -1237,8 +1259,8 @@
             (then (local.set $light (f64.const 0.05))))
           ;; Draw half wall rows
           ;; Half wall maps to bottom half of texture (v 32-63)
-          ;; tex_v_step = 32 / (half_end - half_start) = half_perp * 0.16
-          (local.set $tex_v_step (f64.mul (local.get $half_perp) (f64.const 0.16)))
+          ;; tex_v_step = 32 / (half_h) where half_h = 277.13 / (2 * half_perp)
+          (local.set $tex_v_step (f64.mul (local.get $half_perp) (f64.const 0.231)))
           (local.set $row (select (local.get $half_start) (i32.const 0) (i32.ge_s (local.get $half_start) (i32.const 0))))
           (local.set $tex_v_acc (f64.mul
             (f64.convert_i32_s (i32.sub (local.get $row) (local.get $half_start)))
@@ -1468,6 +1490,48 @@
           (call $draw_rect (i32.const 312) (local.get $row) (i32.const 8) (i32.const 1) (i32.const 124))
           (local.set $row (i32.add (local.get $row) (i32.const 4)))
           (br $hfl)))))
+
+    ;; === Debug overlay: X=nn.n Y=nn.n A=n.nn ===
+    ;; Draw px (fixed-point ×10)
+    (local.set $ei (i32.trunc_f64_s (f64.mul (local.get $px) (f64.const 10.0))))
+    (call $draw_dbg_num (i32.const 2) (i32.const 1) (i32.div_u (local.get $ei) (i32.const 100)))
+    (call $draw_dbg_num (i32.const 6) (i32.const 1) (i32.rem_u (i32.div_u (local.get $ei) (i32.const 10)) (i32.const 10)))
+    ;; dot
+    (i32.store8 (i32.add (i32.const 0x0340) (i32.add (i32.mul (i32.const 5) (i32.const 320)) (i32.const 10))) (i32.const 0xFF))
+    (call $draw_dbg_num (i32.const 12) (i32.const 1) (i32.rem_u (local.get $ei) (i32.const 10)))
+    ;; Draw py
+    (local.set $ei (i32.trunc_f64_s (f64.mul (local.get $py) (f64.const 10.0))))
+    (call $draw_dbg_num (i32.const 22) (i32.const 1) (i32.div_u (local.get $ei) (i32.const 100)))
+    (call $draw_dbg_num (i32.const 26) (i32.const 1) (i32.rem_u (i32.div_u (local.get $ei) (i32.const 10)) (i32.const 10)))
+    (i32.store8 (i32.add (i32.const 0x0340) (i32.add (i32.mul (i32.const 5) (i32.const 320)) (i32.const 30))) (i32.const 0xFF))
+    (call $draw_dbg_num (i32.const 32) (i32.const 1) (i32.rem_u (local.get $ei) (i32.const 10)))
+    ;; Draw angle (×100)
+    (local.set $ei (i32.trunc_f64_s (f64.mul (local.get $pa) (f64.const 100.0))))
+    (if (i32.lt_s (local.get $ei) (i32.const 0)) (then (local.set $ei (i32.add (local.get $ei) (i32.const 628)))))
+    (call $draw_dbg_num (i32.const 42) (i32.const 1) (i32.rem_u (i32.div_u (local.get $ei) (i32.const 100)) (i32.const 10)))
+    (i32.store8 (i32.add (i32.const 0x0340) (i32.add (i32.mul (i32.const 5) (i32.const 320)) (i32.const 46))) (i32.const 0xFF))
+    (call $draw_dbg_num (i32.const 48) (i32.const 1) (i32.rem_u (i32.div_u (local.get $ei) (i32.const 10)) (i32.const 10)))
+    (call $draw_dbg_num (i32.const 52) (i32.const 1) (i32.rem_u (local.get $ei) (i32.const 10)))
+  )
+
+  ;; Draw a single digit (0-9) at framebuffer position (ox, oy), 3x5, color 0xFF (white)
+  (func $draw_dbg_num (param $ox i32) (param $oy i32) (param $digit i32)
+    (local $row i32) (local $bits i32) (local $col i32)
+    (if (i32.gt_u (local.get $digit) (i32.const 9)) (then (local.set $digit (i32.const 0))))
+    (local.set $row (i32.const 0))
+    (block $rd (loop $rl (br_if $rd (i32.ge_u (local.get $row) (i32.const 5)))
+      (local.set $bits (i32.load8_u (i32.add (i32.const 0x17600)
+        (i32.add (i32.mul (local.get $digit) (i32.const 5)) (local.get $row)))))
+      (local.set $col (i32.const 0))
+      (block $cd (loop $cl (br_if $cd (i32.ge_u (local.get $col) (i32.const 3)))
+        (if (i32.and (local.get $bits) (i32.shl (i32.const 1) (i32.sub (i32.const 2) (local.get $col))))
+          (then (i32.store8 (i32.add (i32.const 0x0340)
+            (i32.add (i32.mul (i32.add (local.get $oy) (local.get $row)) (i32.const 320))
+                     (i32.add (local.get $ox) (local.get $col)))) (i32.const 0xFF))))
+        (local.set $col (i32.add (local.get $col) (i32.const 1)))
+        (br $cl)))
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (br $rl)))
   )
 
   ;; ---- Data segments ----
@@ -1533,11 +1597,26 @@
     "\09\0D\0B\09\09"  ;; N: #..# ##.# #.## #..# #..#
     "\06\09\09\09\06"  ;; O: .##. #..# #..# #..# .##.
     "\0E\09\09\09\0E"  ;; D: ###. #..# #..# #..# ###.
-    "\09\0F\0F\09\09") ;; M: #..# #### #### #..# #..#
-  ;; String: "THIS IS" (7 chars) then "NOT DOOM" (8 chars)
+    "\09\0F\0F\09\09"  ;; M(8): #..# #### #### #..# #..#
+    "\0F\08\0E\08\0F") ;; E(9): #### #... ###. #... ####
+  ;; String: "TEST" (4 chars) then "DOOM" (4 chars)
   (data (i32.const 0x17530)
-    "\00\01\02\03\04\02\03"          ;; THIS IS
-    "\05\06\00\04\07\06\06\08")      ;; NOT DOOM
+    "\00\09\03\00"                   ;; TEST (T=0, E=9, S=3, T=0)
+    "\07\06\06\08")                  ;; DOOM (D=7, O=6, O=6, M=8)
+
+  ;; 3x5 digit font at 0x17600 (10 digits × 5 rows, each byte = 3 MSB bits)
+  ;; 0-9: standard 3-wide bitmaps (bit2=left, bit1=mid, bit0=right)
+  (data (i32.const 0x17600)
+    "\07\05\05\05\07"  ;; 0: ###  #.#  #.#  #.#  ###
+    "\02\06\02\02\07"  ;; 1: .#.  ##.  .#.  .#.  ###
+    "\07\01\07\04\07"  ;; 2: ###  ..#  ###  #..  ###
+    "\07\01\07\01\07"  ;; 3: ###  ..#  ###  ..#  ###
+    "\05\05\07\01\01"  ;; 4: #.#  #.#  ###  ..#  ..#
+    "\07\04\07\01\07"  ;; 5: ###  #..  ###  ..#  ###
+    "\07\04\07\05\07"  ;; 6: ###  #..  ###  #.#  ###
+    "\07\01\01\01\01"  ;; 7: ###  ..#  ..#  ..#  ..#
+    "\07\05\07\05\07"  ;; 8: ###  #.#  ###  #.#  ###
+    "\07\05\07\01\07") ;; 9: ###  #.#  ###  ..#  ###
 
   (data (i32.const 0x10450)
     "\FF\FF\FF"  ;; 0  gray/white
