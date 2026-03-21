@@ -44,6 +44,11 @@
   ;; 0x1A960: game over state (4 bytes)
   ;; 0x1A970: enemy spawn timer (4 bytes)
   ;; 0x1A980: player stats display (16 bytes)
+  ;; 0x1AFC0: flow field slot headers (4 slots × 16 bytes = 64 bytes)
+  ;;          each: target_tile (i32), age (i32), user_count (i32), pad (i32)
+  ;; 0x1B000: flow field grids (4 slots × 16384 bytes = 65536 bytes)
+  ;;          slot 0: 0x1B000, slot 1: 0x1F000, slot 2: 0x23000, slot 3: 0x27000
+  ;; 0x2B000: BFS queue (shared scratch, 16384 entries × 4 bytes = 65536 bytes)
 
   ;; Unit struct (32 bytes):
   ;; +0: active (u8) - 0=inactive, 1=active
@@ -68,7 +73,8 @@
   ;; +25: carry_gold (u8) - gold being carried (workers)
   ;; +26: attack_cooldown_max (u8)
   ;; +27: pad
-  ;; +28: pad (i32)
+  ;; +28: prev_x (i16) - for stuck detection
+  ;; +30: stuck_counter (u8)
 
   ;; Building struct (32 bytes):
   ;; +0: active (u8)
@@ -116,6 +122,10 @@
   (global $GAME_OVER i32 (i32.const 0x1A960))
   (global $ENEMY_TIMER i32 (i32.const 0x1A970))
   (global $FRAME_TIMER i32 (i32.const 0x1A910))
+  (global $FLOW_HDR i32 (i32.const 0x1AFC0))
+  (global $FLOW_GRID i32 (i32.const 0x1B000))
+  (global $FLOW_SLOTS i32 (i32.const 4))
+  (global $BFS_QUEUE i32 (i32.const 0x2B000))
 
   (global $FB i32 (i32.const 0x0340))
   (global $PAL i32 (i32.const 0x0040))
@@ -1387,15 +1397,18 @@
   ;; Directions: 0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW
   ;; Each direction points TOWARD the target (reverse of BFS expansion direction)
 
-  ;; Build flow field from target world position (wx, wy)
-  (func $build_flow_field (param $wx i32) (param $wy i32)
+  ;; Build flow field from target world position (wx, wy) into slot
+  (func $build_flow_field (param $wx i32) (param $wy i32) (param $slot i32)
     (local $target_tile i32)
     (local $head i32) (local $tail i32)
     (local $cur i32) (local $cx i32) (local $cy i32)
     (local $dir i32) (local $nx i32) (local $ny i32)
     (local $ni i32) (local $i i32)
-    ;; Direction deltas: N(0,-1) NE(1,-1) E(1,0) SE(1,1) S(0,1) SW(-1,1) W(-1,0) NW(-1,-1)
-    ;; Reverse dir = (dir+4)%8
+    (local $grid_base i32) (local $hdr_base i32)
+
+    ;; Compute grid and header base addresses
+    (local.set $grid_base (i32.add (i32.const 0x1B000) (i32.mul (local.get $slot) (i32.const 16384))))
+    (local.set $hdr_base (i32.add (i32.const 0x1AFC0) (i32.mul (local.get $slot) (i32.const 16))))
 
     ;; Convert world to tile
     (local.set $cx (i32.shr_u (local.get $wx) (i32.const 3)))
@@ -1405,23 +1418,25 @@
     )
     (local.set $target_tile (i32.add (i32.mul (local.get $cy) (i32.const 128)) (local.get $cx)))
 
-    ;; Store target for cache check
-    (i32.store (i32.const 0x1AFC0) (local.get $target_tile))
+    ;; Write slot header
+    (i32.store (local.get $hdr_base) (local.get $target_tile))
+    (i32.store (i32.add (local.get $hdr_base) (i32.const 4)) (i32.load (i32.const 0x00))) ;; age = frame counter
+    (i32.store (i32.add (local.get $hdr_base) (i32.const 8)) (i32.const 0)) ;; user_count = 0
 
     ;; Clear flow field to 255
     (local.set $i (i32.const 0))
     (block $clr_brk
       (loop $clr_lp
         (br_if $clr_brk (i32.ge_s (local.get $i) (i32.const 16384)))
-        (i32.store8 (i32.add (i32.const 0x1B000) (local.get $i)) (i32.const 255))
+        (i32.store8 (i32.add (local.get $grid_base) (local.get $i)) (i32.const 255))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $clr_lp)
       )
     )
 
     ;; Seed BFS with target tile (direction = 8 meaning "you are here")
-    (i32.store8 (i32.add (i32.const 0x1B000) (local.get $target_tile)) (i32.const 8))
-    (i32.store (i32.const 0x1F000) (local.get $target_tile))
+    (i32.store8 (i32.add (local.get $grid_base) (local.get $target_tile)) (i32.const 8))
+    (i32.store (i32.const 0x2B000) (local.get $target_tile))
     (local.set $head (i32.const 0))
     (local.set $tail (i32.const 1))
 
@@ -1430,7 +1445,7 @@
       (loop $bfs_lp
         (br_if $bfs_brk (i32.ge_s (local.get $head) (local.get $tail)))
         ;; Dequeue
-        (local.set $cur (i32.load (i32.add (i32.const 0x1F000) (i32.mul (local.get $head) (i32.const 4)))))
+        (local.set $cur (i32.load (i32.add (i32.const 0x2B000) (i32.mul (local.get $head) (i32.const 4)))))
         (local.set $head (i32.add (local.get $head) (i32.const 1)))
         (local.set $cx (i32.rem_u (local.get $cur) (i32.const 128)))
         (local.set $cy (i32.div_u (local.get $cur) (i32.const 128)))
@@ -1441,10 +1456,8 @@
           (loop $dir_lp
             (br_if $dir_brk (i32.ge_s (local.get $dir) (i32.const 8)))
 
-            ;; Compute neighbor tile (nx, ny) based on direction
             (local.set $nx (local.get $cx))
             (local.set $ny (local.get $cy))
-            ;; X: dirs 1,2,3 = +1; dirs 5,6,7 = -1
             (if (i32.or (i32.or (i32.eq (local.get $dir) (i32.const 1))
                                 (i32.eq (local.get $dir) (i32.const 2)))
                         (i32.eq (local.get $dir) (i32.const 3)))
@@ -1455,7 +1468,6 @@
                         (i32.eq (local.get $dir) (i32.const 7)))
               (then (local.set $nx (i32.sub (local.get $cx) (i32.const 1))))
             )
-            ;; Y: dirs 0,1,7 = -1; dirs 3,4,5 = +1
             (if (i32.or (i32.or (i32.eq (local.get $dir) (i32.const 0))
                                 (i32.eq (local.get $dir) (i32.const 1)))
                         (i32.eq (local.get $dir) (i32.const 7)))
@@ -1473,19 +1485,15 @@
                   (i32.and (i32.ge_s (local.get $ny) (i32.const 0)) (i32.lt_s (local.get $ny) (i32.const 128))))
               (then
                 (local.set $ni (i32.add (i32.mul (local.get $ny) (i32.const 128)) (local.get $nx)))
-                ;; If unvisited and passable
                 (if (i32.and
-                      (i32.eq (i32.load8_u (i32.add (i32.const 0x1B000) (local.get $ni))) (i32.const 255))
+                      (i32.eq (i32.load8_u (i32.add (local.get $grid_base) (local.get $ni))) (i32.const 255))
                       (call $is_passable (i32.mul (local.get $nx) (i32.const 8)) (i32.mul (local.get $ny) (i32.const 8))))
                   (then
-                    ;; Store reverse direction: to go toward target, go opposite of expansion dir
-                    ;; Reverse = (dir + 4) & 7
-                    (i32.store8 (i32.add (i32.const 0x1B000) (local.get $ni))
+                    (i32.store8 (i32.add (local.get $grid_base) (local.get $ni))
                       (i32.and (i32.add (local.get $dir) (i32.const 4)) (i32.const 7)))
-                    ;; Enqueue
                     (if (i32.lt_s (local.get $tail) (i32.const 16384))
                       (then
-                        (i32.store (i32.add (i32.const 0x1F000) (i32.mul (local.get $tail) (i32.const 4))) (local.get $ni))
+                        (i32.store (i32.add (i32.const 0x2B000) (i32.mul (local.get $tail) (i32.const 4))) (local.get $ni))
                         (local.set $tail (i32.add (local.get $tail) (i32.const 1)))
                       )
                     )
@@ -1503,7 +1511,86 @@
     )
   )
 
-  ;; Move unit using flow field if target matches, else greedy best-neighbor
+  ;; Find flow field slot matching target_tile, or allocate one (evict least used)
+  ;; Returns slot index 0-3
+  (func $find_or_alloc_flow_slot (param $target_tile i32) (result i32)
+    (local $s i32) (local $hdr i32)
+    (local $slot_target i32) (local $stx i32) (local $sty i32)
+    (local $ttx i32) (local $tty i32) (local $dist i32)
+    (local $best_slot i32) (local $best_score i32) (local $score i32)
+
+    (local.set $ttx (i32.rem_u (local.get $target_tile) (i32.const 128)))
+    (local.set $tty (i32.div_u (local.get $target_tile) (i32.const 128)))
+
+    ;; Pass 1: find exact or nearby match
+    (local.set $s (i32.const 0))
+    (block $found
+      (loop $scan
+        (br_if $found (i32.ge_s (local.get $s) (i32.const 4)))
+        (local.set $hdr (i32.add (i32.const 0x1AFC0) (i32.mul (local.get $s) (i32.const 16))))
+        (local.set $slot_target (i32.load (local.get $hdr)))
+        ;; Exact match
+        (if (i32.eq (local.get $slot_target) (local.get $target_tile))
+          (then (return (local.get $s)))
+        )
+        ;; Nearby match: manhattan dist <= 3 tiles
+        (if (local.get $slot_target)
+          (then
+            (local.set $stx (i32.rem_u (local.get $slot_target) (i32.const 128)))
+            (local.set $sty (i32.div_u (local.get $slot_target) (i32.const 128)))
+            (local.set $dist (i32.add
+              (call $abs (i32.sub (local.get $stx) (local.get $ttx)))
+              (call $abs (i32.sub (local.get $sty) (local.get $tty)))))
+            (if (i32.le_u (local.get $dist) (i32.const 3))
+              (then (return (local.get $s)))
+            )
+          )
+        )
+        (local.set $s (i32.add (local.get $s) (i32.const 1)))
+        (br $scan)
+      )
+    )
+
+    ;; Pass 2: find empty slot (target_tile == 0)
+    (local.set $s (i32.const 0))
+    (block $found2
+      (loop $scan2
+        (br_if $found2 (i32.ge_s (local.get $s) (i32.const 4)))
+        (local.set $hdr (i32.add (i32.const 0x1AFC0) (i32.mul (local.get $s) (i32.const 16))))
+        (if (i32.eqz (i32.load (local.get $hdr)))
+          (then (return (local.get $s)))
+        )
+        (local.set $s (i32.add (local.get $s) (i32.const 1)))
+        (br $scan2)
+      )
+    )
+
+    ;; Pass 3: evict slot with lowest user_count (tie-break: oldest age)
+    (local.set $best_slot (i32.const 0))
+    (local.set $best_score (i32.const 0x7FFFFFFF))
+    (local.set $s (i32.const 0))
+    (block $evict
+      (loop $ev_lp
+        (br_if $evict (i32.ge_s (local.get $s) (i32.const 4)))
+        (local.set $hdr (i32.add (i32.const 0x1AFC0) (i32.mul (local.get $s) (i32.const 16))))
+        ;; score = user_count * 65536 + age (lower = more evictable)
+        (local.set $score (i32.add
+          (i32.mul (i32.load (i32.add (local.get $hdr) (i32.const 8))) (i32.const 65536))
+          (i32.and (i32.load (i32.add (local.get $hdr) (i32.const 4))) (i32.const 0xFFFF))))
+        (if (i32.lt_u (local.get $score) (local.get $best_score))
+          (then
+            (local.set $best_score (local.get $score))
+            (local.set $best_slot (local.get $s))
+          )
+        )
+        (local.set $s (i32.add (local.get $s) (i32.const 1)))
+        (br $ev_lp)
+      )
+    )
+    (local.get $best_slot)
+  )
+
+  ;; Move unit using multi-slot flow fields, else greedy + stuck jitter
   (func $move_toward (param $addr i32) (param $tx i32) (param $ty i32) (param $spd i32)
     (local $ux i32) (local $uy i32)
     (local $tile_x i32) (local $tile_y i32)
@@ -1512,24 +1599,54 @@
     (local $target_tile i32)
     (local $dir i32) (local $best_dist i32) (local $dist i32)
     (local $best_x i32) (local $best_y i32)
+    (local $slot i32) (local $grid_base i32) (local $hdr i32)
+    (local $prev_x i32) (local $stuck i32)
 
     (local.set $ux (i32.load16_s (i32.add (local.get $addr) (i32.const 4))))
     (local.set $uy (i32.load16_s (i32.add (local.get $addr) (i32.const 6))))
     (local.set $tile_x (i32.shr_u (local.get $ux) (i32.const 3)))
     (local.set $tile_y (i32.shr_u (local.get $uy) (i32.const 3)))
 
-    ;; Check if flow field matches this unit's target
     (local.set $target_tile (i32.add
       (i32.mul (i32.shr_u (local.get $ty) (i32.const 3)) (i32.const 128))
       (i32.shr_u (local.get $tx) (i32.const 3))))
     (local.set $flow_dir (i32.const 255))
 
-    (if (i32.and
-          (i32.eq (i32.load (i32.const 0x1AFC0)) (local.get $target_tile))
-          (i32.and (i32.lt_u (local.get $tile_x) (i32.const 128))
-                   (i32.lt_u (local.get $tile_y) (i32.const 128))))
+    ;; Find or allocate flow field slot
+    (local.set $slot (call $find_or_alloc_flow_slot (local.get $target_tile)))
+    (local.set $hdr (i32.add (i32.const 0x1AFC0) (i32.mul (local.get $slot) (i32.const 16))))
+    (local.set $grid_base (i32.add (i32.const 0x1B000) (i32.mul (local.get $slot) (i32.const 16384))))
+
+    ;; If slot target doesn't match (new allocation), build BFS now
+    (if (i32.ne (i32.load (local.get $hdr)) (local.get $target_tile))
       (then
-        (local.set $flow_dir (i32.load8_u (i32.add (i32.const 0x1B000)
+        ;; Check nearby match: if within 3 tiles, reuse without rebuild
+        (if (i32.gt_u
+              (i32.add
+                (call $abs (i32.sub
+                  (i32.rem_u (i32.load (local.get $hdr)) (i32.const 128))
+                  (i32.rem_u (local.get $target_tile) (i32.const 128))))
+                (call $abs (i32.sub
+                  (i32.div_u (i32.load (local.get $hdr)) (i32.const 128))
+                  (i32.div_u (local.get $target_tile) (i32.const 128)))))
+              (i32.const 3))
+          (then
+            ;; Not nearby — need full rebuild
+            (call $build_flow_field (local.get $tx) (local.get $ty) (local.get $slot))
+          )
+        )
+      )
+    )
+
+    ;; Increment user count
+    (i32.store (i32.add (local.get $hdr) (i32.const 8))
+      (i32.add (i32.load (i32.add (local.get $hdr) (i32.const 8))) (i32.const 1)))
+
+    ;; Look up flow direction
+    (if (i32.and (i32.lt_u (local.get $tile_x) (i32.const 128))
+                 (i32.lt_u (local.get $tile_y) (i32.const 128)))
+      (then
+        (local.set $flow_dir (i32.load8_u (i32.add (local.get $grid_base)
           (i32.add (i32.mul (local.get $tile_y) (i32.const 128)) (local.get $tile_x)))))
       )
     )
@@ -1539,7 +1656,6 @@
       (then
         (local.set $nx (local.get $ux))
         (local.set $ny (local.get $uy))
-        ;; X: dirs 1,2,3 = +spd; dirs 5,6,7 = -spd
         (if (i32.or (i32.or (i32.eq (local.get $flow_dir) (i32.const 1))
                             (i32.eq (local.get $flow_dir) (i32.const 2)))
                     (i32.eq (local.get $flow_dir) (i32.const 3)))
@@ -1550,7 +1666,6 @@
                     (i32.eq (local.get $flow_dir) (i32.const 7)))
           (then (local.set $nx (i32.sub (local.get $ux) (local.get $spd))))
         )
-        ;; Y: dirs 0,1,7 = -spd; dirs 3,4,5 = +spd
         (if (i32.or (i32.or (i32.eq (local.get $flow_dir) (i32.const 0))
                             (i32.eq (local.get $flow_dir) (i32.const 1)))
                     (i32.eq (local.get $flow_dir) (i32.const 7)))
@@ -1563,6 +1678,9 @@
         )
         (i32.store16 (i32.add (local.get $addr) (i32.const 4)) (local.get $nx))
         (i32.store16 (i32.add (local.get $addr) (i32.const 6)) (local.get $ny))
+        ;; Update stuck detection
+        (i32.store16 (i32.add (local.get $addr) (i32.const 28)) (local.get $ux))
+        (i32.store8 (i32.add (local.get $addr) (i32.const 30)) (i32.const 0))
         (return)
       )
     )
@@ -1571,6 +1689,48 @@
     (local.set $best_dist (i32.const 0x7FFFFFFF))
     (local.set $best_x (local.get $ux))
     (local.set $best_y (local.get $uy))
+
+    ;; Stuck detection: if same position as prev frame, increment counter
+    (local.set $prev_x (i32.load16_s (i32.add (local.get $addr) (i32.const 28))))
+    (local.set $stuck (i32.load8_u (i32.add (local.get $addr) (i32.const 30))))
+    (if (i32.eq (local.get $prev_x) (local.get $ux))
+      (then
+        (local.set $stuck (i32.add (local.get $stuck) (i32.const 1)))
+      )
+      (else
+        (local.set $stuck (i32.const 0))
+      )
+    )
+    (i32.store16 (i32.add (local.get $addr) (i32.const 28)) (local.get $ux))
+
+    ;; If stuck >= 8 frames, try random perpendicular jitter
+    (if (i32.ge_u (local.get $stuck) (i32.const 8))
+      (then
+        (local.set $stuck (i32.const 0))
+        (local.set $dir (i32.and (call $rng) (i32.const 3)))
+        (local.set $nx (local.get $ux))
+        (local.set $ny (local.get $uy))
+        (if (i32.eq (local.get $dir) (i32.const 0))
+          (then (local.set $nx (i32.add (local.get $ux) (local.get $spd)))))
+        (if (i32.eq (local.get $dir) (i32.const 1))
+          (then (local.set $nx (i32.sub (local.get $ux) (local.get $spd)))))
+        (if (i32.eq (local.get $dir) (i32.const 2))
+          (then (local.set $ny (i32.add (local.get $uy) (local.get $spd)))))
+        (if (i32.eq (local.get $dir) (i32.const 3))
+          (then (local.set $ny (i32.sub (local.get $uy) (local.get $spd)))))
+        (if (call $is_passable (local.get $nx) (local.get $ny))
+          (then
+            (i32.store16 (i32.add (local.get $addr) (i32.const 4)) (local.get $nx))
+            (i32.store16 (i32.add (local.get $addr) (i32.const 6)) (local.get $ny))
+            (i32.store8 (i32.add (local.get $addr) (i32.const 30)) (i32.const 0))
+            (return)
+          )
+        )
+      )
+    )
+    (i32.store8 (i32.add (local.get $addr) (i32.const 30)) (local.get $stuck))
+
+    ;; Normal greedy
     (local.set $dir (i32.const 0))
     (block $brk
       (loop $lp
@@ -1979,8 +2139,11 @@
           )
         )
 
-        ;; Build flow field toward player base for enemy pathfinding
-        (call $build_flow_field (i32.const 96) (i32.const 816))
+        ;; Pre-warm flow field toward player base for enemy pathfinding
+        (call $build_flow_field (i32.const 96) (i32.const 816)
+          (call $find_or_alloc_flow_slot
+            (i32.add (i32.mul (i32.shr_u (i32.const 816) (i32.const 3)) (i32.const 128))
+                     (i32.shr_u (i32.const 96) (i32.const 3)))))
 
         ;; Send to attack player town hall (exact position for flow field match)
         (if (i32.ge_s (local.get $uid) (i32.const 0))
@@ -2087,11 +2250,12 @@
     (local.set $world_x (i32.add (local.get $mx) (local.get $cam_x)))
     (local.set $world_y (i32.add (local.get $my) (local.get $cam_y)))
 
-    ;; LEFT CLICK DOWN - Start drag
+    ;; LEFT CLICK DOWN - Start drag (skip if clicking bottom bar)
     (if (i32.and
-          (i32.and (local.get $mbtn) (i32.const 1))
-          (i32.eqz (i32.and (local.get $last_btn) (i32.const 1)))
-        )
+          (i32.and
+            (i32.and (local.get $mbtn) (i32.const 1))
+            (i32.eqz (i32.and (local.get $last_btn) (i32.const 1))))
+          (i32.lt_u (local.get $my) (i32.const 184)))
       (then
         ;; Store drag start in world coords
         (i32.store16 (i32.const 0x1A950) (local.get $world_x))
@@ -2100,11 +2264,12 @@
       )
     )
 
-    ;; LEFT CLICK UP - Finish selection
+    ;; LEFT CLICK UP - Finish selection (skip if clicking bottom bar)
     (if (i32.and
-          (i32.eqz (i32.and (local.get $mbtn) (i32.const 1)))
-          (i32.and (local.get $last_btn) (i32.const 1))
-        )
+          (i32.and
+            (i32.eqz (i32.and (local.get $mbtn) (i32.const 1)))
+            (i32.and (local.get $last_btn) (i32.const 1)))
+          (i32.lt_u (local.get $my) (i32.const 184)))
       (then
         ;; Clear selection
         (local.set $i (i32.const 0))
@@ -2270,9 +2435,12 @@
               )
             )
 
-            ;; Build flow field for move target (used by all moving units)
+            ;; Pre-warm flow field for move target
             (if (i32.lt_s (local.get $clicked_enemy) (i32.const 0))
-              (then (call $build_flow_field (local.get $world_x) (local.get $world_y)))
+              (then (call $build_flow_field (local.get $world_x) (local.get $world_y)
+                (call $find_or_alloc_flow_slot
+                  (i32.add (i32.mul (i32.shr_u (local.get $world_y) (i32.const 3)) (i32.const 128))
+                           (i32.shr_u (local.get $world_x) (i32.const 3))))))
             )
 
             ;; Command selected units
@@ -2309,6 +2477,55 @@
             (call $note (i32.const 0) (i32.const 400) (i32.const 20) (i32.const 40))
           )
         )
+      )
+    )
+
+    ;; BOTTOM BAR BUTTON CLICKS (left-click-up in bar area y>=184)
+    (if (i32.and
+          (i32.and
+            (i32.eqz (i32.and (local.get $mbtn) (i32.const 1)))   ;; left released
+            (i32.and (local.get $last_btn) (i32.const 1)))         ;; was pressed
+          (i32.ge_u (local.get $my) (i32.const 184)))              ;; in bottom bar
+      (then
+        ;; Worker button: x=70..122
+        (if (i32.and (i32.ge_u (local.get $mx) (i32.const 70))
+                     (i32.lt_u (local.get $mx) (i32.const 122)))
+          (then
+            (local.set $gold (i32.load (i32.const 0x15690)))
+            (if (i32.ge_s (local.get $gold) (i32.const 50))
+              (then
+                (i32.store (i32.const 0x15690) (i32.sub (local.get $gold) (i32.const 50)))
+                (local.set $uid (call $create_unit (i32.const 0) (i32.const 0)
+                  (i32.add (i32.const 96) (i32.rem_u (call $rng) (i32.const 20)))
+                  (i32.add (i32.const 830) (i32.rem_u (call $rng) (i32.const 20)))))
+                (call $note (i32.const 0) (i32.const 500) (i32.const 50) (i32.const 60)))
+              (else (call $note (i32.const 1) (i32.const 100) (i32.const 100) (i32.const 60))))))
+        ;; Soldier button: x=128..186
+        (if (i32.and (i32.ge_u (local.get $mx) (i32.const 128))
+                     (i32.lt_u (local.get $mx) (i32.const 186)))
+          (then
+            (local.set $gold (i32.load (i32.const 0x15690)))
+            (if (i32.ge_s (local.get $gold) (i32.const 100))
+              (then
+                (i32.store (i32.const 0x15690) (i32.sub (local.get $gold) (i32.const 100)))
+                (local.set $uid (call $create_unit (i32.const 1) (i32.const 0)
+                  (i32.add (i32.const 96) (i32.rem_u (call $rng) (i32.const 20)))
+                  (i32.add (i32.const 830) (i32.rem_u (call $rng) (i32.const 20)))))
+                (call $note (i32.const 1) (i32.const 400) (i32.const 50) (i32.const 70)))
+              (else (call $note (i32.const 1) (i32.const 100) (i32.const 100) (i32.const 60))))))
+        ;; Archer button: x=192..244
+        (if (i32.and (i32.ge_u (local.get $mx) (i32.const 192))
+                     (i32.lt_u (local.get $mx) (i32.const 244)))
+          (then
+            (local.set $gold (i32.load (i32.const 0x15690)))
+            (if (i32.ge_s (local.get $gold) (i32.const 80))
+              (then
+                (i32.store (i32.const 0x15690) (i32.sub (local.get $gold) (i32.const 80)))
+                (local.set $uid (call $create_unit (i32.const 2) (i32.const 0)
+                  (i32.add (i32.const 96) (i32.rem_u (call $rng) (i32.const 20)))
+                  (i32.add (i32.const 830) (i32.rem_u (call $rng) (i32.const 20)))))
+                (call $note (i32.const 3) (i32.const 500) (i32.const 50) (i32.const 60)))
+              (else (call $note (i32.const 1) (i32.const 100) (i32.const 100) (i32.const 60))))))
       )
     )
 
@@ -2887,6 +3104,24 @@
 
   ;; ============ INIT ============
   (func (export "init")
+    ;; Clear flow field slot headers (4 slots × 16 bytes)
+    (i32.store (i32.const 0x1AFC0) (i32.const 0))
+    (i32.store (i32.const 0x1AFC4) (i32.const 0))
+    (i32.store (i32.const 0x1AFC8) (i32.const 0))
+    (i32.store (i32.const 0x1AFCC) (i32.const 0))
+    (i32.store (i32.const 0x1AFD0) (i32.const 0))
+    (i32.store (i32.const 0x1AFD4) (i32.const 0))
+    (i32.store (i32.const 0x1AFD8) (i32.const 0))
+    (i32.store (i32.const 0x1AFDC) (i32.const 0))
+    (i32.store (i32.const 0x1AFE0) (i32.const 0))
+    (i32.store (i32.const 0x1AFE4) (i32.const 0))
+    (i32.store (i32.const 0x1AFE8) (i32.const 0))
+    (i32.store (i32.const 0x1AFEC) (i32.const 0))
+    (i32.store (i32.const 0x1AFF0) (i32.const 0))
+    (i32.store (i32.const 0x1AFF4) (i32.const 0))
+    (i32.store (i32.const 0x1AFF8) (i32.const 0))
+    (i32.store (i32.const 0x1AFFC) (i32.const 0))
+
     ;; Seed RNG
     (i32.store (i32.const 0x1A810) (i32.const 12345678))
 
@@ -2957,6 +3192,12 @@
     (local $sx i32)
     (local $sy i32)
     (local $i i32)
+
+    ;; Reset flow field user counts each frame
+    (i32.store (i32.const 0x1AFC8) (i32.const 0))
+    (i32.store (i32.const 0x1AFD8) (i32.const 0))
+    (i32.store (i32.const 0x1AFE8) (i32.const 0))
+    (i32.store (i32.const 0x1AFF8) (i32.const 0))
 
     ;; Handle input first
     (call $handle_input)
