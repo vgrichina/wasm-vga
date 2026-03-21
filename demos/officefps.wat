@@ -12,10 +12,11 @@
   ;;   Ramp 2: Blue-Gray  Ramp 6: Fluorescent  Ramp 10: Steel     Ramp 14: Tan
   ;;   Ramp 3: Teal       Ramp 7: Crimson      Ramp 11: Green     Ramp 15: Warm White
   ;;
-  ;; Lighting: light = 1/(1 + dist*K), then shade = base_shade * light
+  ;; Lighting: 64x64 lightmap (4 cells/tile) with point lights, muzzle flash
   ;; Dithering: Bayer 4×4 interpolates between floor(shade) and ceil(shade)
   ;;
-  ;; CONST: 0x10340 map, 0x10440 bayer, 0x10450 ramp RGB targets, 0x10480 textures
+  ;; CONST: 0x10340 map, 0x10440 bayer, 0x10450 ramp RGB, 0x10480 textures
+  ;;        0x14580 lightmap (64x64 = 4096 bytes)
   ;; DYNAMIC: 0x3F000 zbuf, 0x3F500 player, 0x3F520 enemies, 0x3F5A0+ state
 
   ;; ---- sin_approx (3-step reduction + Taylor) ----
@@ -83,6 +84,22 @@
     (call $map_get
       (i32.trunc_f64_s (f64.add (local.get $px) (f64.mul (call $cos_approx (local.get $a)) (local.get $d))))
       (i32.trunc_f64_s (f64.add (local.get $py) (f64.mul (call $sin_approx (local.get $a)) (local.get $d)))))
+  )
+
+  ;; Lightmap lookup: world coords → light multiplier (0.0–1.5)
+  ;; 64x64 lightmap, each cell = 0.25 world units, stored as u8 (value/16 = light)
+  (func $lmap_get (param $wx f64) (param $wy f64) (result f64)
+    (local $lx i32) (local $ly i32)
+    (local.set $lx (i32.trunc_f64_s (f64.mul (local.get $wx) (f64.const 4.0))))
+    (local.set $ly (i32.trunc_f64_s (f64.mul (local.get $wy) (f64.const 4.0))))
+    (if (i32.lt_s (local.get $lx) (i32.const 0)) (then (local.set $lx (i32.const 0))))
+    (if (i32.ge_s (local.get $lx) (i32.const 64)) (then (local.set $lx (i32.const 63))))
+    (if (i32.lt_s (local.get $ly) (i32.const 0)) (then (local.set $ly (i32.const 0))))
+    (if (i32.ge_s (local.get $ly) (i32.const 64)) (then (local.set $ly (i32.const 63))))
+    (f64.div (f64.convert_i32_u (i32.load8_u
+      (i32.add (i32.const 0x14580)
+        (i32.add (i32.mul (local.get $ly) (i32.const 64)) (local.get $lx)))))
+      (f64.const 16.0))
   )
 
   (func $draw_rect (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $c i32)
@@ -233,6 +250,10 @@
   (func (export "init")
     (local $ramp i32) (local $shade i32) (local $idx i32)
     (local $tr i32) (local $tg i32) (local $tb i32) (local $base i32)
+    (local $lx i32) (local $ly i32) (local $li i32) (local $laddr i32)
+    (local $wx f64) (local $wy f64) (local $dx f64) (local $dy f64)
+    (local $d2 f64) (local $lval f64)
+    (local $lsrc_x f64) (local $lsrc_y f64) (local $lint f64) (local $lfall f64)
 
     ;; Generate 256-color palette from 16 ramp targets (at 0x10450, 48 bytes)
     ;; Each ramp: 16 shades from black (shade 0) to target color (shade 15)
@@ -259,6 +280,96 @@
     (call $gen_tex_cubicle)
     (call $gen_tex_server)
     (call $gen_tex_demon)
+
+    ;; === Generate 64x64 lightmap at 0x14580 ===
+    ;; 9 point lights, inverse-square falloff
+    ;; Light source data: 9 lights × 4 values (x, y, intensity, falloff) = 36 f64s
+    ;; Stored inline via a light source loop
+    (local.set $ly (i32.const 0))
+    (block $lyd (loop $lyl (br_if $lyd (i32.ge_u (local.get $ly) (i32.const 64)))
+      (local.set $lx (i32.const 0))
+      (block $lxd (loop $lxl (br_if $lxd (i32.ge_u (local.get $lx) (i32.const 64)))
+        (local.set $laddr (i32.add (i32.const 0x14580)
+          (i32.add (i32.mul (local.get $ly) (i32.const 64)) (local.get $lx))))
+        ;; World position of this lightmap cell center
+        (local.set $wx (f64.add (f64.div (f64.convert_i32_u (local.get $lx)) (f64.const 4.0)) (f64.const 0.125)))
+        (local.set $wy (f64.add (f64.div (f64.convert_i32_u (local.get $ly)) (f64.const 4.0)) (f64.const 0.125)))
+        ;; Check if this cell is inside a wall → light = 0
+        (if (i32.gt_u (call $map_get
+              (i32.trunc_f64_s (local.get $wx))
+              (i32.trunc_f64_s (local.get $wy))) (i32.const 0))
+          (then (i32.store8 (local.get $laddr) (i32.const 0)))
+          (else
+            ;; Base ambient
+            (local.set $lval (f64.const 0.45))
+            ;; Light #0: (4.5, 1.5) warm white, int=1.4, fall=0.15
+            (local.set $dx (f64.sub (local.get $wx) (f64.const 4.5)))
+            (local.set $dy (f64.sub (local.get $wy) (f64.const 1.5)))
+            (local.set $d2 (f64.add (f64.mul (local.get $dx) (local.get $dx)) (f64.mul (local.get $dy) (local.get $dy))))
+            (local.set $lval (f64.add (local.get $lval) (f64.div (f64.const 1.4) (f64.add (f64.const 1.0) (f64.mul (local.get $d2) (f64.const 0.15))))))
+            ;; Light #1: (13.5, 1.5) warm, int=1.1, fall=0.18
+            (local.set $dx (f64.sub (local.get $wx) (f64.const 13.5)))
+            (local.set $dy (f64.sub (local.get $wy) (f64.const 1.5)))
+            (local.set $d2 (f64.add (f64.mul (local.get $dx) (local.get $dx)) (f64.mul (local.get $dy) (local.get $dy))))
+            (local.set $lval (f64.add (local.get $lval) (f64.div (f64.const 1.1) (f64.add (f64.const 1.0) (f64.mul (local.get $d2) (f64.const 0.18))))))
+            ;; Light #2: (4.5, 3.5) office area, int=1.2, fall=0.18
+            (local.set $dx (f64.sub (local.get $wx) (f64.const 4.5)))
+            (local.set $dy (f64.sub (local.get $wy) (f64.const 3.5)))
+            (local.set $d2 (f64.add (f64.mul (local.get $dx) (local.get $dx)) (f64.mul (local.get $dy) (local.get $dy))))
+            (local.set $lval (f64.add (local.get $lval) (f64.div (f64.const 1.2) (f64.add (f64.const 1.0) (f64.mul (local.get $d2) (f64.const 0.18))))))
+            ;; Light #3: (10.5, 5.5) server room green glow, int=1.0, fall=0.3
+            (local.set $dx (f64.sub (local.get $wx) (f64.const 10.5)))
+            (local.set $dy (f64.sub (local.get $wy) (f64.const 5.5)))
+            (local.set $d2 (f64.add (f64.mul (local.get $dx) (local.get $dx)) (f64.mul (local.get $dy) (local.get $dy))))
+            (local.set $lval (f64.add (local.get $lval) (f64.div (f64.const 1.0) (f64.add (f64.const 1.0) (f64.mul (local.get $d2) (f64.const 0.3))))))
+            ;; Light #4: (4.5, 7.5) corridor, int=1.3, fall=0.15
+            (local.set $dx (f64.sub (local.get $wx) (f64.const 4.5)))
+            (local.set $dy (f64.sub (local.get $wy) (f64.const 7.5)))
+            (local.set $d2 (f64.add (f64.mul (local.get $dx) (local.get $dx)) (f64.mul (local.get $dy) (local.get $dy))))
+            (local.set $lval (f64.add (local.get $lval) (f64.div (f64.const 1.3) (f64.add (f64.const 1.0) (f64.mul (local.get $d2) (f64.const 0.15))))))
+            ;; Light #5: (13.5, 7.5) east corridor, int=1.1, fall=0.18
+            (local.set $dx (f64.sub (local.get $wx) (f64.const 13.5)))
+            (local.set $dy (f64.sub (local.get $wy) (f64.const 7.5)))
+            (local.set $d2 (f64.add (f64.mul (local.get $dx) (local.get $dx)) (f64.mul (local.get $dy) (local.get $dy))))
+            (local.set $lval (f64.add (local.get $lval) (f64.div (f64.const 1.1) (f64.add (f64.const 1.0) (f64.mul (local.get $d2) (f64.const 0.18))))))
+            ;; Light #6: (10.0, 10.5) demon lair red glow, int=0.8, fall=0.25
+            (local.set $dx (f64.sub (local.get $wx) (f64.const 10.0)))
+            (local.set $dy (f64.sub (local.get $wy) (f64.const 10.5)))
+            (local.set $d2 (f64.add (f64.mul (local.get $dx) (local.get $dx)) (f64.mul (local.get $dy) (local.get $dy))))
+            (local.set $lval (f64.add (local.get $lval) (f64.div (f64.const 0.8) (f64.add (f64.const 1.0) (f64.mul (local.get $d2) (f64.const 0.25))))))
+            ;; Light #7: (4.5, 14.5) south office, int=1.1, fall=0.18
+            (local.set $dx (f64.sub (local.get $wx) (f64.const 4.5)))
+            (local.set $dy (f64.sub (local.get $wy) (f64.const 14.5)))
+            (local.set $d2 (f64.add (f64.mul (local.get $dx) (local.get $dx)) (f64.mul (local.get $dy) (local.get $dy))))
+            (local.set $lval (f64.add (local.get $lval) (f64.div (f64.const 1.1) (f64.add (f64.const 1.0) (f64.mul (local.get $d2) (f64.const 0.18))))))
+            ;; Light #8: (13.5, 14.5) SE corner, int=0.9, fall=0.2
+            (local.set $dx (f64.sub (local.get $wx) (f64.const 13.5)))
+            (local.set $dy (f64.sub (local.get $wy) (f64.const 14.5)))
+            (local.set $d2 (f64.add (f64.mul (local.get $dx) (local.get $dx)) (f64.mul (local.get $dy) (local.get $dy))))
+            (local.set $lval (f64.add (local.get $lval) (f64.div (f64.const 0.9) (f64.add (f64.const 1.0) (f64.mul (local.get $d2) (f64.const 0.2))))))
+            ;; Light #9: (8.5, 7.5) central corridor, int=1.0, fall=0.15
+            (local.set $dx (f64.sub (local.get $wx) (f64.const 8.5)))
+            (local.set $dy (f64.sub (local.get $wy) (f64.const 7.5)))
+            (local.set $d2 (f64.add (f64.mul (local.get $dx) (local.get $dx)) (f64.mul (local.get $dy) (local.get $dy))))
+            (local.set $lval (f64.add (local.get $lval) (f64.div (f64.const 1.0) (f64.add (f64.const 1.0) (f64.mul (local.get $d2) (f64.const 0.15))))))
+            ;; Light #10: (8.5, 4.5) north central, int=0.9, fall=0.18
+            (local.set $dx (f64.sub (local.get $wx) (f64.const 8.5)))
+            (local.set $dy (f64.sub (local.get $wy) (f64.const 4.5)))
+            (local.set $d2 (f64.add (f64.mul (local.get $dx) (local.get $dx)) (f64.mul (local.get $dy) (local.get $dy))))
+            (local.set $lval (f64.add (local.get $lval) (f64.div (f64.const 0.9) (f64.add (f64.const 1.0) (f64.mul (local.get $d2) (f64.const 0.18))))))
+            ;; Light #11: (8.5, 11.5) south central, int=0.9, fall=0.18
+            (local.set $dx (f64.sub (local.get $wx) (f64.const 8.5)))
+            (local.set $dy (f64.sub (local.get $wy) (f64.const 11.5)))
+            (local.set $d2 (f64.add (f64.mul (local.get $dx) (local.get $dx)) (f64.mul (local.get $dy) (local.get $dy))))
+            (local.set $lval (f64.add (local.get $lval) (f64.div (f64.const 0.9) (f64.add (f64.const 1.0) (f64.mul (local.get $d2) (f64.const 0.18))))))
+            ;; Clamp to 1.5 and store as u8 (val * 16)
+            (if (f64.gt (local.get $lval) (f64.const 1.5))
+              (then (local.set $lval (f64.const 1.5))))
+            (i32.store8 (local.get $laddr) (i32.trunc_f64_s (f64.mul (local.get $lval) (f64.const 16.0))))))
+        (local.set $lx (i32.add (local.get $lx) (i32.const 1)))
+        (br $lxl)))
+      (local.set $ly (i32.add (local.get $ly) (i32.const 1)))
+      (br $lyl)))
 
     ;; Player: (2.5, 8.5) facing east
     (f32.store (i32.const 0x3F500) (f32.const 2.5))
@@ -373,6 +484,8 @@
     (local $bob i32) (local $wep_y i32)
     (local $input i32) (local $prev_input i32) (local $new_press i32)
     (local $addr i32)
+    (local $flash_intensity f64) (local $lmap_val f64)
+    (local $floor_wx f64) (local $floor_wy f64)
 
     ;; Load player
     (local.set $px (f64.promote_f32 (f32.load (i32.const 0x3F500))))
@@ -528,6 +641,11 @@
       (local.set $ei (i32.add (local.get $ei) (i32.const 1)))
       (br $elp)))
 
+    ;; === Dynamic lighting setup ===
+    ;; Muzzle flash intensity (fades from 1.0 to 0.0 over 6 frames)
+    (local.set $flash_intensity (f64.div
+      (f64.convert_i32_u (i32.load (i32.const 0x3F5B8))) (f64.const 6.0)))
+
     ;; ===== RAYCASTING with dithered ramp lighting =====
     (local.set $col (i32.const 0))
     (block $rdone (loop $rlp (br_if $rdone (i32.ge_u (local.get $col) (i32.const 320)))
@@ -622,11 +740,21 @@
       (if (i32.lt_s (local.get $tex_id) (i32.const 0)) (then (local.set $tex_id (i32.const 0))))
       (if (i32.gt_s (local.get $tex_id) (i32.const 3)) (then (local.set $tex_id (i32.const 3))))
 
-      ;; === Wall light factor: 1/(1+dist*0.25), side darkening ===
-      (local.set $light (f64.div (f64.const 1.0)
-        (f64.add (f64.const 1.0) (f64.mul (local.get $perp_dist) (f64.const 0.25)))))
+      ;; === Wall light: lightmap at wall face (step back 0.3 into open space) + flash ===
+      ;; Hit point minus 0.3 * ray_dir = sample in the open cell facing the wall
+      (local.set $lmap_val (call $lmap_get
+        (f64.sub (f64.add (local.get $px) (f64.mul (local.get $perp_dist) (local.get $ray_dx)))
+          (f64.mul (local.get $ray_dx) (f64.const 0.3)))
+        (f64.sub (f64.add (local.get $py) (f64.mul (local.get $perp_dist) (local.get $ray_dy)))
+          (f64.mul (local.get $ray_dy) (f64.const 0.3)))))
+      (local.set $light (f64.mul (local.get $lmap_val)
+        (f64.div (f64.const 1.0) (f64.add (f64.const 1.0) (f64.mul (local.get $perp_dist) (f64.const 0.12))))))
       (if (local.get $side)
         (then (local.set $light (f64.mul (local.get $light) (f64.const 0.7)))))
+      ;; Muzzle flash: bright additive light near player
+      (local.set $light (f64.add (local.get $light)
+        (f64.mul (local.get $flash_intensity)
+          (f64.div (f64.const 3.0) (f64.add (f64.const 1.0) (f64.mul (local.get $perp_dist) (f64.const 0.8)))))))
       (if (f64.lt (local.get $light) (f64.const 0.05))
         (then (local.set $light (f64.const 0.05))))
 
@@ -639,8 +767,18 @@
         (local.set $fhalf (f64.convert_i32_s (i32.sub (i32.const 100) (local.get $row))))
         (if (f64.lt (local.get $fhalf) (f64.const 1.0)) (then (local.set $fhalf (f64.const 1.0))))
         (local.set $fdist (f64.div (f64.const 50.0) (local.get $fhalf)))
+        ;; Ceiling world position for lightmap lookup
+        (local.set $floor_wx (f64.add (local.get $px)
+          (f64.mul (call $cos_approx (local.get $ray_angle)) (local.get $fdist))))
+        (local.set $floor_wy (f64.add (local.get $py)
+          (f64.mul (call $sin_approx (local.get $ray_angle)) (local.get $fdist))))
+        (local.set $lmap_val (call $lmap_get (local.get $floor_wx) (local.get $floor_wy)))
         (local.set $lit (f64.mul (f64.const 14.0)
-          (f64.div (f64.const 1.0) (f64.add (f64.const 1.0) (f64.mul (local.get $fdist) (f64.const 0.15))))))
+          (f64.add
+            (f64.mul (local.get $lmap_val)
+              (f64.div (f64.const 1.0) (f64.add (f64.const 1.0) (f64.mul (local.get $fdist) (f64.const 0.05)))))
+            (f64.mul (local.get $flash_intensity)
+              (f64.div (f64.const 2.0) (f64.add (f64.const 1.0) (f64.mul (local.get $fdist) (f64.const 0.5))))))))
         ;; Dither: shade_lo, frac, bayer
         (local.set $shade_lo (i32.trunc_f64_s (local.get $lit)))
         (if (i32.lt_s (local.get $shade_lo) (i32.const 0)) (then (local.set $shade_lo (i32.const 0))))
@@ -705,8 +843,18 @@
         (local.set $fhalf (f64.convert_i32_s (i32.sub (local.get $row) (i32.const 99))))
         (if (f64.lt (local.get $fhalf) (f64.const 1.0)) (then (local.set $fhalf (f64.const 1.0))))
         (local.set $fdist (f64.div (f64.const 50.0) (local.get $fhalf)))
+        ;; Floor world position for lightmap
+        (local.set $floor_wx (f64.add (local.get $px)
+          (f64.mul (call $cos_approx (local.get $ray_angle)) (local.get $fdist))))
+        (local.set $floor_wy (f64.add (local.get $py)
+          (f64.mul (call $sin_approx (local.get $ray_angle)) (local.get $fdist))))
+        (local.set $lmap_val (call $lmap_get (local.get $floor_wx) (local.get $floor_wy)))
         (local.set $lit (f64.mul (f64.const 10.0)
-          (f64.div (f64.const 1.0) (f64.add (f64.const 1.0) (f64.mul (local.get $fdist) (f64.const 0.25))))))
+          (f64.add
+            (f64.mul (local.get $lmap_val)
+              (f64.div (f64.const 1.0) (f64.add (f64.const 1.0) (f64.mul (local.get $fdist) (f64.const 0.12)))))
+            (f64.mul (local.get $flash_intensity)
+              (f64.div (f64.const 2.0) (f64.add (f64.const 1.0) (f64.mul (local.get $fdist) (f64.const 0.5))))))))
         ;; Dither
         (local.set $shade_lo (i32.trunc_f64_s (local.get $lit)))
         (if (i32.lt_s (local.get $shade_lo) (i32.const 0)) (then (local.set $shade_lo (i32.const 0))))
@@ -757,9 +905,13 @@
               (local.set $ecol_end (i32.add (local.get $escr_x) (i32.shr_u (local.get $ewidth) (i32.const 1))))
               (local.set $erow_start (i32.sub (i32.const 100) (i32.shr_u (local.get $eheight) (i32.const 1))))
               (local.set $erow_end (i32.add (i32.const 100) (i32.shr_u (local.get $eheight) (i32.const 1))))
-              ;; Enemy light factor
-              (local.set $light (f64.div (f64.const 1.0)
-                (f64.add (f64.const 1.0) (f64.mul (local.get $etx) (f64.const 0.25)))))
+              ;; Enemy light factor: lightmap at enemy position + flash
+              (local.set $lmap_val (call $lmap_get (local.get $ex) (local.get $ey)))
+              (local.set $light (f64.add
+                (f64.mul (local.get $lmap_val)
+                  (f64.div (f64.const 1.0) (f64.add (f64.const 1.0) (f64.mul (local.get $etx) (f64.const 0.12)))))
+                (f64.mul (local.get $flash_intensity)
+                  (f64.div (f64.const 3.0) (f64.add (f64.const 1.0) (f64.mul (local.get $etx) (f64.const 0.8)))))))
               (if (f64.lt (local.get $light) (f64.const 0.05))
                 (then (local.set $light (f64.const 0.05))))
               ;; Draw columns
