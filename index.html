@@ -412,6 +412,9 @@
 </div>
 <div class="canvas-wrap" id="canvas-wrap">
   <canvas id="screen" width="320" height="200" tabindex="0"></canvas>
+  <div id="pause-overlay" onclick="togglePause()" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,0.5);cursor:pointer;z-index:10;align-items:center;justify-content:center;">
+    <div style="font-size:64px;color:#fff;text-shadow:0 0 20px rgba(255,255,255,0.5);">&#9654;</div>
+  </div>
 </div>
 <div id="virtual-controls">
   <div class="vc-row">

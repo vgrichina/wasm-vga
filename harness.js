@@ -311,7 +311,8 @@ function togglePause() {
   paused = !paused;
   const btn = document.getElementById('pause-btn');
   if (btn) btn.innerHTML = paused ? '&#9654;' : '&#9208;';
-  document.getElementById('info').textContent = paused ? 'PAUSED' : '';
+  const overlay = document.getElementById('pause-overlay');
+  if (overlay) overlay.style.display = paused ? 'flex' : 'none';
 }
 
 // --- Mouse tracking ---
