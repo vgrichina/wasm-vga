@@ -150,6 +150,38 @@
       (br $l)))
   )
 
+  ;; ---- Text renderer for debug textures ----
+  ;; Font data at 0x17500, string data at 0x17530
+  ;; 4x5 pixel font, 9 glyphs: T H I S _ N O D M
+  (func $draw_text (param $tex_id i32) (param $str_addr i32) (param $str_len i32)
+                   (param $ox i32) (param $oy i32) (param $color i32)
+    (local $ci i32) (local $glyph i32) (local $row i32) (local $bits i32) (local $col i32)
+    (local $px i32) (local $py i32)
+    (local.set $ci (i32.const 0))
+    (block $done (loop $charloop
+      (br_if $done (i32.ge_u (local.get $ci) (local.get $str_len)))
+      (local.set $glyph (i32.load8_u (i32.add (local.get $str_addr) (local.get $ci))))
+      (local.set $row (i32.const 0))
+      (block $rd (loop $rl (br_if $rd (i32.ge_u (local.get $row) (i32.const 5)))
+        (local.set $bits (i32.load8_u (i32.add (i32.const 0x17500)
+          (i32.add (i32.mul (local.get $glyph) (i32.const 5)) (local.get $row)))))
+        (local.set $col (i32.const 0))
+        (block $cd (loop $cl (br_if $cd (i32.ge_u (local.get $col) (i32.const 4)))
+          (if (i32.and (local.get $bits) (i32.shl (i32.const 1) (i32.sub (i32.const 3) (local.get $col))))
+            (then
+              (local.set $px (i32.add (local.get $ox) (i32.add (i32.mul (local.get $ci) (i32.const 5)) (local.get $col))))
+              (local.set $py (i32.add (local.get $oy) (local.get $row)))
+              (if (i32.and (i32.lt_u (local.get $px) (i32.const 64)) (i32.lt_u (local.get $py) (i32.const 64)))
+                (then (i32.store8 (call $tex_addr (local.get $tex_id) (local.get $px) (local.get $py))
+                  (local.get $color))))))
+          (local.set $col (i32.add (local.get $col) (i32.const 1)))
+          (br $cl)))
+        (local.set $row (i32.add (local.get $row) (i32.const 1)))
+        (br $rl)))
+      (local.set $ci (i32.add (local.get $ci) (i32.const 1)))
+      (br $charloop)))
+  )
+
   ;; ---- Texture generators ----
   ;; Tex 0: Office drywall — ramp 1 (beige) with ramp 5 (brown) stains
   (func $gen_tex_drywall
@@ -158,22 +190,44 @@
     (block $vd (loop $vl (br_if $vd (i32.ge_u (local.get $v) (i32.const 64)))
       (local.set $u (i32.const 0))
       (block $ud (loop $ul (br_if $ud (i32.ge_u (local.get $u) (i32.const 64)))
-        ;; Base beige: ramp 1 shade 10-13
-        (local.set $c (i32.add (i32.const 26) (i32.and (call $rand) (i32.const 3))))
-        ;; Horizontal panel seams every 16 rows → darker
-        (if (i32.eqz (i32.and (local.get $v) (i32.const 15)))
-          (then (local.set $c (i32.add (i32.const 20) (i32.and (call $rand) (i32.const 1))))))
-        ;; Vertical seam at col 32
-        (if (i32.eq (local.get $u) (i32.const 32))
-          (then (local.set $c (i32.const 21))))
-        ;; Brown water stains (ramp 5)
-        (if (i32.eqz (i32.and (call $rand) (i32.const 127)))
-          (then (local.set $c (i32.add (i32.const 83) (i32.and (call $rand) (i32.const 3))))))
-        ;; Outlet cover (ramp 10 steel, rare)
-        (if (i32.and
-              (i32.eqz (i32.and (call $rand) (i32.const 511)))
-              (i32.and (i32.gt_u (local.get $v) (i32.const 30)) (i32.lt_u (local.get $v) (i32.const 40))))
-          (then (local.set $c (i32.const 167))))
+        ;; DEBUG: grid texture for distortion testing
+        ;; Quadrant colors: TL=red(ramp4) TR=green(ramp11) BL=blue(ramp2) BR=yellow(ramp8)
+        ;; Base fill per quadrant, shade 10
+        (local.set $c
+          (if (result i32) (i32.lt_u (local.get $v) (i32.const 32))
+            (then (if (result i32) (i32.lt_u (local.get $u) (i32.const 32))
+              (then (i32.const 0x4A))   ;; top-left: red ramp 4, shade 10
+              (else (i32.const 0xBA)))) ;; top-right: green ramp 11, shade 10
+            (else (if (result i32) (i32.lt_u (local.get $u) (i32.const 32))
+              (then (i32.const 0x2A))   ;; bottom-left: blue-gray ramp 2, shade 10
+              (else (i32.const 0x8A)))))) ;; bottom-right: yellow ramp 8, shade 10
+        ;; Grid lines every 8 pixels — bright white (ramp 15, shade 15)
+        (if (i32.or (i32.eqz (i32.and (local.get $u) (i32.const 7)))
+                    (i32.eqz (i32.and (local.get $v) (i32.const 7))))
+          (then (local.set $c (i32.const 0xFF))))
+        ;; Thick center cross (u=31..32, v=31..32) — black
+        (if (i32.or
+              (i32.and (i32.ge_u (local.get $u) (i32.const 31)) (i32.le_u (local.get $u) (i32.const 32)))
+              (i32.and (i32.ge_u (local.get $v) (i32.const 31)) (i32.le_u (local.get $v) (i32.const 32))))
+          (then (local.set $c (i32.const 0x01))))
+        ;; Diagonal arrow top-left corner: pixels where u==v for u<16
+        (if (i32.and (i32.eq (local.get $u) (local.get $v))
+                     (i32.lt_u (local.get $u) (i32.const 16)))
+          (then (local.set $c (i32.const 0xFF))))
+        ;; Arrow head: v=0, u=1..4
+        (if (i32.and (i32.eqz (local.get $v))
+                     (i32.and (i32.ge_u (local.get $u) (i32.const 1)) (i32.le_u (local.get $u) (i32.const 4))))
+          (then (local.set $c (i32.const 0xFF))))
+        ;; Arrow head: u=0, v=1..4
+        (if (i32.and (i32.eqz (local.get $u))
+                     (i32.and (i32.ge_u (local.get $v) (i32.const 1)) (i32.le_u (local.get $v) (i32.const 4))))
+          (then (local.set $c (i32.const 0xFF))))
+        ;; Number markers: dot at (4,4) (8,4) (12,4) to show U direction
+        (if (i32.and (i32.eq (local.get $v) (i32.const 4))
+                     (i32.or (i32.eq (local.get $u) (i32.const 4))
+                       (i32.or (i32.eq (local.get $u) (i32.const 8))
+                               (i32.eq (local.get $u) (i32.const 12)))))
+          (then (local.set $c (i32.const 0x4F)))) ;; bright red dots
         (i32.store8 (call $tex_addr (i32.const 0) (local.get $u) (local.get $v)) (local.get $c))
         (local.set $u (i32.add (local.get $u) (i32.const 1)))
         (br $ul)))
@@ -392,6 +446,9 @@
 
     ;; Generate textures
     (call $gen_tex_drywall)
+    ;; Draw debug text on drywall: "THIS IS" at y=8, "NOT DOOM" at y=48
+    (call $draw_text (i32.const 0) (i32.const 0x17530) (i32.const 7) (i32.const 15) (i32.const 8) (i32.const 0x01))
+    (call $draw_text (i32.const 0) (i32.const 0x17538) (i32.const 8) (i32.const 12) (i32.const 48) (i32.const 0x01))
     (call $gen_tex_cubicle)
     (call $gen_tex_server)
     (call $gen_tex_demon)
@@ -963,10 +1020,10 @@
       (f32.store (i32.add (i32.const 0x3F000) (i32.mul (local.get $col) (i32.const 4)))
         (f32.demote_f64 (local.get $perp_dist)))
 
-      ;; Wall geometry
+      ;; Wall geometry (unclamped for correct tex_v mapping)
       (local.set $wall_h (i32.trunc_f64_s (f64.div (f64.const 200.0) (local.get $perp_dist))))
-      (if (i32.gt_s (local.get $wall_h) (i32.const 400))
-        (then (local.set $wall_h (i32.const 400))))
+      (if (i32.gt_s (local.get $wall_h) (i32.const 10000))
+        (then (local.set $wall_h (i32.const 10000))))
       (local.set $draw_start (i32.sub (i32.const 100) (i32.shr_u (local.get $wall_h) (i32.const 1))))
       (local.set $draw_end (i32.add (i32.const 100) (i32.shr_u (local.get $wall_h) (i32.const 1))))
 
@@ -1146,8 +1203,8 @@
         (then
           ;; Compute half-wall geometry: only bottom half of a full-height wall
           (local.set $half_h (i32.trunc_f64_s (f64.div (f64.const 200.0) (local.get $half_perp))))
-          (if (i32.gt_s (local.get $half_h) (i32.const 400))
-            (then (local.set $half_h (i32.const 400))))
+          (if (i32.gt_s (local.get $half_h) (i32.const 10000))
+            (then (local.set $half_h (i32.const 10000))))
           ;; Half wall: from midpoint (row 100) down to where full wall bottom would be
           (local.set $half_start (i32.const 100))  ;; top of half wall = screen center
           (local.set $half_end (i32.add (i32.const 100) (i32.shr_u (local.get $half_h) (i32.const 1))))
@@ -1456,6 +1513,23 @@
     "\00\00\00\4A\4A\00\00\00\00\4A\4A\00\00\00\00\00"  ;; lower legs
     "\00\00\9A\4A\4A\00\00\00\00\4A\4A\9A\00\00\00\00"  ;; feet + claws
     "\00\9A\9A\00\00\00\00\00\00\00\00\9A\9A\00\00\00") ;; claw tips
+
+  ;; 4x5 font data at 0x17500: T(0) H(1) I(2) S(3) _(4) N(5) O(6) D(7) M(8)
+  ;; Each glyph = 5 bytes (rows), bits 3..0 = columns left to right
+  (data (i32.const 0x17500)
+    "\0F\06\06\06\06"  ;; T: #### .##. .##. .##. .##.
+    "\09\09\0F\09\09"  ;; H: #..# #..# #### #..# #..#
+    "\0F\06\06\06\0F"  ;; I: #### .##. .##. .##. ####
+    "\07\08\06\01\0E"  ;; S: .### #... .##. ...# ###.
+    "\00\00\00\00\00"  ;; _: (space)
+    "\09\0D\0B\09\09"  ;; N: #..# ##.# #.## #..# #..#
+    "\06\09\09\09\06"  ;; O: .##. #..# #..# #..# .##.
+    "\0E\09\09\09\0E"  ;; D: ###. #..# #..# #..# ###.
+    "\09\0F\0F\09\09") ;; M: #..# #### #### #..# #..#
+  ;; String: "THIS IS" (7 chars) then "NOT DOOM" (8 chars)
+  (data (i32.const 0x17530)
+    "\00\01\02\03\04\02\03"          ;; THIS IS
+    "\05\06\00\04\07\06\06\08")      ;; NOT DOOM
 
   (data (i32.const 0x10450)
     "\FF\FF\FF"  ;; 0  gray/white
