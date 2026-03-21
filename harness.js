@@ -310,7 +310,8 @@ function loop(ts) {
 function togglePause() {
   paused = !paused;
   const btn = document.getElementById('pause-btn');
-  if (btn) btn.textContent = paused ? '\u25B6' : '\u23F8';
+  if (btn) btn.innerHTML = paused ? '&#9654;' : '&#9208;';
+  document.getElementById('info').textContent = paused ? 'PAUSED' : '';
 }
 
 // --- Mouse tracking ---
@@ -376,7 +377,11 @@ function setKeyBit(bit, down) {
 }
 // Use capture phase so we get keys before select/button elements consume them
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyP') { e.preventDefault(); togglePause(); return; }
+  if (e.code === 'KeyP' || e.key === 'p' || e.key === 'P') {
+    e.preventDefault(); e.stopPropagation();
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+    togglePause(); return;
+  }
   const bit = KEY_MAP[e.code];
   if (bit !== undefined) {
     e.preventDefault();

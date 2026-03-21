@@ -680,6 +680,7 @@
     (local $half_hit i32) (local $half_perp f64) (local $half_side i32)
     (local $half_map_x i32) (local $half_map_y i32) (local $half_type i32)
     (local $half_h i32) (local $half_start i32) (local $half_end i32)
+    (local $tex_v_step f64) (local $tex_v_acc f64)
 
     ;; Load player
     (local.set $px (f64.promote_f32 (f32.load (i32.const 0x3F500))))
@@ -1115,15 +1116,17 @@
         (br $cl)))
 
       ;; --- Draw wall with dithered ramp lighting ---
+      ;; Precompute tex_v step (float, avoids per-pixel integer division)
+      (local.set $tex_v_step (f64.mul (local.get $perp_dist) (f64.const 0.32)))
       (local.set $row (select (local.get $draw_start) (i32.const 0) (i32.ge_s (local.get $draw_start) (i32.const 0))))
+      (local.set $tex_v_acc (f64.mul
+        (f64.convert_i32_s (i32.sub (local.get $row) (local.get $draw_start)))
+        (local.get $tex_v_step)))
       (block $wd (loop $wl
         (br_if $wd (i32.or (i32.ge_s (local.get $row) (local.get $draw_end))
                            (i32.ge_s (local.get $row) (i32.const 200))))
         ;; Texture sample
-        (local.set $tex_v (i32.and
-          (i32.div_s (i32.mul (i32.sub (local.get $row) (local.get $draw_start)) (i32.const 64))
-                     (local.get $wall_h))
-          (i32.const 63)))
+        (local.set $tex_v (i32.and (i32.trunc_f64_s (local.get $tex_v_acc)) (i32.const 63)))
         (local.set $tex_color (i32.load8_u (call $tex_addr (local.get $tex_id) (local.get $tex_u) (local.get $tex_v))))
         ;; Extract ramp and base shade
         (local.set $ramp (i32.shr_u (local.get $tex_color) (i32.const 4)))
@@ -1148,6 +1151,7 @@
         (i32.store8 (i32.add (i32.const 0x0340)
           (i32.add (i32.mul (local.get $row) (i32.const 320)) (local.get $col)))
           (i32.add (i32.shl (local.get $ramp) (i32.const 4)) (local.get $final_shade)))
+        (local.set $tex_v_acc (f64.add (local.get $tex_v_acc) (local.get $tex_v_step)))
         (local.set $row (i32.add (local.get $row) (i32.const 1)))
         (br $wl)))
 
@@ -1232,16 +1236,19 @@
           (if (f64.lt (local.get $light) (f64.const 0.05))
             (then (local.set $light (f64.const 0.05))))
           ;; Draw half wall rows
+          ;; Half wall maps to bottom half of texture (v 32-63)
+          ;; tex_v_step = 32 / (half_end - half_start) = half_perp * 0.16
+          (local.set $tex_v_step (f64.mul (local.get $half_perp) (f64.const 0.16)))
           (local.set $row (select (local.get $half_start) (i32.const 0) (i32.ge_s (local.get $half_start) (i32.const 0))))
+          (local.set $tex_v_acc (f64.mul
+            (f64.convert_i32_s (i32.sub (local.get $row) (local.get $half_start)))
+            (local.get $tex_v_step)))
           (block $hwd (loop $hwl
             (br_if $hwd (i32.or (i32.ge_s (local.get $row) (local.get $half_end))
                                 (i32.ge_s (local.get $row) (i32.const 200))))
-            ;; Texture V: map row within the half wall to bottom half of texture (v 32-63)
-            (local.set $tex_v (i32.add (i32.const 32) (i32.and
-              (i32.div_s (i32.mul (i32.sub (local.get $row) (local.get $half_start)) (i32.const 32))
-                (select (i32.sub (local.get $half_end) (local.get $half_start)) (i32.const 1)
-                  (i32.gt_s (i32.sub (local.get $half_end) (local.get $half_start)) (i32.const 0))))
-              (i32.const 31))))
+            ;; Texture V: map to bottom half of texture (v 32-63)
+            (local.set $tex_v (i32.add (i32.const 32)
+              (i32.and (i32.trunc_f64_s (local.get $tex_v_acc)) (i32.const 31))))
             (local.set $tex_color (i32.load8_u (call $tex_addr (local.get $tex_id) (local.get $tex_u) (local.get $tex_v))))
             (local.set $ramp (i32.shr_u (local.get $tex_color) (i32.const 4)))
             (local.set $base_shade (i32.and (local.get $tex_color) (i32.const 15)))
@@ -1262,6 +1269,7 @@
             (i32.store8 (i32.add (i32.const 0x0340)
               (i32.add (i32.mul (local.get $row) (i32.const 320)) (local.get $col)))
               (i32.add (i32.shl (local.get $ramp) (i32.const 4)) (local.get $final_shade)))
+            (local.set $tex_v_acc (f64.add (local.get $tex_v_acc) (local.get $tex_v_step)))
             (local.set $row (i32.add (local.get $row) (i32.const 1)))
             (br $hwl)))
           ;; Also draw a top edge (1px bright highlight)
