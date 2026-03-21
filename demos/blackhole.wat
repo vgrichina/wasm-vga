@@ -421,7 +421,7 @@
         ;; Ray march loop
         (local.set $step (i32.const 0))
         (block $ray_done (loop $ray_lp
-          (br_if $ray_done (i32.ge_u (local.get $step) (i32.const 200)))
+          (br_if $ray_done (i32.ge_u (local.get $step) (i32.const 150)))
 
           ;; Distance from black hole
           (local.set $r2 (f64.add (f64.add
@@ -472,14 +472,16 @@
           (local.set $vel_z (f64.add (local.get $vel_z)
             (f64.mul (f64.mul (local.get $factor) (local.get $pos_z)) (local.get $dt))))
 
-          ;; Re-normalize velocity to |v|=c=1 (light speed is constant)
-          (local.set $ray_len (f64.sqrt (f64.add (f64.add
-            (f64.mul (local.get $vel_x) (local.get $vel_x))
-            (f64.mul (local.get $vel_y) (local.get $vel_y)))
-            (f64.mul (local.get $vel_z) (local.get $vel_z)))))
-          (local.set $vel_x (f64.div (local.get $vel_x) (local.get $ray_len)))
-          (local.set $vel_y (f64.div (local.get $vel_y) (local.get $ray_len)))
-          (local.set $vel_z (f64.div (local.get $vel_z) (local.get $ray_len)))
+          ;; Re-normalize velocity every 4th step (preserve |v|=c=1)
+          (if (i32.eqz (i32.and (local.get $step) (i32.const 3)))
+            (then
+              (local.set $ray_len (f64.sqrt (f64.add (f64.add
+                (f64.mul (local.get $vel_x) (local.get $vel_x))
+                (f64.mul (local.get $vel_y) (local.get $vel_y)))
+                (f64.mul (local.get $vel_z) (local.get $vel_z)))))
+              (local.set $vel_x (f64.div (local.get $vel_x) (local.get $ray_len)))
+              (local.set $vel_y (f64.div (local.get $vel_y) (local.get $ray_len)))
+              (local.set $vel_z (f64.div (local.get $vel_z) (local.get $ray_len)))))
 
           ;; Save old y for disk crossing detection
           (local.set $old_y (local.get $pos_y))
@@ -554,8 +556,15 @@
                   (local.set $color (local.get $idx))
                   (br $ray_done)))))
 
-          ;; --- Escape check ---
-          (if (f64.gt (local.get $r) (f64.const 120.0))
+          ;; --- Early escape: r > 15 and heading outward (pos·vel > 0) ---
+          (if (i32.and
+                (f64.gt (local.get $r) (f64.const 15.0))
+                (f64.gt
+                  (f64.add (f64.add
+                    (f64.mul (local.get $pos_x) (local.get $vel_x))
+                    (f64.mul (local.get $pos_y) (local.get $vel_y)))
+                    (f64.mul (local.get $pos_z) (local.get $vel_z)))
+                  (f64.const 0.0)))
             (then
               ;; Procedural starfield
               (local.set $ix (i32.trunc_f64_s (f64.mul (local.get $vel_x) (f64.const 400.0))))
