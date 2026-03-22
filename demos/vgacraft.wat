@@ -1485,7 +1485,7 @@
     (local $cos_a_v f64) (local $sin_a_v f64)
     (local $move_x f64) (local $move_y f64) (local $speed f64)
     (local $mouse_btn i32) (local $prev_mouse i32)
-    (local $mouse_y i32) (local $look_y i32)
+    (local $mouse_x i32) (local $mouse_y i32) (local $look_y i32)
     (local $msg_timer i32) (local $dig_cd i32)
     (local $vz f64) (local $on_ground i32) (local $ground_h i32)
     (local $bob f64) (local $bob_phase f64)
@@ -1533,6 +1533,16 @@
     (local.set $bob_phase (f64.load (i32.const 0x10374)))
     (local.set $look_y (i32.load (i32.const 0x103AC)))
 
+    ;; ---- Mouse X → yaw (horizontal look) ----
+    (local.set $mouse_x (i32.or
+      (i32.load8_u (i32.const 0x04))
+      (i32.shl (i32.load8_u (i32.const 0x05)) (i32.const 8))))
+    ;; Map mouse_x (0..320) to angle: center=160, sensitivity ~0.01 rad/pixel
+    (local.set $angle (f64.add (local.get $angle)
+      (f64.mul
+        (f64.sub (f64.convert_i32_s (local.get $mouse_x)) (f64.const 160.0))
+        (f64.const 0.0002))))
+
     ;; ---- Mouse Y → look pitch ----
     (local.set $mouse_y (i32.or
       (i32.load8_u (i32.const 0x06))
@@ -1548,11 +1558,11 @@
 
     ;; ---- Input ----
     (local.set $speed (f64.const 0.06))
-    ;; Turn
+    ;; Turn (Left arrow/A = subtract angle, Right arrow/D = add angle)
     (if (i32.and (local.get $keys) (i32.const 4))
-      (then (local.set $angle (f64.sub (local.get $angle) (f64.const 0.04)))))
-    (if (i32.and (local.get $keys) (i32.const 8))
       (then (local.set $angle (f64.add (local.get $angle) (f64.const 0.04)))))
+    (if (i32.and (local.get $keys) (i32.const 8))
+      (then (local.set $angle (f64.sub (local.get $angle) (f64.const 0.04)))))
 
     (local.set $cos_a_v (call $cos_a (local.get $angle)))
     (local.set $sin_a_v (call $sin_a (local.get $angle)))
@@ -1867,17 +1877,29 @@
 
             (i32.store8 (local.get $fb_addr) (local.get $color)))
           (else
-            ;; Sky: gradient based on ray_dz
+            ;; Sky: gradient based on ray_dz with dithering
             ;; dz > 0 → looking up → sky, dz < 0 → looking down → dark
             (if (f64.gt (local.get $ray_dz) (f64.const 0.0))
               (then
-                ;; Map dz (0..1) to sky gradient (7..1)
-                (local.set $sky_idx (i32.sub (i32.const 7)
-                  (i32.trunc_f64_s (f64.mul (local.get $ray_dz) (f64.const 8.0)))))
-                (if (i32.lt_s (local.get $sky_idx) (i32.const 1))
-                  (then (local.set $sky_idx (i32.const 1))))
-                (if (i32.gt_s (local.get $sky_idx) (i32.const 7))
-                  (then (local.set $sky_idx (i32.const 7))))
+                ;; Map dz (0..1) to sky gradient with 16 sub-steps for dithering
+                ;; sky_full maps to range 0..111 (7 colors * 16 sub-steps)
+                ;; We compute a high-precision value, then extract integer + fractional
+                (local.set $shade_full (i32.sub (i32.const 111)
+                  (i32.trunc_f64_s (f64.mul (local.get $ray_dz) (f64.const 128.0)))))
+                (if (i32.lt_s (local.get $shade_full) (i32.const 0))
+                  (then (local.set $shade_full (i32.const 0))))
+                (if (i32.gt_s (local.get $shade_full) (i32.const 111))
+                  (then (local.set $shade_full (i32.const 111))))
+                ;; Integer sky index (0-6) and fractional part (0-15)
+                (local.set $sky_idx (i32.add
+                  (i32.shr_u (local.get $shade_full) (i32.const 4))
+                  (i32.const 1)))
+                (local.set $shade_frac (i32.and (local.get $shade_full) (i32.const 15)))
+                ;; Dither between adjacent sky colors
+                (if (i32.and
+                      (call $dither_test (local.get $px_col) (local.get $px_row) (local.get $shade_frac))
+                      (i32.lt_s (local.get $sky_idx) (i32.const 7)))
+                  (then (local.set $sky_idx (i32.add (local.get $sky_idx) (i32.const 1)))))
                 (i32.store8 (local.get $fb_addr) (local.get $sky_idx)))
               (else
                 ;; Below horizon fog (now at 136+7=143)
