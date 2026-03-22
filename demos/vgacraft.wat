@@ -6,10 +6,10 @@
   ;; ============================================================
   ;; VGACraft — Duke Nukem 3D meets Minecraft
   ;; ============================================================
-  ;; Infinite procedural voxel world with billboard sprite monsters
-  ;; Raycasting engine renders terrain columns with block textures
+  ;; True DDA raycaster with variable-height blocks
+  ;; Y-shearing for look up/down (Duke3D/Quake style)
   ;; WASD to move, Left/Right arrows to turn, Space to jump
-  ;; Mouse click to dig block, Shift+click to place
+  ;; Mouse to aim (Y for look up/down), Click to dig, Shift+click to place
   ;;
   ;; Memory layout:
   ;;   0x10340  PRNG state (4 bytes)
@@ -29,6 +29,7 @@
   ;;     +16: dig_cooldown (i32)
   ;;     +20: prev_mouse (i32)
   ;;     +24: selected_block (i32)
+  ;;     +28: look_y (i32) - vertical look offset (-80 to 80)
   ;;   0x103B0  zbuffer (320 * 8 = 2560 bytes) → ends at 0x10DB0
   ;;   0x10E00  Monster array (32 monsters * 32 bytes = 1024)
   ;;   0x11200  Modification table (max ~1900 entries * 16 bytes)
@@ -110,9 +111,6 @@
     (local.get $result)
   )
 
-  ;; Water level constant
-  ;; WATER_LEVEL = 4
-
   ;; ---- Terrain height: returns 2-14 for given world XY ----
   (func $terrain_height (param $wx i32) (param $wy i32) (result i32)
     (local $h1 i32) (local $h2 i32) (local $h3 i32) (local $result i32)
@@ -144,24 +142,6 @@
     (i32.and
       (i32.lt_u (i32.and (local.get $h) (i32.const 255)) (i32.const 10))
       (i32.gt_s (call $terrain_height (local.get $wx) (local.get $wy)) (i32.const 5)))
-  )
-
-  ;; ---- Check for flower/plant at position ----
-  ;; Returns: 0=none, 1=red flower, 2=yellow flower, 3=tall grass
-  (func $has_decoration (param $wx i32) (param $wy i32) (result i32)
-    (local $h i32) (local $th i32)
-    (local.set $th (call $terrain_height (local.get $wx) (local.get $wy)))
-    ;; Only on grass terrain (height > 4) and not where trees are
-    (if (i32.le_s (local.get $th) (i32.const 4)) (then (return (i32.const 0))))
-    (if (call $has_tree (local.get $wx) (local.get $wy)) (then (return (i32.const 0))))
-    (local.set $h (call $hash2d (i32.add (local.get $wx) (i32.const 9999))
-                                (i32.add (local.get $wy) (i32.const 4444))))
-    (local.set $h (i32.and (local.get $h) (i32.const 255)))
-    ;; ~8% red flower, ~6% yellow flower, ~15% tall grass
-    (if (i32.lt_u (local.get $h) (i32.const 20)) (then (return (i32.const 1))))
-    (if (i32.lt_u (local.get $h) (i32.const 35)) (then (return (i32.const 2))))
-    (if (i32.lt_u (local.get $h) (i32.const 73)) (then (return (i32.const 3))))
-    (i32.const 0)
   )
 
   ;; ---- Get block type at world position (wx, wy, wz) ----
@@ -333,65 +313,60 @@
   )
 
   ;; ---- Block texture pattern ----
-  ;; Returns a shade offset (-1, 0, +1) for texturing a block face
-  ;; based on block type and UV coordinates within the face
   (func $block_texture (param $type i32) (param $u i32) (param $v i32) (param $face i32) (result i32)
     (local $h i32)
-    ;; Grass top face: green with random speckle
+    ;; Grass top face
     (if (i32.and (i32.eq (local.get $type) (i32.const 1)) (i32.eq (local.get $face) (i32.const 0)))
       (then
         (local.set $h (i32.and (call $hash3d (local.get $u) (local.get $v) (i32.const 111)) (i32.const 7)))
         (if (i32.lt_u (local.get $h) (i32.const 2)) (then (return (i32.const -1))))
         (if (i32.eq (local.get $h) (i32.const 6)) (then (return (i32.const 1))))
         (return (i32.const 0))))
-    ;; Grass side: dirt with green stripe at top
+    ;; Grass side
     (if (i32.and (i32.eq (local.get $type) (i32.const 1)) (i32.ne (local.get $face) (i32.const 0)))
       (then
         (if (i32.lt_u (local.get $v) (i32.const 2))
-          (then (return (i32.const 2))))  ;; green tint at top
+          (then (return (i32.const 2))))
         (return (i32.const 0))))
-    ;; Dirt: earthy texture
+    ;; Dirt
     (if (i32.eq (local.get $type) (i32.const 2))
       (then
         (local.set $h (i32.and (call $hash3d (local.get $u) (local.get $v) (i32.const 222)) (i32.const 3)))
         (if (i32.eqz (local.get $h)) (then (return (i32.const -1))))
         (return (i32.const 0))))
-    ;; Stone: cracks and spots
+    ;; Stone
     (if (i32.eq (local.get $type) (i32.const 3))
       (then
         (local.set $h (i32.and (call $hash3d (local.get $u) (local.get $v) (i32.const 333)) (i32.const 7)))
         (if (i32.lt_u (local.get $h) (i32.const 2)) (then (return (i32.const -1))))
-        ;; Horizontal crack lines
         (if (i32.and (i32.eq (i32.and (local.get $v) (i32.const 3)) (i32.const 2))
                      (i32.lt_u (i32.and (local.get $u) (i32.const 3)) (i32.const 3)))
           (then (return (i32.const -1))))
         (return (i32.const 0))))
-    ;; Sand: grainy
+    ;; Sand
     (if (i32.eq (local.get $type) (i32.const 4))
       (then
         (local.set $h (i32.and (call $hash3d (local.get $u) (local.get $v) (i32.const 444)) (i32.const 3)))
         (if (i32.eqz (local.get $h)) (then (return (i32.const 1))))
         (if (i32.eq (local.get $h) (i32.const 1)) (then (return (i32.const -1))))
         (return (i32.const 0))))
-    ;; Wood: vertical grain
+    ;; Wood
     (if (i32.eq (local.get $type) (i32.const 6))
       (then
-        ;; Vertical lines
         (if (i32.eq (i32.and (local.get $u) (i32.const 3)) (i32.const 0))
           (then (return (i32.const -1))))
-        ;; Knots
         (if (i32.and (i32.eq (i32.and (local.get $u) (i32.const 7)) (i32.const 3))
                      (i32.eq (i32.and (local.get $v) (i32.const 7)) (i32.const 4)))
           (then (return (i32.const -2))))
         (return (i32.const 0))))
-    ;; Leaves: sparse pattern
+    ;; Leaves
     (if (i32.eq (local.get $type) (i32.const 7))
       (then
         (local.set $h (i32.and (call $hash3d (local.get $u) (local.get $v) (i32.const 777)) (i32.const 3)))
         (if (i32.eqz (local.get $h)) (then (return (i32.const -2))))
         (if (i32.eq (local.get $h) (i32.const 3)) (then (return (i32.const 1))))
         (return (i32.const 0))))
-    ;; Coal ore: dark spots in stone
+    ;; Coal ore
     (if (i32.eq (local.get $type) (i32.const 8))
       (then
         (local.set $h (i32.and (call $hash3d (local.get $u) (local.get $v) (i32.const 888)) (i32.const 7)))
@@ -401,14 +376,17 @@
   )
 
   ;; ---- Block color: returns palette index ----
-  ;; Block types: 1=grass, 2=dirt, 3=stone, 4=sand, 5=water, 6=wood, 7=leaves, 8=coal
-  ;; Each type uses 8 palette entries starting at (type)*8 + 8
-  ;; face: 0=top, 1=side, 3=dark-side
+  ;; face: 0=top, 1=side-bright, 2=side-dim, 3=bottom
   (func $block_color (param $type i32) (param $face i32) (param $shade i32) (result i32)
     (local $base i32)
     (local.set $base (i32.add (i32.const 8) (i32.mul (local.get $type) (i32.const 8))))
+    ;; Top face gets +2 brightness
     (if (i32.eq (local.get $face) (i32.const 0))
       (then (local.set $shade (i32.add (local.get $shade) (i32.const 2)))))
+    ;; Dim side gets -1
+    (if (i32.eq (local.get $face) (i32.const 2))
+      (then (local.set $shade (i32.sub (local.get $shade) (i32.const 1)))))
+    ;; Bottom gets -2
     (if (i32.eq (local.get $face) (i32.const 3))
       (then (local.set $shade (i32.sub (local.get $shade) (i32.const 2)))))
     (if (i32.lt_s (local.get $shade) (i32.const 0))
@@ -491,7 +469,7 @@
         (then (local.set $top (local.get $z))))
       (local.set $z (i32.add (local.get $z) (i32.const 1)))
       (br $lp)))
-    ;; Check if terrain itself was dug away
+    ;; Check if terrain was dug away
     (if (i32.eqz (call $get_block (local.get $wx) (local.get $wy) (local.get $top)))
       (then
         (local.set $z (i32.sub (local.get $top) (i32.const 1)))
@@ -501,7 +479,7 @@
             (then (local.set $top (local.get $z)) (br $d2)))
           (local.set $z (i32.sub (local.get $z) (i32.const 1)))
           (br $l2)))))
-    ;; Also check water surface
+    ;; Water surface
     (if (i32.and (i32.le_s (local.get $th) (i32.const 4))
                  (i32.lt_s (local.get $top) (i32.const 4)))
       (then (local.set $top (i32.const 4))))
@@ -520,7 +498,7 @@
     ;; Palette 0: black
     (call $set_pal (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
 
-    ;; Palette 1-7: sky gradient (deep blue at top to lighter blue)
+    ;; Palette 1-7: sky gradient
     (call $set_pal (i32.const 1) (i32.const 40) (i32.const 80) (i32.const 180))
     (call $set_pal (i32.const 2) (i32.const 50) (i32.const 95) (i32.const 190))
     (call $set_pal (i32.const 3) (i32.const 65) (i32.const 110) (i32.const 200))
@@ -529,7 +507,7 @@
     (call $set_pal (i32.const 6) (i32.const 120) (i32.const 170) (i32.const 230))
     (call $set_pal (i32.const 7) (i32.const 140) (i32.const 190) (i32.const 240))
 
-    ;; Block type 1: grass (green) → palette 16..23
+    ;; Block type 1: grass → palette 16..23
     (call $set_pal (i32.const 16) (i32.const 30) (i32.const 70) (i32.const 15))
     (call $set_pal (i32.const 17) (i32.const 38) (i32.const 90) (i32.const 18))
     (call $set_pal (i32.const 18) (i32.const 45) (i32.const 110) (i32.const 22))
@@ -539,7 +517,7 @@
     (call $set_pal (i32.const 22) (i32.const 95) (i32.const 195) (i32.const 50))
     (call $set_pal (i32.const 23) (i32.const 110) (i32.const 210) (i32.const 60))
 
-    ;; Block type 2: dirt (brown) → palette 24..31
+    ;; Block type 2: dirt → palette 24..31
     (call $set_pal (i32.const 24) (i32.const 55) (i32.const 30) (i32.const 10))
     (call $set_pal (i32.const 25) (i32.const 70) (i32.const 40) (i32.const 15))
     (call $set_pal (i32.const 26) (i32.const 85) (i32.const 52) (i32.const 20))
@@ -549,7 +527,7 @@
     (call $set_pal (i32.const 30) (i32.const 145) (i32.const 102) (i32.const 48))
     (call $set_pal (i32.const 31) (i32.const 160) (i32.const 115) (i32.const 56))
 
-    ;; Block type 3: stone (gray) → palette 32..39
+    ;; Block type 3: stone → palette 32..39
     (call $set_pal (i32.const 32) (i32.const 55) (i32.const 55) (i32.const 60))
     (call $set_pal (i32.const 33) (i32.const 70) (i32.const 70) (i32.const 75))
     (call $set_pal (i32.const 34) (i32.const 85) (i32.const 85) (i32.const 90))
@@ -559,7 +537,7 @@
     (call $set_pal (i32.const 38) (i32.const 152) (i32.const 152) (i32.const 160))
     (call $set_pal (i32.const 39) (i32.const 170) (i32.const 170) (i32.const 178))
 
-    ;; Block type 4: sand (warm yellow) → palette 40..47
+    ;; Block type 4: sand → palette 40..47
     (call $set_pal (i32.const 40) (i32.const 140) (i32.const 120) (i32.const 60))
     (call $set_pal (i32.const 41) (i32.const 160) (i32.const 138) (i32.const 70))
     (call $set_pal (i32.const 42) (i32.const 178) (i32.const 155) (i32.const 82))
@@ -569,7 +547,7 @@
     (call $set_pal (i32.const 46) (i32.const 232) (i32.const 214) (i32.const 138))
     (call $set_pal (i32.const 47) (i32.const 240) (i32.const 225) (i32.const 155))
 
-    ;; Block type 5: water (blue) → palette 48..55
+    ;; Block type 5: water → palette 48..55
     (call $set_pal (i32.const 48) (i32.const 15) (i32.const 35) (i32.const 100))
     (call $set_pal (i32.const 49) (i32.const 20) (i32.const 48) (i32.const 120))
     (call $set_pal (i32.const 50) (i32.const 28) (i32.const 62) (i32.const 140))
@@ -579,7 +557,7 @@
     (call $set_pal (i32.const 54) (i32.const 68) (i32.const 128) (i32.const 210))
     (call $set_pal (i32.const 55) (i32.const 80) (i32.const 145) (i32.const 225))
 
-    ;; Block type 6: wood (dark brown) → palette 56..63
+    ;; Block type 6: wood → palette 56..63
     (call $set_pal (i32.const 56) (i32.const 40) (i32.const 22) (i32.const 8))
     (call $set_pal (i32.const 57) (i32.const 55) (i32.const 30) (i32.const 12))
     (call $set_pal (i32.const 58) (i32.const 68) (i32.const 40) (i32.const 16))
@@ -589,7 +567,7 @@
     (call $set_pal (i32.const 62) (i32.const 120) (i32.const 82) (i32.const 42))
     (call $set_pal (i32.const 63) (i32.const 132) (i32.const 92) (i32.const 50))
 
-    ;; Block type 7: leaves (lush green) → palette 64..71
+    ;; Block type 7: leaves → palette 64..71
     (call $set_pal (i32.const 64) (i32.const 15) (i32.const 50) (i32.const 8))
     (call $set_pal (i32.const 65) (i32.const 22) (i32.const 68) (i32.const 12))
     (call $set_pal (i32.const 66) (i32.const 30) (i32.const 88) (i32.const 18))
@@ -609,7 +587,7 @@
     (call $set_pal (i32.const 78) (i32.const 105) (i32.const 105) (i32.const 112))
     (call $set_pal (i32.const 79) (i32.const 120) (i32.const 120) (i32.const 128))
 
-    ;; Fog palette 80-95 (bluish gray distance fog)
+    ;; Fog palette 80-95
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (i32.const 16)))
@@ -621,27 +599,25 @@
       (br $lp)))
 
     ;; Decoration palettes
-    ;; 96: red flower petals
     (call $set_pal (i32.const 96) (i32.const 200) (i32.const 30) (i32.const 30))
-    ;; 97: red flower center
     (call $set_pal (i32.const 97) (i32.const 220) (i32.const 180) (i32.const 40))
-    ;; 98: yellow flower petals
     (call $set_pal (i32.const 98) (i32.const 240) (i32.const 220) (i32.const 40))
-    ;; 99: yellow flower center
     (call $set_pal (i32.const 99) (i32.const 200) (i32.const 130) (i32.const 20))
-    ;; 100: flower stem green
     (call $set_pal (i32.const 100) (i32.const 40) (i32.const 120) (i32.const 25))
-    ;; 101: tall grass light
     (call $set_pal (i32.const 101) (i32.const 55) (i32.const 145) (i32.const 35))
-    ;; 102: tall grass dark
     (call $set_pal (i32.const 102) (i32.const 35) (i32.const 110) (i32.const 22))
-    ;; 103: tall grass mid
     (call $set_pal (i32.const 103) (i32.const 45) (i32.const 128) (i32.const 28))
-    ;; 104-107: water shimmer variants
+    ;; Water shimmer
     (call $set_pal (i32.const 104) (i32.const 40) (i32.const 90) (i32.const 175))
     (call $set_pal (i32.const 105) (i32.const 55) (i32.const 115) (i32.const 200))
     (call $set_pal (i32.const 106) (i32.const 70) (i32.const 140) (i32.const 220))
     (call $set_pal (i32.const 107) (i32.const 100) (i32.const 170) (i32.const 240))
+
+    ;; Floor palette 108-111 (ground colors for when we see floor between blocks)
+    (call $set_pal (i32.const 108) (i32.const 50) (i32.const 95) (i32.const 45))  ;; near grass floor
+    (call $set_pal (i32.const 109) (i32.const 60) (i32.const 110) (i32.const 50))  ;; mid
+    (call $set_pal (i32.const 110) (i32.const 80) (i32.const 125) (i32.const 70))  ;; far
+    (call $set_pal (i32.const 111) (i32.const 100) (i32.const 140) (i32.const 90))  ;; distant
 
     ;; Monster palettes
     ;; 128-143: Creeper (green)
@@ -693,30 +669,31 @@
       (br $lp)))
 
     ;; Special colors
-    (call $set_pal (i32.const 176) (i32.const 255) (i32.const 255) (i32.const 255))  ;; crosshair
-    (call $set_pal (i32.const 177) (i32.const 255) (i32.const 255) (i32.const 100))  ;; sun
-    (call $set_pal (i32.const 178) (i32.const 20) (i32.const 15) (i32.const 15))     ;; dark overlay
-    (call $set_pal (i32.const 179) (i32.const 255) (i32.const 50) (i32.const 50))    ;; red text
-    (call $set_pal (i32.const 180) (i32.const 50) (i32.const 255) (i32.const 100))   ;; green text
+    (call $set_pal (i32.const 176) (i32.const 255) (i32.const 255) (i32.const 255))
+    (call $set_pal (i32.const 177) (i32.const 255) (i32.const 255) (i32.const 100))
+    (call $set_pal (i32.const 178) (i32.const 20) (i32.const 15) (i32.const 15))
+    (call $set_pal (i32.const 179) (i32.const 255) (i32.const 50) (i32.const 50))
+    (call $set_pal (i32.const 180) (i32.const 50) (i32.const 255) (i32.const 100))
 
     ;; Initialize player position
-    (f64.store (i32.const 0x10344) (f64.const 32.5))   ;; px
-    (f64.store (i32.const 0x1034C) (f64.const 32.5))   ;; py
-    (f64.store (i32.const 0x10354) (f64.const 0.0))    ;; angle
+    (f64.store (i32.const 0x10344) (f64.const 32.5))
+    (f64.store (i32.const 0x1034C) (f64.const 32.5))
+    (f64.store (i32.const 0x10354) (f64.const 0.0))
     (f64.store (i32.const 0x1035C)
       (f64.add (f64.convert_i32_s (call $terrain_height (i32.const 32) (i32.const 32))) (f64.const 1.7)))
-    (f64.store (i32.const 0x10364) (f64.const 0.0))    ;; vz
-    (i32.store (i32.const 0x1036C) (i32.const 1))      ;; on_ground
-    (f64.store (i32.const 0x10374) (f64.const 0.0))    ;; bob_phase
+    (f64.store (i32.const 0x10364) (f64.const 0.0))
+    (i32.store (i32.const 0x1036C) (i32.const 1))
+    (f64.store (i32.const 0x10374) (f64.const 0.0))
 
     ;; Game state
-    (i32.store (i32.const 0x10390) (i32.const 0))      ;; mod_count
-    (i32.store (i32.const 0x10394) (i32.const 1900))   ;; max_mods
-    (i32.store (i32.const 0x10398) (i32.const 0))      ;; gods_angry
-    (i32.store (i32.const 0x1039C) (i32.const 0))      ;; msg_timer
-    (i32.store (i32.const 0x103A0) (i32.const 0))      ;; dig_cooldown
-    (i32.store (i32.const 0x103A4) (i32.const 0))      ;; prev_mouse
-    (i32.store (i32.const 0x103A8) (i32.const 1))      ;; selected_block
+    (i32.store (i32.const 0x10390) (i32.const 0))
+    (i32.store (i32.const 0x10394) (i32.const 1900))
+    (i32.store (i32.const 0x10398) (i32.const 0))
+    (i32.store (i32.const 0x1039C) (i32.const 0))
+    (i32.store (i32.const 0x103A0) (i32.const 0))
+    (i32.store (i32.const 0x103A4) (i32.const 0))
+    (i32.store (i32.const 0x103A8) (i32.const 1))
+    (i32.store (i32.const 0x103AC) (i32.const 0))  ;; look_y = 0
 
     ;; Spawn monsters
     (call $spawn_monsters)
@@ -1028,183 +1005,157 @@
     (i32.store8 (i32.add (local.get $base) (i32.const 351)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 352)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 353)) (i32.const 0x00))
-    ;; Lowercase copies (same as uppercase)
-    ;; 'a' offset=390
+    ;; Lowercase copies
     (i32.store8 (i32.add (local.get $base) (i32.const 390)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 391)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 392)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 393)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 394)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 395)) (i32.const 0x00))
-    ;; 'b' offset=396
     (i32.store8 (i32.add (local.get $base) (i32.const 396)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 397)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 398)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 399)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 400)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 401)) (i32.const 0x00))
-    ;; 'c' offset=402
     (i32.store8 (i32.add (local.get $base) (i32.const 402)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 403)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 404)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 405)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 406)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 407)) (i32.const 0x00))
-    ;; 'd' offset=408
     (i32.store8 (i32.add (local.get $base) (i32.const 408)) (i32.const 0x0C))
     (i32.store8 (i32.add (local.get $base) (i32.const 409)) (i32.const 0x0A))
     (i32.store8 (i32.add (local.get $base) (i32.const 410)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 411)) (i32.const 0x0A))
     (i32.store8 (i32.add (local.get $base) (i32.const 412)) (i32.const 0x0C))
     (i32.store8 (i32.add (local.get $base) (i32.const 413)) (i32.const 0x00))
-    ;; 'e' offset=414
     (i32.store8 (i32.add (local.get $base) (i32.const 414)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 415)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 416)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 417)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 418)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 419)) (i32.const 0x00))
-    ;; 'f' offset=420
     (i32.store8 (i32.add (local.get $base) (i32.const 420)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 421)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 422)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 423)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 424)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 425)) (i32.const 0x00))
-    ;; 'g' offset=426
     (i32.store8 (i32.add (local.get $base) (i32.const 426)) (i32.const 0x07))
     (i32.store8 (i32.add (local.get $base) (i32.const 427)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 428)) (i32.const 0x0B))
     (i32.store8 (i32.add (local.get $base) (i32.const 429)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 430)) (i32.const 0x07))
     (i32.store8 (i32.add (local.get $base) (i32.const 431)) (i32.const 0x00))
-    ;; 'h' offset=432
     (i32.store8 (i32.add (local.get $base) (i32.const 432)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 433)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 434)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 435)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 436)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 437)) (i32.const 0x00))
-    ;; 'i' offset=438
     (i32.store8 (i32.add (local.get $base) (i32.const 438)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 439)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 440)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 441)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 442)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 443)) (i32.const 0x00))
-    ;; 'j' offset=444
     (i32.store8 (i32.add (local.get $base) (i32.const 444)) (i32.const 0x01))
     (i32.store8 (i32.add (local.get $base) (i32.const 445)) (i32.const 0x01))
     (i32.store8 (i32.add (local.get $base) (i32.const 446)) (i32.const 0x01))
     (i32.store8 (i32.add (local.get $base) (i32.const 447)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 448)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 449)) (i32.const 0x00))
-    ;; 'k' offset=450
     (i32.store8 (i32.add (local.get $base) (i32.const 450)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 451)) (i32.const 0x0A))
     (i32.store8 (i32.add (local.get $base) (i32.const 452)) (i32.const 0x0C))
     (i32.store8 (i32.add (local.get $base) (i32.const 453)) (i32.const 0x0A))
     (i32.store8 (i32.add (local.get $base) (i32.const 454)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 455)) (i32.const 0x00))
-    ;; 'l' offset=456
     (i32.store8 (i32.add (local.get $base) (i32.const 456)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 457)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 458)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 459)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 460)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 461)) (i32.const 0x00))
-    ;; 'm' offset=462
     (i32.store8 (i32.add (local.get $base) (i32.const 462)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 463)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 464)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 465)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 466)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 467)) (i32.const 0x00))
-    ;; 'n' offset=468
     (i32.store8 (i32.add (local.get $base) (i32.const 468)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 469)) (i32.const 0x0D))
     (i32.store8 (i32.add (local.get $base) (i32.const 470)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 471)) (i32.const 0x0B))
     (i32.store8 (i32.add (local.get $base) (i32.const 472)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 473)) (i32.const 0x00))
-    ;; 'o' offset=474
     (i32.store8 (i32.add (local.get $base) (i32.const 474)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 475)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 476)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 477)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 478)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 479)) (i32.const 0x00))
-    ;; 'p' offset=480
     (i32.store8 (i32.add (local.get $base) (i32.const 480)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 481)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 482)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 483)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 484)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 485)) (i32.const 0x00))
-    ;; 'q' offset=486
     (i32.store8 (i32.add (local.get $base) (i32.const 486)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 487)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 488)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 489)) (i32.const 0x07))
     (i32.store8 (i32.add (local.get $base) (i32.const 490)) (i32.const 0x01))
     (i32.store8 (i32.add (local.get $base) (i32.const 491)) (i32.const 0x00))
-    ;; 'r' offset=492
     (i32.store8 (i32.add (local.get $base) (i32.const 492)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 493)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 494)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 495)) (i32.const 0x0A))
     (i32.store8 (i32.add (local.get $base) (i32.const 496)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 497)) (i32.const 0x00))
-    ;; 's' offset=498
     (i32.store8 (i32.add (local.get $base) (i32.const 498)) (i32.const 0x07))
     (i32.store8 (i32.add (local.get $base) (i32.const 499)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 500)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 501)) (i32.const 0x01))
     (i32.store8 (i32.add (local.get $base) (i32.const 502)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 503)) (i32.const 0x00))
-    ;; 't' offset=504
     (i32.store8 (i32.add (local.get $base) (i32.const 504)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 505)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 506)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 507)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 508)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 509)) (i32.const 0x00))
-    ;; 'u' offset=510
     (i32.store8 (i32.add (local.get $base) (i32.const 510)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 511)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 512)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 513)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 514)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 515)) (i32.const 0x00))
-    ;; 'v' offset=516
     (i32.store8 (i32.add (local.get $base) (i32.const 516)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 517)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 518)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 519)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 520)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 521)) (i32.const 0x00))
-    ;; 'w' offset=522
     (i32.store8 (i32.add (local.get $base) (i32.const 522)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 523)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 524)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 525)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 526)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 527)) (i32.const 0x00))
-    ;; 'x' offset=528
     (i32.store8 (i32.add (local.get $base) (i32.const 528)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 529)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 530)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 531)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 532)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 533)) (i32.const 0x00))
-    ;; 'y' offset=534
     (i32.store8 (i32.add (local.get $base) (i32.const 534)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 535)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 536)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 537)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 538)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 539)) (i32.const 0x00))
-    ;; 'z' offset=540
     (i32.store8 (i32.add (local.get $base) (i32.const 540)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 541)) (i32.const 0x01))
     (i32.store8 (i32.add (local.get $base) (i32.const 542)) (i32.const 0x06))
@@ -1227,7 +1178,8 @@
   (data (i32.const 0x190D0) "/\00")
 
   ;; ============================================================
-  ;; FRAME
+  ;; FRAME — DDA raycaster with variable block heights
+  ;; Duke3D-style y-shearing for look up/down
   ;; ============================================================
   (func (export "frame")
     (local $col i32) (local $tick i32) (local $keys i32)
@@ -1235,17 +1187,15 @@
     (local $cos_a f64) (local $sin_a f64)
     (local $move_x f64) (local $move_y f64) (local $speed f64)
     (local $ray_angle f64) (local $ray_dx f64) (local $ray_dy f64)
-    (local $t f64) (local $step_size f64)
     (local $hit_type i32)
-    (local $proj_height i32) (local $screen_top i32) (local $screen_bot i32)
     (local $row i32) (local $color i32) (local $shade i32)
     (local $wx i32) (local $wy i32) (local $wz i32)
     (local $horizon i32)
     (local $mouse_btn i32) (local $prev_mouse i32)
+    (local $mouse_y i32) (local $look_y i32)
     (local $msg_timer i32) (local $dig_cd i32)
     (local $vz f64) (local $on_ground i32) (local $ground_h i32)
     (local $bob f64) (local $bob_phase f64)
-    (local $frac_x f64) (local $frac_y f64)
     (local $tex_u i32) (local $tex_v i32)
     (local $i i32) (local $m_addr i32) (local $m_active i32)
     (local $m_type i32) (local $m_wx f64) (local $m_wy f64)
@@ -1261,8 +1211,21 @@
     (local $hit_face i32) (local $sample_z i32)
     (local $column_top i32) (local $block_scr_top i32) (local $block_scr_bot i32)
     (local $drawn_to i32)
-    (local $tex_off i32) (local $deco_type i32)
-    (local $deco_scr_y i32) (local $deco_h i32) (local $prev_wx i32) (local $prev_wy i32)
+    (local $tex_off i32)
+    ;; DDA locals
+    (local $map_x i32) (local $map_y i32)
+    (local $step_x i32) (local $step_y i32)
+    (local $side_dist_x f64) (local $side_dist_y f64)
+    (local $delta_dist_x f64) (local $delta_dist_y f64)
+    (local $perp_dist f64)
+    (local $side i32)  ;; 0=x side, 1=y side
+    (local $dda_steps i32)
+    (local $wall_x f64)  ;; fractional hit position along wall
+    (local $cos_corr f64) ;; fisheye correction factor
+    (local $t f64)
+    (local $floor_row i32) (local $floor_col i32) (local $floor_c i32)
+    (local $prev_wx i32) (local $prev_wy i32)
+    (local $step_size f64)
 
     (local.set $tick (i32.load (i32.const 12)))
     (local.set $frame_ct (i32.load (i32.const 0)))
@@ -1278,6 +1241,22 @@
     (local.set $vz (f64.load (i32.const 0x10364)))
     (local.set $on_ground (i32.load (i32.const 0x1036C)))
     (local.set $bob_phase (f64.load (i32.const 0x10374)))
+    (local.set $look_y (i32.load (i32.const 0x103AC)))
+
+    ;; ---- Mouse Y → look up/down (Duke3D y-shearing) ----
+    (local.set $mouse_y (i32.or
+      (i32.load8_u (i32.const 0x06))
+      (i32.shl (i32.load8_u (i32.const 0x07)) (i32.const 8))))
+    ;; Map mouse Y (0..199) to look offset (-60..60)
+    ;; Center at 100, scale: (mouse_y - 100) * 0.6
+    (local.set $look_y (i32.trunc_f64_s (f64.mul
+      (f64.sub (f64.convert_i32_s (local.get $mouse_y)) (f64.const 100.0))
+      (f64.const -0.6))))
+    (if (i32.lt_s (local.get $look_y) (i32.const -60))
+      (then (local.set $look_y (i32.const -60))))
+    (if (i32.gt_s (local.get $look_y) (i32.const 60))
+      (then (local.set $look_y (i32.const 60))))
+    (i32.store (i32.const 0x103AC) (local.get $look_y))
 
     ;; ---- Input ----
     (local.set $speed (f64.const 0.06))
@@ -1364,14 +1343,24 @@
     (i32.store (i32.const 0x1036C) (local.get $on_ground))
     (f64.store (i32.const 0x10374) (local.get $bob_phase))
 
+    ;; Horizon shifted by look_y (Duke3D y-shearing)
+    (local.set $horizon (i32.add (i32.const 100) (local.get $look_y)))
+
     ;; ---- Clear: sky gradient ----
     (local.set $row (i32.const 0))
     (block $sky_done (loop $sky_lp
       (br_if $sky_done (i32.ge_u (local.get $row) (i32.const 200)))
+      ;; Sky color based on row relative to horizon
       (local.set $sky_idx
-        (if (result i32) (i32.lt_u (local.get $row) (i32.const 100))
-          (then (i32.add (i32.const 1) (i32.div_u (local.get $row) (i32.const 16))))
-          (else (i32.const 7))))
+        (if (result i32) (i32.lt_s (local.get $row) (local.get $horizon))
+          (then
+            ;; rows above horizon = sky, gradient based on distance from horizon
+            (local.set $i (i32.div_u (i32.mul (i32.sub (local.get $horizon) (local.get $row)) (i32.const 7))
+                                     (i32.add (local.get $horizon) (i32.const 1))))
+            (if (result i32) (i32.gt_s (local.get $i) (i32.const 6))
+              (then (i32.const 1))
+              (else (i32.sub (i32.const 7) (local.get $i)))))
+          (else (i32.const 7))))  ;; below horizon - will be overwritten by terrain
       (local.set $col (i32.const 0))
       (block $row_done (loop $row_lp
         (br_if $row_done (i32.ge_u (local.get $col) (i32.const 320)))
@@ -1391,67 +1380,119 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $zb_lp)))
 
-    (local.set $horizon (i32.const 100))
-
     ;; ============================================================
-    ;; RENDER TERRAIN
+    ;; RENDER TERRAIN — DDA raycaster
+    ;; For each column, cast a ray using DDA grid traversal.
+    ;; At each grid cell hit, project all blocks in that column.
+    ;; This ensures we never skip a cell (like Wolf3D DDA) but
+    ;; we handle variable height blocks (like Duke3D/BUILD engine).
     ;; ============================================================
     (local.set $col (i32.const 0))
     (block $render_done (loop $render_lp
       (br_if $render_done (i32.ge_u (local.get $col) (i32.const 320)))
 
-      ;; Ray angle for this column (FOV ~60 degrees)
+      ;; Ray angle for this column (FOV ~60 degrees = 1.0472 rad)
       (local.set $ray_angle (f64.add (local.get $angle)
         (f64.mul (f64.div (f64.sub (f64.convert_i32_s (local.get $col)) (f64.const 160.0)) (f64.const 320.0))
                  (f64.const 1.0472))))
       (local.set $ray_dx (call $cos_a (local.get $ray_angle)))
       (local.set $ray_dy (call $sin_a (local.get $ray_angle)))
 
+      ;; Fisheye correction: cos(ray_angle - player_angle)
+      (local.set $cos_corr (call $cos_a (f64.sub (local.get $ray_angle) (local.get $angle))))
+      (if (f64.lt (local.get $cos_corr) (f64.const 0.001))
+        (then (local.set $cos_corr (f64.const 0.001))))
+
+      ;; DDA setup
+      (local.set $map_x (i32.trunc_f64_s (f64.floor (local.get $px))))
+      (local.set $map_y (i32.trunc_f64_s (f64.floor (local.get $py))))
+
+      ;; delta_dist = abs(1.0 / ray_d)
+      (local.set $delta_dist_x
+        (if (result f64) (f64.ne (local.get $ray_dx) (f64.const 0.0))
+          (then (f64.div (f64.const 1.0) (f64.abs (local.get $ray_dx))))
+          (else (f64.const 1000000.0))))
+      (local.set $delta_dist_y
+        (if (result f64) (f64.ne (local.get $ray_dy) (f64.const 0.0))
+          (then (f64.div (f64.const 1.0) (f64.abs (local.get $ray_dy))))
+          (else (f64.const 1000000.0))))
+
+      ;; Step direction and initial side distance
+      (if (f64.lt (local.get $ray_dx) (f64.const 0.0))
+        (then
+          (local.set $step_x (i32.const -1))
+          (local.set $side_dist_x (f64.mul
+            (f64.sub (local.get $px) (f64.convert_i32_s (local.get $map_x)))
+            (local.get $delta_dist_x))))
+        (else
+          (local.set $step_x (i32.const 1))
+          (local.set $side_dist_x (f64.mul
+            (f64.sub (f64.add (f64.convert_i32_s (local.get $map_x)) (f64.const 1.0)) (local.get $px))
+            (local.get $delta_dist_x)))))
+
+      (if (f64.lt (local.get $ray_dy) (f64.const 0.0))
+        (then
+          (local.set $step_y (i32.const -1))
+          (local.set $side_dist_y (f64.mul
+            (f64.sub (local.get $py) (f64.convert_i32_s (local.get $map_y)))
+            (local.get $delta_dist_y))))
+        (else
+          (local.set $step_y (i32.const 1))
+          (local.set $side_dist_y (f64.mul
+            (f64.sub (f64.add (f64.convert_i32_s (local.get $map_y)) (f64.const 1.0)) (local.get $py))
+            (local.get $delta_dist_y)))))
+
       (local.set $drawn_to (i32.const 200))
-      (local.set $t (f64.const 0.3))
-      (local.set $prev_wx (i32.const -9999))
-      (local.set $prev_wy (i32.const -9999))
+      (local.set $dda_steps (i32.const 0))
 
-      (block $ray_done (loop $ray_lp
-        (br_if $ray_done (f64.gt (local.get $t) (f64.const 32.0)))
-        (br_if $ray_done (i32.le_s (local.get $drawn_to) (i32.const 5)))
+      ;; DDA main loop — step through grid cells
+      (block $dda_done (loop $dda_lp
+        (br_if $dda_done (i32.ge_u (local.get $dda_steps) (i32.const 40)))
+        (br_if $dda_done (i32.le_s (local.get $drawn_to) (i32.const 2)))
 
-        ;; World position
-        (local.set $cx (f64.add (local.get $px) (f64.mul (local.get $ray_dx) (local.get $t))))
-        (local.set $cy (f64.add (local.get $py) (f64.mul (local.get $ray_dy) (local.get $t))))
-        (local.set $wx (i32.trunc_f64_s (f64.floor (local.get $cx))))
-        (local.set $wy (i32.trunc_f64_s (f64.floor (local.get $cy))))
-
-        ;; Skip if same cell as last step
-        (if (i32.and (i32.eq (local.get $wx) (local.get $prev_wx))
-                     (i32.eq (local.get $wy) (local.get $prev_wy)))
+        ;; Step to next cell boundary
+        (if (f64.lt (local.get $side_dist_x) (local.get $side_dist_y))
           (then
-            (local.set $t (f64.add (local.get $t) (f64.const 0.08)))
-            (br $ray_lp)))
-        (local.set $prev_wx (local.get $wx))
-        (local.set $prev_wy (local.get $wy))
+            ;; Step in X
+            (local.set $perp_dist (local.get $side_dist_x))
+            (local.set $side_dist_x (f64.add (local.get $side_dist_x) (local.get $delta_dist_x)))
+            (local.set $map_x (i32.add (local.get $map_x) (local.get $step_x)))
+            (local.set $side (i32.const 0)))
+          (else
+            ;; Step in Y
+            (local.set $perp_dist (local.get $side_dist_y))
+            (local.set $side_dist_y (f64.add (local.get $side_dist_y) (local.get $delta_dist_y)))
+            (local.set $map_y (i32.add (local.get $map_y) (local.get $step_y)))
+            (local.set $side (i32.const 1))))
 
-        ;; Fisheye corrected distance
-        (local.set $dist (f64.mul (local.get $t)
-          (call $cos_a (f64.sub (local.get $ray_angle) (local.get $angle)))))
+        ;; Correct distance for fisheye
+        (local.set $dist (f64.mul (local.get $perp_dist) (local.get $cos_corr)))
 
-        (if (f64.gt (local.get $dist) (f64.const 0.2))
+        (if (f64.gt (local.get $dist) (f64.const 0.1))
           (then
-            ;; Get the highest solid block at this XY
-            (local.set $column_top (call $get_column_top (local.get $wx) (local.get $wy)))
+            ;; Determine which face we hit based on DDA side and step direction
+            ;; side=0: X boundary hit → face depends on step_x
+            ;; side=1: Y boundary hit → face depends on step_y
+            ;; face: 1=bright side (facing toward camera), 2=dim side (facing away)
+            (if (i32.eqz (local.get $side))
+              (then
+                ;; X side: bright if ray coming from positive X (step_x=-1)
+                (if (i32.eq (local.get $step_x) (i32.const -1))
+                  (then (local.set $hit_face (i32.const 1)))
+                  (else (local.set $hit_face (i32.const 2))))
+                ;; Wall hit position along Y axis
+                (local.set $wall_x (f64.add (local.get $py) (f64.mul (local.get $perp_dist) (local.get $ray_dy)))))
+              (else
+                ;; Y side
+                (if (i32.eq (local.get $step_y) (i32.const -1))
+                  (then (local.set $hit_face (i32.const 1)))
+                  (else (local.set $hit_face (i32.const 2))))
+                (local.set $wall_x (f64.add (local.get $px) (f64.mul (local.get $perp_dist) (local.get $ray_dx))))))
 
-            ;; Fractional position for face shading
-            (local.set $frac_x (f64.sub (local.get $cx) (f64.floor (local.get $cx))))
-            (local.set $frac_y (f64.sub (local.get $cy) (f64.floor (local.get $cy))))
+            ;; Get fractional part of wall hit for texturing
+            (local.set $wall_x (f64.sub (local.get $wall_x) (f64.floor (local.get $wall_x))))
 
-            ;; Determine face: check which edge we're near
-            (local.set $hit_face (i32.const 1))  ;; default side
-            (if (i32.or
-                  (f64.lt (local.get $frac_x) (f64.const 0.08))
-                  (f64.gt (local.get $frac_x) (f64.const 0.92)))
-              (then (local.set $hit_face (i32.const 3))))  ;; dark side
-
-            ;; Distance shade (closer=brighter)
+            ;; Distance shade
             (local.set $shade (i32.sub (i32.const 7)
               (i32.trunc_f64_s (f64.div (local.get $dist) (f64.const 4.5)))))
             (if (i32.lt_s (local.get $shade) (i32.const 1))
@@ -1459,106 +1500,37 @@
             (if (i32.gt_s (local.get $shade) (i32.const 7))
               (then (local.set $shade (i32.const 7))))
 
-            ;; === Draw decorations (flowers/grass) on top of terrain ===
-            ;; Only draw once per column, at close range
-            (if (f64.lt (local.get $dist) (f64.const 14.0))
-              (then
-                (local.set $deco_type (call $has_decoration (local.get $wx) (local.get $wy)))
-                (if (local.get $deco_type)
-                  (then
-                    ;; Project decoration sprite: sits on top of terrain
-                    (local.set $ground_h (call $terrain_height (local.get $wx) (local.get $wy)))
-                    ;; Sprite base = ground_h + 1, height = 1 block for flowers, 0.6 for grass
-                    (local.set $deco_h (i32.trunc_f64_s (f64.div
-                      (f64.mul
-                        (select (f64.const 0.8) (f64.const 0.5) (i32.lt_u (local.get $deco_type) (i32.const 3)))
-                        (f64.const 200.0))
-                      (local.get $dist))))
+            ;; Get the highest solid block at this XY
+            (local.set $column_top (call $get_column_top (local.get $map_x) (local.get $map_y)))
 
-                    (local.set $deco_scr_y (i32.sub (local.get $horizon)
-                      (i32.trunc_f64_s (f64.div
-                        (f64.mul
-                          (f64.sub (f64.add (f64.convert_i32_s (local.get $ground_h)) (f64.const 1.0))
-                                   (f64.add (local.get $pz) (local.get $bob)))
-                          (f64.const 200.0))
-                        (local.get $dist)))))
-
-                    ;; Draw the decoration pixels
-                    (local.set $sy (i32.sub (local.get $deco_scr_y) (local.get $deco_h)))
-                    (block $deco_done (loop $deco_lp
-                      (br_if $deco_done (i32.ge_s (local.get $sy) (local.get $deco_scr_y)))
-                      (if (i32.and (i32.ge_s (local.get $sy) (i32.const 0))
-                                   (i32.and (i32.lt_s (local.get $sy) (i32.const 200))
-                                            (i32.lt_s (local.get $sy) (local.get $drawn_to))))
-                        (then
-                          ;; Choose color based on decoration type and position
-                          (local.set $tex_v (i32.div_u
-                            (i32.mul (i32.sub (local.get $sy) (i32.sub (local.get $deco_scr_y) (local.get $deco_h))) (i32.const 8))
-                            (i32.add (local.get $deco_h) (i32.const 1))))
-                          (local.set $sp_color (i32.const 0))
-                          ;; Red flower
-                          (if (i32.eq (local.get $deco_type) (i32.const 1))
-                            (then
-                              (if (i32.lt_u (local.get $tex_v) (i32.const 3))
-                                (then (local.set $sp_color (i32.const 96)))  ;; petals
-                                (else (if (i32.lt_u (local.get $tex_v) (i32.const 4))
-                                  (then (local.set $sp_color (i32.const 97)))  ;; center
-                                  (else (local.set $sp_color (i32.const 100))))))))  ;; stem
-                          ;; Yellow flower
-                          (if (i32.eq (local.get $deco_type) (i32.const 2))
-                            (then
-                              (if (i32.lt_u (local.get $tex_v) (i32.const 3))
-                                (then (local.set $sp_color (i32.const 98)))  ;; petals
-                                (else (if (i32.lt_u (local.get $tex_v) (i32.const 4))
-                                  (then (local.set $sp_color (i32.const 99)))  ;; center
-                                  (else (local.set $sp_color (i32.const 100))))))))  ;; stem
-                          ;; Tall grass
-                          (if (i32.eq (local.get $deco_type) (i32.const 3))
-                            (then
-                              ;; Alternate colors for grass blades
-                              (if (i32.and (local.get $col) (i32.const 1))
-                                (then (local.set $sp_color (i32.const 101)))
-                                (else (local.set $sp_color (i32.const 102))))
-                              ;; Only draw every other pixel for wispy look
-                              (if (i32.and (i32.xor (local.get $sy) (local.get $col)) (i32.const 1))
-                                (then (local.set $sp_color (i32.const 0))))))
-                          ;; Write pixel if not transparent
-                          (if (local.get $sp_color)
-                            (then
-                              (i32.store8
-                                (i32.add (i32.const 0x0340) (i32.add (i32.mul (local.get $sy) (i32.const 320)) (local.get $col)))
-                                (local.get $sp_color))))))
-                      (local.set $sy (i32.add (local.get $sy) (i32.const 1)))
-                      (br $deco_lp)))
-                  ))
-              ))
-
-            ;; Draw blocks from top down
+            ;; Draw blocks from top down in this column
             (local.set $sample_z (local.get $column_top))
             (block $blk_done (loop $blk_lp
               (br_if $blk_done (i32.lt_s (local.get $sample_z) (i32.const 0)))
-              (br_if $blk_done (i32.le_s (local.get $drawn_to) (i32.const 5)))
+              (br_if $blk_done (i32.le_s (local.get $drawn_to) (i32.const 2)))
 
-              (local.set $hit_type (call $get_block (local.get $wx) (local.get $wy) (local.get $sample_z)))
+              (local.set $hit_type (call $get_block (local.get $map_x) (local.get $map_y) (local.get $sample_z)))
               (if (i32.ne (local.get $hit_type) (i32.const 0))
                 (then
-                  ;; Project this block
+                  ;; Project this block's top and bottom screen Y
+                  ;; screen_y = horizon - (world_z - eye_z) * projection_scale / perp_dist
+                  ;; projection_scale = 200.0 (fills screen height when 1 block at distance 1)
                   (local.set $block_scr_top (i32.sub (local.get $horizon)
                     (i32.trunc_f64_s (f64.div
                       (f64.mul
                         (f64.sub (f64.add (f64.convert_i32_s (local.get $sample_z)) (f64.const 1.0))
                                  (f64.add (local.get $pz) (local.get $bob)))
                         (f64.const 200.0))
-                      (local.get $dist)))))
+                      (local.get $perp_dist)))))
                   (local.set $block_scr_bot (i32.sub (local.get $horizon)
                     (i32.trunc_f64_s (f64.div
                       (f64.mul
                         (f64.sub (f64.convert_i32_s (local.get $sample_z))
                                  (f64.add (local.get $pz) (local.get $bob)))
                         (f64.const 200.0))
-                      (local.get $dist)))))
+                      (local.get $perp_dist)))))
 
-                  ;; Only draw if extends above what's drawn
+                  ;; Only draw if extends above what's already drawn
                   (if (i32.lt_s (local.get $block_scr_top) (local.get $drawn_to))
                     (then
                       (if (i32.lt_s (local.get $block_scr_top) (i32.const 0))
@@ -1568,32 +1540,29 @@
                       (if (i32.gt_s (local.get $block_scr_bot) (i32.const 200))
                         (then (local.set $block_scr_bot (i32.const 200))))
 
-                      ;; Top block gets top-face brightness
+                      ;; Top block gets top face, others get wall face
                       (if (i32.eq (local.get $sample_z) (local.get $column_top))
                         (then (local.set $color (call $block_color (local.get $hit_type) (i32.const 0) (local.get $shade))))
                         (else (local.set $color (call $block_color (local.get $hit_type) (local.get $hit_face) (local.get $shade)))))
 
-                      ;; Distance fog blend
+                      ;; Distance fog
                       (if (f64.gt (local.get $dist) (f64.const 22.0))
                         (then
                           (local.set $color (i32.add (i32.const 80)
-                            (i32.shr_u (i32.trunc_f64_s (f64.mul (f64.sub (local.get $dist) (f64.const 22.0)) (f64.const 0.8)))
-                              (i32.const 0))))
+                            (i32.trunc_f64_s (f64.mul (f64.sub (local.get $dist) (f64.const 22.0)) (f64.const 0.8)))))
                           (if (i32.gt_s (local.get $color) (i32.const 95))
                             (then (local.set $color (i32.const 95))))))
 
-                      ;; Draw pixels for this block slice with texturing
+                      ;; Draw pixels with texturing
                       (local.set $row (local.get $block_scr_top))
                       (block $stripe_done (loop $stripe_lp
                         (br_if $stripe_done (i32.ge_s (local.get $row) (local.get $block_scr_bot)))
                         (if (i32.and (i32.ge_s (local.get $row) (i32.const 0))
                                      (i32.lt_s (local.get $row) (i32.const 200)))
                           (then
-                            ;; Compute texture coordinates
+                            ;; Texture U from wall hit, V from vertical position
                             (local.set $tex_u (i32.and
-                              (i32.add
-                                (i32.trunc_f64_s (f64.mul (local.get $frac_x) (f64.const 8.0)))
-                                (i32.trunc_f64_s (f64.mul (local.get $frac_y) (f64.const 8.0))))
+                              (i32.trunc_f64_s (f64.mul (local.get $wall_x) (f64.const 8.0)))
                               (i32.const 7)))
                             (local.set $tex_v (i32.and
                               (i32.div_u
@@ -1601,9 +1570,8 @@
                                 (i32.add (i32.const 1) (i32.sub (local.get $block_scr_bot) (local.get $block_scr_top))))
                               (i32.const 7)))
 
-                            ;; Apply block texture pattern
+                            ;; Apply texture pattern
                             (local.set $sp_color (local.get $color))
-                            ;; Only texture if not fogged out
                             (if (i32.and (i32.ge_s (local.get $sp_color) (i32.const 16))
                                          (i32.lt_s (local.get $sp_color) (i32.const 80)))
                               (then
@@ -1611,7 +1579,7 @@
                                   (if (result i32) (i32.eq (local.get $sample_z) (local.get $column_top))
                                     (then (i32.const 0)) (else (local.get $hit_face)))))
                                 (local.set $sp_color (i32.add (local.get $sp_color) (local.get $tex_off)))
-                                ;; Clamp within block palette range
+                                ;; Clamp within block palette
                                 (if (i32.lt_s (local.get $sp_color)
                                       (i32.add (i32.const 8) (i32.mul (local.get $hit_type) (i32.const 8))))
                                   (then (local.set $sp_color
@@ -1619,10 +1587,9 @@
                                 (if (i32.gt_s (local.get $sp_color)
                                       (i32.add (i32.const 15) (i32.mul (local.get $hit_type) (i32.const 8))))
                                   (then (local.set $sp_color
-                                    (i32.add (i32.const 15) (i32.mul (local.get $hit_type) (i32.const 8))))))
-                              ))
+                                    (i32.add (i32.const 15) (i32.mul (local.get $hit_type) (i32.const 8))))))))
 
-                            ;; Water shimmer effect
+                            ;; Water shimmer
                             (if (i32.eq (local.get $hit_type) (i32.const 5))
                               (then
                                 (local.set $sp_color (i32.add (i32.const 104)
@@ -1641,30 +1608,21 @@
                       ;; Update drawn_to
                       (local.set $drawn_to (local.get $block_scr_top))
 
-                      ;; Store z distance for closest hit
-                      (if (f64.lt (local.get $dist)
+                      ;; Store z distance for sprite occlusion
+                      (if (f64.lt (local.get $perp_dist)
                             (f64.load (i32.add (i32.const 0x103B0) (i32.mul (local.get $col) (i32.const 8)))))
                         (then
-                          (f64.store (i32.add (i32.const 0x103B0) (i32.mul (local.get $col) (i32.const 8))) (local.get $dist))))
-                    )
-                  )
-                )
-              )
+                          (f64.store (i32.add (i32.const 0x103B0) (i32.mul (local.get $col) (i32.const 8))) (local.get $perp_dist))))
+                    ))
+                ))
 
               (local.set $sample_z (i32.sub (local.get $sample_z) (i32.const 1)))
               (br_if $blk_done (i32.lt_s (local.get $sample_z) (i32.sub (local.get $column_top) (i32.const 5))))
               (br $blk_lp)))
-          )
-        )
+          ))
 
-        ;; Step size: finer near, coarser far
-        (if (f64.lt (local.get $t) (f64.const 4.0))
-          (then (local.set $step_size (f64.const 0.12)))
-          (else (if (f64.lt (local.get $t) (f64.const 14.0))
-            (then (local.set $step_size (f64.const 0.25)))
-            (else (local.set $step_size (f64.const 0.4))))))
-        (local.set $t (f64.add (local.get $t) (local.get $step_size)))
-        (br $ray_lp)))
+        (local.set $dda_steps (i32.add (local.get $dda_steps) (i32.const 1)))
+        (br $dda_lp)))
 
       (local.set $col (i32.add (local.get $col) (i32.const 1)))
       (br $render_lp)))
@@ -1699,110 +1657,107 @@
           (i32.store (i32.add (local.get $m_addr) (i32.const 28))
             (i32.add (local.get $m_anim) (i32.const 1)))
 
-          ;; Screen projection
+          ;; Screen projection — using view-space transform
           (local.set $dx (f64.sub (local.get $m_wx) (local.get $px)))
           (local.set $dy (f64.sub (local.get $m_wy) (local.get $py)))
-          (local.set $dist (f64.sqrt (f64.add (f64.mul (local.get $dx) (local.get $dx))
-                                               (f64.mul (local.get $dy) (local.get $dy)))))
-          (if (f64.gt (local.get $dist) (f64.const 0.5))
+          ;; Transform to camera space: cx = forward component, cy = lateral component
+          (local.set $cx (f64.add (f64.mul (local.get $dx) (local.get $cos_a))
+                                  (f64.mul (local.get $dy) (local.get $sin_a))))
+          (local.set $cy (f64.add (f64.mul (f64.neg (local.get $dx)) (local.get $sin_a))
+                                  (f64.mul (local.get $dy) (local.get $cos_a))))
+          (if (f64.gt (local.get $cx) (f64.const 0.3))
             (then
-              ;; Project onto view plane
-              (local.set $cx (f64.add (f64.mul (local.get $dx) (local.get $cos_a))
-                                      (f64.mul (local.get $dy) (local.get $sin_a))))
-              (local.set $cy (f64.add (f64.mul (f64.neg (local.get $dx)) (local.get $sin_a))
-                                      (f64.mul (local.get $dy) (local.get $cos_a))))
-              (if (f64.gt (local.get $cx) (f64.const 0.3))
-                (then
-                  (local.set $screen_x (i32.add (i32.const 160)
-                    (i32.trunc_f64_s (f64.div (f64.mul (local.get $cy) (f64.const 320.0)) (local.get $cx)))))
-                  (local.set $sprite_h (i32.trunc_f64_s (f64.div (f64.const 120.0) (local.get $cx))))
-                  (if (i32.gt_s (local.get $sprite_h) (i32.const 120))
-                    (then (local.set $sprite_h (i32.const 120))))
+              (local.set $screen_x (i32.add (i32.const 160)
+                (i32.trunc_f64_s (f64.div (f64.mul (local.get $cy) (f64.const 320.0)) (local.get $cx)))))
+              (local.set $sprite_h (i32.trunc_f64_s (f64.div (f64.const 120.0) (local.get $cx))))
+              (if (i32.gt_s (local.get $sprite_h) (i32.const 120))
+                (then (local.set $sprite_h (i32.const 120))))
 
-                  (local.set $ground_h (call $terrain_height
-                    (i32.trunc_f64_s (f64.floor (local.get $m_wx)))
-                    (i32.trunc_f64_s (f64.floor (local.get $m_wy)))))
+              (local.set $ground_h (call $terrain_height
+                (i32.trunc_f64_s (f64.floor (local.get $m_wx)))
+                (i32.trunc_f64_s (f64.floor (local.get $m_wy)))))
 
-                  (local.set $sprite_bot (i32.sub (local.get $horizon)
-                    (i32.trunc_f64_s (f64.div
-                      (f64.mul (f64.sub (f64.add (f64.convert_i32_s (local.get $ground_h)) (f64.const 1.0))
-                        (f64.add (local.get $pz) (local.get $bob)))
-                        (f64.const 200.0))
-                      (local.get $cx)))))
-                  (local.set $sprite_top (i32.sub (local.get $sprite_bot) (local.get $sprite_h)))
+              ;; Sprite bottom: project the monster's feet position
+              (local.set $sprite_bot (i32.sub (local.get $horizon)
+                (i32.trunc_f64_s (f64.div
+                  (f64.mul (f64.sub (f64.add (f64.convert_i32_s (local.get $ground_h)) (f64.const 1.0))
+                    (f64.add (local.get $pz) (local.get $bob)))
+                    (f64.const 200.0))
+                  (local.get $cx)))))
+              (local.set $sprite_top (i32.sub (local.get $sprite_bot) (local.get $sprite_h)))
 
-                  ;; Color base by type
-                  (local.set $sp_color (i32.add
-                    (select (i32.const 128) (select (i32.const 144) (i32.const 160)
-                      (i32.eq (local.get $m_type) (i32.const 1)))
-                      (i32.eqz (local.get $m_type)))
-                    (i32.const 0)))
+              ;; Color base by type
+              (local.set $sp_color (i32.add
+                (select (i32.const 128) (select (i32.const 144) (i32.const 160)
+                  (i32.eq (local.get $m_type) (i32.const 1)))
+                  (i32.eqz (local.get $m_type)))
+                (i32.const 0)))
 
-                  ;; Draw sprite
-                  (local.set $sx (i32.sub (local.get $screen_x) (i32.shr_s (local.get $sprite_h) (i32.const 1))))
-                  (local.set $col (i32.const 0))
-                  (block $sp_done (loop $sp_lp
-                    (br_if $sp_done (i32.ge_s (local.get $col) (local.get $sprite_h)))
-                    (local.set $check_x (i32.add (local.get $sx) (local.get $col)))
-                    (if (i32.and (i32.ge_s (local.get $check_x) (i32.const 0))
-                                 (i32.lt_s (local.get $check_x) (i32.const 320)))
+              ;; Draw sprite columns
+              (local.set $sx (i32.sub (local.get $screen_x) (i32.shr_s (local.get $sprite_h) (i32.const 1))))
+              (local.set $col (i32.const 0))
+              (block $sp_done (loop $sp_lp
+                (br_if $sp_done (i32.ge_s (local.get $col) (local.get $sprite_h)))
+                (local.set $check_x (i32.add (local.get $sx) (local.get $col)))
+                (if (i32.and (i32.ge_s (local.get $check_x) (i32.const 0))
+                             (i32.lt_s (local.get $check_x) (i32.const 320)))
+                  (then
+                    (local.set $zbuf_val (f64.load (i32.add (i32.const 0x103B0)
+                      (i32.mul (local.get $check_x) (i32.const 8)))))
+                    (if (f64.lt (local.get $cx) (local.get $zbuf_val))
                       (then
-                        (local.set $zbuf_val (f64.load (i32.add (i32.const 0x103B0)
-                          (i32.mul (local.get $check_x) (i32.const 8)))))
-                        (if (f64.lt (local.get $cx) (local.get $zbuf_val))
-                          (then
-                            (local.set $tex_u (i32.div_u (i32.mul (local.get $col) (i32.const 8)) (local.get $sprite_h)))
-                            (local.set $sy (local.get $sprite_top))
-                            (block $spy_done (loop $spy_lp
-                              (br_if $spy_done (i32.ge_s (local.get $sy) (local.get $sprite_bot)))
-                              (if (i32.and (i32.ge_s (local.get $sy) (i32.const 0))
-                                           (i32.lt_s (local.get $sy) (i32.const 200)))
+                        (local.set $tex_u (i32.div_u (i32.mul (local.get $col) (i32.const 8)) (local.get $sprite_h)))
+                        (local.set $sy (local.get $sprite_top))
+                        (block $spy_done (loop $spy_lp
+                          (br_if $spy_done (i32.ge_s (local.get $sy) (local.get $sprite_bot)))
+                          (if (i32.and (i32.ge_s (local.get $sy) (i32.const 0))
+                                       (i32.lt_s (local.get $sy) (i32.const 200)))
+                            (then
+                              (local.set $tex_v (i32.div_u
+                                (i32.mul (i32.sub (local.get $sy) (local.get $sprite_top)) (i32.const 8))
+                                (i32.add (i32.const 1) (i32.sub (local.get $sprite_bot) (local.get $sprite_top)))))
+                              (local.set $color (i32.const 0))
+                              ;; Head
+                              (if (i32.and (i32.lt_u (local.get $tex_v) (i32.const 3))
+                                           (i32.and (i32.ge_u (local.get $tex_u) (i32.const 2))
+                                                    (i32.lt_u (local.get $tex_u) (i32.const 6))))
                                 (then
-                                  (local.set $tex_v (i32.div_u
-                                    (i32.mul (i32.sub (local.get $sy) (local.get $sprite_top)) (i32.const 8))
-                                    (i32.add (i32.const 1) (i32.sub (local.get $sprite_bot) (local.get $sprite_top)))))
-                                  (local.set $color (i32.const 0))
-                                  ;; Head
-                                  (if (i32.and (i32.lt_u (local.get $tex_v) (i32.const 3))
-                                               (i32.and (i32.ge_u (local.get $tex_u) (i32.const 2))
-                                                        (i32.lt_u (local.get $tex_u) (i32.const 6))))
-                                    (then
-                                      (local.set $color (i32.add (local.get $sp_color) (i32.const 10)))
-                                      ;; Eyes
-                                      (if (i32.and (i32.eq (local.get $tex_v) (i32.const 1))
-                                                   (i32.or (i32.eq (local.get $tex_u) (i32.const 3))
-                                                           (i32.eq (local.get $tex_u) (i32.const 4))))
-                                        (then (local.set $color (i32.add (local.get $sp_color) (i32.const 2)))))))
-                                  ;; Body
-                                  (if (i32.and (i32.and (i32.ge_u (local.get $tex_v) (i32.const 3))
-                                                        (i32.lt_u (local.get $tex_v) (i32.const 6)))
-                                               (i32.and (i32.ge_u (local.get $tex_u) (i32.const 1))
-                                                        (i32.lt_u (local.get $tex_u) (i32.const 7))))
-                                    (then (local.set $color (i32.add (local.get $sp_color) (i32.const 8)))))
-                                  ;; Legs (animate walking)
-                                  (if (i32.ge_u (local.get $tex_v) (i32.const 6))
-                                    (then
-                                      (if (i32.or
-                                            (i32.and (i32.ge_u (local.get $tex_u) (i32.const 2))
-                                                     (i32.lt_u (local.get $tex_u) (i32.const 4)))
-                                            (i32.and (i32.ge_u (local.get $tex_u) (i32.const 4))
-                                                     (i32.lt_u (local.get $tex_u) (i32.const 6))))
-                                        (then (local.set $color (i32.add (local.get $sp_color) (i32.const 6)))))))
-                                  (if (local.get $color)
-                                    (then
-                                      (if (f64.gt (local.get $cx) (f64.const 15.0))
-                                        (then (local.set $color (i32.sub (local.get $color) (i32.const 3)))
-                                          (if (i32.lt_s (local.get $color) (local.get $sp_color))
-                                            (then (local.set $color (local.get $sp_color))))))
-                                      (i32.store8
-                                        (i32.add (i32.const 0x0340)
-                                          (i32.add (i32.mul (local.get $sy) (i32.const 320)) (local.get $check_x)))
-                                        (local.get $color))))))
-                              (local.set $sy (i32.add (local.get $sy) (i32.const 1)))
-                              (br $spy_lp)))))))
-                    (local.set $col (i32.add (local.get $col) (i32.const 1)))
-                    (br $sp_lp)))))))
-        ))
+                                  (local.set $color (i32.add (local.get $sp_color) (i32.const 10)))
+                                  ;; Eyes
+                                  (if (i32.and (i32.eq (local.get $tex_v) (i32.const 1))
+                                               (i32.or (i32.eq (local.get $tex_u) (i32.const 3))
+                                                       (i32.eq (local.get $tex_u) (i32.const 4))))
+                                    (then (local.set $color (i32.add (local.get $sp_color) (i32.const 2)))))))
+                              ;; Body
+                              (if (i32.and (i32.and (i32.ge_u (local.get $tex_v) (i32.const 3))
+                                                    (i32.lt_u (local.get $tex_v) (i32.const 6)))
+                                           (i32.and (i32.ge_u (local.get $tex_u) (i32.const 1))
+                                                    (i32.lt_u (local.get $tex_u) (i32.const 7))))
+                                (then (local.set $color (i32.add (local.get $sp_color) (i32.const 8)))))
+                              ;; Legs
+                              (if (i32.ge_u (local.get $tex_v) (i32.const 6))
+                                (then
+                                  (if (i32.or
+                                        (i32.and (i32.ge_u (local.get $tex_u) (i32.const 2))
+                                                 (i32.lt_u (local.get $tex_u) (i32.const 4)))
+                                        (i32.and (i32.ge_u (local.get $tex_u) (i32.const 4))
+                                                 (i32.lt_u (local.get $tex_u) (i32.const 6))))
+                                    (then (local.set $color (i32.add (local.get $sp_color) (i32.const 6)))))))
+                              (if (local.get $color)
+                                (then
+                                  ;; Distance fade
+                                  (if (f64.gt (local.get $cx) (f64.const 15.0))
+                                    (then (local.set $color (i32.sub (local.get $color) (i32.const 3)))
+                                      (if (i32.lt_s (local.get $color) (local.get $sp_color))
+                                        (then (local.set $color (local.get $sp_color))))))
+                                  (i32.store8
+                                    (i32.add (i32.const 0x0340)
+                                      (i32.add (i32.mul (local.get $sy) (i32.const 320)) (local.get $check_x)))
+                                    (local.get $color))))))
+                          (local.set $sy (i32.add (local.get $sy) (i32.const 1)))
+                          (br $spy_lp)))))))
+                (local.set $col (i32.add (local.get $col) (i32.const 1)))
+                (br $sp_lp)))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $mob_lp)))
 
