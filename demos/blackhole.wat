@@ -59,6 +59,8 @@
   (func (export "init")
     (local $i i32) (local $addr i32)
     (local $t f64) (local $r i32) (local $g i32) (local $b i32)
+    (local $rnd i32) (local $face i32) (local $su i32) (local $sv i32)
+    (local $pal i32) (local $bright i32) (local $family i32)
 
     ;; Palette 0-31: space & stars (32 entries)
     ;; 0: black, 1-7: nebula, 8-15: white stars, 16-21: warm, 22-27: blue, 28-31: red
@@ -230,6 +232,94 @@
 
     ;; Init PRNG
     (i32.store (i32.const 0x10340) (i32.const 987654321))
+
+    ;; === Generate cube map starfield at 0x20000 ===
+    ;; 6 faces × 128×128 = 98304 bytes (0x18000), each byte = palette index
+
+    ;; Clear cube map to 0 (black) — use i32.store for speed (4 bytes at a time)
+    (local.set $i (i32.const 0))
+    (block $cdone (loop $clp
+      (br_if $cdone (i32.ge_u (local.get $i) (i32.const 98304)))
+      (i32.store (i32.add (i32.const 0x20000) (local.get $i)) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 4)))
+      (br $clp)
+    ))
+
+    ;; Scatter 2000 random stars across all faces
+    (local.set $i (i32.const 0))
+    (block $sdone (loop $slp
+      (br_if $sdone (i32.ge_u (local.get $i) (i32.const 2000)))
+
+      ;; Pick random face (0-5)
+      (local.set $rnd (call $rand))
+      (local.set $face (i32.rem_u (i32.and (local.get $rnd) (i32.const 0x7FFFFFFF)) (i32.const 6)))
+
+      ;; Pick random u,v (0-127)
+      (local.set $rnd (call $rand))
+      (local.set $su (i32.and (local.get $rnd) (i32.const 127)))
+      (local.set $sv (i32.and (i32.shr_u (local.get $rnd) (i32.const 8)) (i32.const 127)))
+
+      ;; Brightness (4-7) and color family
+      (local.set $rnd (call $rand))
+      (local.set $bright (i32.add (i32.const 4) (i32.and (local.get $rnd) (i32.const 3))))
+
+      ;; Color: 75% white, 12% warm, 8% blue, 5% red
+      (local.set $family (i32.and (i32.shr_u (local.get $rnd) (i32.const 4)) (i32.const 15)))
+      (if (i32.le_u (local.get $family) (i32.const 11))
+        (then (local.set $pal (i32.add (i32.const 8) (local.get $bright)))))
+      (if (i32.and (i32.ge_u (local.get $family) (i32.const 12))
+                   (i32.le_u (local.get $family) (i32.const 13)))
+        (then (local.set $pal (i32.add (i32.const 16)
+          (i32.div_u (i32.mul (local.get $bright) (i32.const 5)) (i32.const 7))))))
+      (if (i32.eq (local.get $family) (i32.const 14))
+        (then (local.set $pal (i32.add (i32.const 22)
+          (i32.div_u (i32.mul (local.get $bright) (i32.const 5)) (i32.const 7))))))
+      (if (i32.eq (local.get $family) (i32.const 15))
+        (then (local.set $pal (i32.add (i32.const 28)
+          (i32.div_u (i32.mul (local.get $bright) (i32.const 3)) (i32.const 7))))))
+
+      ;; Write single star pixel
+      (i32.store8 (i32.add (i32.const 0x20000)
+        (i32.add (i32.mul (local.get $face) (i32.const 16384))
+          (i32.add (i32.shl (local.get $sv) (i32.const 7)) (local.get $su))))
+        (local.get $pal))
+
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $slp)
+    ))
+
+    ;; Scatter ~500 Milky Way stars on faces 0,1,4,5 near v≈44 (y≈0.3)
+    (local.set $i (i32.const 0))
+    (block $mdone (loop $mlp
+      (br_if $mdone (i32.ge_u (local.get $i) (i32.const 500)))
+
+      (local.set $rnd (call $rand))
+      ;; Pick face from {0,1,4,5}
+      (local.set $face (i32.and (local.get $rnd) (i32.const 3)))
+      (if (i32.ge_u (local.get $face) (i32.const 2))
+        (then (local.set $face (i32.add (local.get $face) (i32.const 2)))))
+
+      ;; u = random 0-127, v = 34-54 (Milky Way band at 128 resolution)
+      (local.set $rnd (call $rand))
+      (local.set $su (i32.and (local.get $rnd) (i32.const 127)))
+      (local.set $sv (i32.add (i32.const 34)
+        (i32.rem_u (i32.and (i32.shr_u (local.get $rnd) (i32.const 8)) (i32.const 0x7FFF)) (i32.const 21))))
+
+      ;; 70% nebula glow (4-7), 30% bright star
+      (local.set $rnd (call $rand))
+      (if (i32.lt_u (i32.and (local.get $rnd) (i32.const 9)) (i32.const 7))
+        (then (local.set $pal (i32.add (i32.const 4) (i32.and (local.get $rnd) (i32.const 3)))))
+        (else (local.set $pal (i32.add (i32.const 12)
+          (i32.and (i32.shr_u (local.get $rnd) (i32.const 4)) (i32.const 3))))))
+
+      (i32.store8 (i32.add (i32.const 0x20000)
+        (i32.add (i32.mul (local.get $face) (i32.const 16384))
+          (i32.add (i32.shl (local.get $sv) (i32.const 7)) (local.get $su))))
+        (local.get $pal))
+
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $mlp)
+    ))
   )
 
   ;; ---- Frame ----
@@ -637,94 +727,74 @@
                     (f64.mul (local.get $pos_z) (local.get $vel_z)))
                   (f64.const 0.0)))
             (then
-              ;; === Procedural starfield with soft profiles ===
+              ;; === Cube map starfield lookup ===
+              ;; Find dominant axis for face selection
+              (local.set $fx (f64.abs (local.get $vel_x)))
+              (local.set $fy (f64.abs (local.get $vel_y)))
+              (local.set $fz (f64.abs (local.get $vel_z)))
 
-              ;; Hash cell coordinates (400³ grid)
-              (local.set $fx (f64.mul (local.get $vel_x) (f64.const 60.0)))
-              (local.set $fy (f64.mul (local.get $vel_y) (f64.const 60.0)))
-              (local.set $fz (f64.mul (local.get $vel_z) (f64.const 60.0)))
-              (local.set $ix (i32.trunc_f64_s (f64.floor (local.get $fx))))
-              (local.set $iy (i32.trunc_f64_s (f64.floor (local.get $fy))))
-              (local.set $iz (i32.trunc_f64_s (f64.floor (local.get $fz))))
-
-              ;; Fractional position within cell (0 to 1)
-              (local.set $fx (f64.sub (local.get $fx) (f64.convert_i32_s (local.get $ix))))
-              (local.set $fy (f64.sub (local.get $fy) (f64.convert_i32_s (local.get $iy))))
-              (local.set $fz (f64.sub (local.get $fz) (f64.convert_i32_s (local.get $iz))))
-
-              ;; Hash the cell
-              (local.set $hash (i32.add
-                (i32.mul (local.get $ix) (i32.const 374761393))
-                (i32.add
-                  (i32.mul (local.get $iy) (i32.const 668265263))
-                  (i32.mul (local.get $iz) (i32.const 1299709)))))
-              (local.set $hash (i32.xor (local.get $hash)
-                (i32.shr_u (local.get $hash) (i32.const 13))))
-              (local.set $hash (i32.mul (local.get $hash) (i32.const 1274126177)))
-              (local.set $hash (i32.xor (local.get $hash)
-                (i32.shr_u (local.get $hash) (i32.const 16))))
-
-              ;; Jittered star position within cell (from hash bits)
-              ;; jitter = hash_bits / 256.0 → [0, ~1)
-              (local.set $fx (f64.sub (local.get $fx)
-                (f64.div (f64.convert_i32_u (i32.and (local.get $hash) (i32.const 255)))
-                         (f64.const 256.0))))
-              (local.set $fy (f64.sub (local.get $fy)
-                (f64.div (f64.convert_i32_u (i32.and (i32.shr_u (local.get $hash) (i32.const 8)) (i32.const 255)))
-                         (f64.const 256.0))))
-              (local.set $fz (f64.sub (local.get $fz)
-                (f64.div (f64.convert_i32_u (i32.and (i32.shr_u (local.get $hash) (i32.const 16)) (i32.const 255)))
-                         (f64.const 256.0))))
-              (local.set $d2 (f64.add (f64.add
-                (f64.mul (local.get $fx) (local.get $fx))
-                (f64.mul (local.get $fy) (local.get $fy)))
-                (f64.mul (local.get $fz) (local.get $fz))))
-
-              ;; Is this cell a star? (~1% of cells, but filtered by radius)
-              (if (i32.and
-                    (i32.lt_u (i32.and (local.get $hash) (i32.const 0xFF)) (i32.const 8))
-                    (f64.lt (local.get $d2) (f64.const 0.12)))
+              (if (i32.and (f64.ge (local.get $fx) (local.get $fy))
+                           (f64.ge (local.get $fx) (local.get $fz)))
                 (then
-                  ;; Star! Compute brightness from distance to center (0=edge, 7=center)
-                  (local.set $star_bright (i32.sub (i32.const 7)
-                    (i32.trunc_f64_s (f64.mul (local.get $d2) (f64.const 58.0)))))
-                  (if (i32.lt_s (local.get $star_bright) (i32.const 0))
-                    (then (local.set $star_bright (i32.const 0))))
-
-                  ;; Pick color family: ~75% white, ~12% warm, ~8% blue, ~5% red
-                  ;; Use hash bits 14-17 (0-15): 0-11=white, 12-13=warm, 14=blue, 15=red
-                  (local.set $idx (i32.and (i32.shr_u (local.get $hash) (i32.const 14)) (i32.const 15)))
-                  (if (i32.le_u (local.get $idx) (i32.const 11))
-                    (then
-                      ;; White star: base 8, 8 levels
-                      (local.set $color (i32.add (i32.const 8) (local.get $star_bright)))))
-                  (if (i32.and (i32.ge_u (local.get $idx) (i32.const 12))
-                               (i32.le_u (local.get $idx) (i32.const 13)))
-                    (then
-                      ;; Warm star: base 16, 6 levels
-                      (local.set $color (i32.add (i32.const 16)
-                        (i32.div_u (i32.mul (local.get $star_bright) (i32.const 5)) (i32.const 7))))))
-                  (if (i32.eq (local.get $idx) (i32.const 14))
-                    (then
-                      ;; Blue star: base 22, 6 levels
-                      (local.set $color (i32.add (i32.const 22)
-                        (i32.div_u (i32.mul (local.get $star_bright) (i32.const 5)) (i32.const 7))))))
-                  (if (i32.eq (local.get $idx) (i32.const 15))
-                    (then
-                      ;; Red star: base 28, 4 levels
-                      (local.set $color (i32.add (i32.const 28)
-                        (i32.div_u (i32.mul (local.get $star_bright) (i32.const 3)) (i32.const 7)))))))
+                  ;; X dominant
+                  (local.set $d2 (local.get $fx))
+                  (if (f64.gt (local.get $vel_x) (f64.const 0.0))
+                    (then (local.set $ix (i32.const 0))
+                      (local.set $fx (f64.neg (local.get $vel_z)))
+                      (local.set $fy (f64.neg (local.get $vel_y))))
+                    (else (local.set $ix (i32.const 1))
+                      (local.set $fx (local.get $vel_z))
+                      (local.set $fy (f64.neg (local.get $vel_y))))))
                 (else
-                  ;; No star — mostly pure black
-                  (local.set $color (i32.const 0))
-                  ;; Subtle Milky Way band near vel_y ≈ 0.3 (~10% of pixels in band)
-                  (local.set $d2 (f64.sub (local.get $vel_y) (f64.const 0.3)))
-                  (if (i32.and
-                        (f64.lt (f64.mul (local.get $d2) (local.get $d2)) (f64.const 0.012))
-                        (i32.lt_u (i32.and (local.get $hash) (i32.const 7)) (i32.const 1)))
+                  (if (i32.and (f64.ge (local.get $fy) (local.get $fx))
+                               (f64.ge (local.get $fy) (local.get $fz)))
                     (then
-                      (local.set $color (i32.add (i32.const 4)
-                        (i32.and (i32.shr_u (local.get $hash) (i32.const 4)) (i32.const 3))))))))
+                      ;; Y dominant
+                      (local.set $d2 (local.get $fy))
+                      (if (f64.gt (local.get $vel_y) (f64.const 0.0))
+                        (then (local.set $ix (i32.const 2))
+                          (local.set $fx (local.get $vel_x))
+                          (local.set $fy (local.get $vel_z)))
+                        (else (local.set $ix (i32.const 3))
+                          (local.set $fx (local.get $vel_x))
+                          (local.set $fy (f64.neg (local.get $vel_z))))))
+                    (else
+                      ;; Z dominant
+                      (local.set $d2 (local.get $fz))
+                      (if (f64.gt (local.get $vel_z) (f64.const 0.0))
+                        (then (local.set $ix (i32.const 4))
+                          (local.set $fx (local.get $vel_x))
+                          (local.set $fy (f64.neg (local.get $vel_y))))
+                        (else (local.set $ix (i32.const 5))
+                          (local.set $fx (f64.neg (local.get $vel_x)))
+                          (local.set $fy (f64.neg (local.get $vel_y)))))))))
+
+              ;; ix=face, fx=sc, fy=tc, d2=ma
+              ;; u = ((sc/ma + 1) * 0.5) * 127
+              (local.set $star_base (i32.trunc_f64_s
+                (f64.mul (f64.mul (f64.add
+                  (f64.div (local.get $fx) (local.get $d2))
+                  (f64.const 1.0)) (f64.const 0.5)) (f64.const 127.0))))
+              (local.set $star_bright (i32.trunc_f64_s
+                (f64.mul (f64.mul (f64.add
+                  (f64.div (local.get $fy) (local.get $d2))
+                  (f64.const 1.0)) (f64.const 0.5)) (f64.const 127.0))))
+              ;; Clamp u,v to [0, 127]
+              (if (i32.lt_s (local.get $star_base) (i32.const 0))
+                (then (local.set $star_base (i32.const 0))))
+              (if (i32.gt_s (local.get $star_base) (i32.const 127))
+                (then (local.set $star_base (i32.const 127))))
+              (if (i32.lt_s (local.get $star_bright) (i32.const 0))
+                (then (local.set $star_bright (i32.const 0))))
+              (if (i32.gt_s (local.get $star_bright) (i32.const 127))
+                (then (local.set $star_bright (i32.const 127))))
+
+              ;; Read palette index from cube map (128×128 faces, 16384 bytes each)
+              (local.set $color (i32.load8_u
+                (i32.add (i32.const 0x20000)
+                  (i32.add (i32.shl (local.get $ix) (i32.const 14))
+                    (i32.add (i32.shl (local.get $star_bright) (i32.const 7))
+                      (local.get $star_base))))))
 
               (br $ray_done)))
 
