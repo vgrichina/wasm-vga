@@ -4,259 +4,40 @@
   (import "env" "note" (func $note (param i32 i32 i32 i32)))
 
   ;; ============================================================
-  ;; VGACraft — Duke Nukem 3D meets Minecraft
+  ;; VGACraft — Proper Per-Pixel 3D Voxel Raytracer
   ;; ============================================================
-  ;; True DDA raycaster with variable-height blocks
-  ;; Y-shearing for look up/down (Duke3D/Quake style)
-  ;; WASD to move, Left/Right arrows to turn, Space to jump
-  ;; Mouse to aim (Y for look up/down), Click to dig, Shift+click to place
+  ;; True per-pixel raytracing: every pixel (320×200 = 64000 rays)
+  ;; gets its own ray through the voxel world using 3D DDA
+  ;; (Amanatides & Woo grid traversal).
+  ;;
+  ;; WASD to move, Mouse to look, Click to dig, Shift+click to place
+  ;; Space to jump
   ;;
   ;; Memory layout:
   ;;   0x10340  PRNG state (4 bytes)
   ;;   0x10344  Player state (64 bytes)
-  ;;     +0: px (f64) world X
-  ;;     +8: py (f64) world Y (horizontal plane)
-  ;;     +16: angle (f64) facing direction
+  ;;     +0:  px (f64) world X
+  ;;     +8:  py (f64) world Y (horizontal plane)
+  ;;     +16: angle (f64) facing direction (yaw)
   ;;     +24: pz (f64) player Z height (eye level)
   ;;     +32: vz (f64) vertical velocity
   ;;     +40: on_ground (i32)
   ;;     +48: bob_phase (f64)
   ;;   0x10390  Game state (32 bytes)
-  ;;     +0: mod_count (i32)
-  ;;     +4: max_mods (i32)
-  ;;     +8: gods_angry (i32)
+  ;;     +0:  mod_count (i32)
+  ;;     +4:  max_mods (i32)
+  ;;     +8:  gods_angry (i32)
   ;;     +12: msg_timer (i32)
   ;;     +16: dig_cooldown (i32)
   ;;     +20: prev_mouse (i32)
   ;;     +24: selected_block (i32)
-  ;;     +28: look_y (i32) - vertical look offset (-80 to 80)
-  ;;   0x103B0  zbuffer (320 * 8 = 2560 bytes) → ends at 0x10DB0
-  ;;   0x10E00  Monster array (32 monsters * 32 bytes = 1024)
-  ;;   0x11200  Modification table (max ~1900 entries * 16 bytes)
+  ;;     +28: look_y (i32) - vertical look pitch
+  ;;   0x103B0  zbuffer (320 * 4 = 1280 bytes) — f32 per column for sprites
+  ;;   0x10900  Monster array (24 monsters * 32 bytes = 768)
+  ;;   0x10C00  Modification table (max ~1900 entries * 16 bytes)
   ;;   0x19000  String data
   ;;   0x19200  Font data
   ;; ============================================================
-  ;;
-  ;; ┌──────────────────────────────────────────────────────────────────────────┐
-  ;; │                  VGACraft Architecture — ASCII Diagrams                  │
-  ;; └──────────────────────────────────────────────────────────────────────────┘
-  ;;
-  ;; ═══════════════════════════════════════════════════════════════════════════
-  ;;  WASM MEMORY MAP (512KB linear memory — 8 pages)
-  ;; ═══════════════════════════════════════════════════════════════════════════
-  ;;
-  ;;  0x00000 ┌──────────────────────────────────┐
-  ;;          │  Harness Control Block (64B)     │  ← frame counter, tick_ms
-  ;;          │  [frame_ct|mouse_xy|btn|keys]    │    mouse pos, buttons, keyboard
-  ;;  0x00040 ├──────────────────────────────────┤
-  ;;          │  VGA Palette (768B)              │  ← 256 entries × 3 bytes (RGB)
-  ;;          │  [R G B] × 256 colors            │    Indices: 0-15 CGA, 16-95 terrain,
-  ;;          │                                  │    96-111 deco/water/floor,
-  ;;          │                                  │    128-175 monsters, 240-255 HUD
-  ;;  0x00340 ├──────────────────────────────────┤
-  ;;          │  Framebuffer (64000B)            │  ← 320×200 pixels, 1 byte each
-  ;;          │  ┌────────────────────320────┐   │    Written by WASM frame() export
-  ;;          │  │ sky gradient              │   │
-  ;;          │  │ ─ ─ ─ horizon ─ ─ ─ ─ ─  │   │
-  ;;          │  │ DDA raycasted terrain     │   │
-  ;;          │  │ billboard sprites         │   │
-  ;;          │  │ crosshair + HUD overlay   │   │
-  ;;          │  └───────────────────────200─┘   │
-  ;;  0x10340 ├──────────────────────────────────┤ ← Guest area starts
-  ;;          │  PRNG State (4B)                 │    xorshift32 seed
-  ;;  0x10344 ├──────────────────────────────────┤
-  ;;          │  Player State (64B)              │
-  ;;          │  px(f64) py(f64) angle(f64)      │    world position + facing
-  ;;          │  pz(f64) vz(f64) on_ground(i32)  │    height, velocity, grounded
-  ;;          │  bob_phase(f64)                  │    head bob animation
-  ;;  0x10390 ├──────────────────────────────────┤
-  ;;          │  Game State (32B)                │
-  ;;          │  mod_count, max_mods, gods_angry │    block modification tracking
-  ;;          │  msg_timer, dig_cooldown         │    UI timers
-  ;;          │  prev_mouse, selected_block      │    input state
-  ;;          │  look_y                          │    vertical look (y-shearing)
-  ;;  0x103B0 ├──────────────────────────────────┤
-  ;;          │  Z-Buffer (2560B)                │  ← 320 columns × f64 (8 bytes)
-  ;;          │  Per-column depth for sprite     │    Used for billboard occlusion
-  ;;          │  occlusion testing               │
-  ;;  0x10DB0 ├──────────────────────────────────┤
-  ;;          │  (gap)                           │
-  ;;  0x10E00 ├──────────────────────────────────┤
-  ;;          │  Monster Array (1024B)           │  ← 32 monsters × 32 bytes each
-  ;;          │  [active|type|wx(f64)|wy(f64)    │    3 types: creeper/zombie/skeleton
-  ;;          │   hp|anim_frame]                 │    Simple chase AI
-  ;;  0x11200 ├──────────────────────────────────┤
-  ;;          │  Modification Table (~30KB)      │  ← up to 1900 entries × 16 bytes
-  ;;          │  [wx(i32)|wy(i32)|wz(i32)|type]  │    Player-placed/dug blocks
-  ;;          │  Checked before procedural gen   │    Overlay on infinite terrain
-  ;;  0x19000 ├──────────────────────────────────┤
-  ;;          │  String Data                     │  ← null-terminated C strings
-  ;;          │  "VGACRAFT", control hints,      │    title, HUD labels, messages
-  ;;          │  "You angered the MC gods..."    │
-  ;;  0x19200 ├──────────────────────────────────┤
-  ;;          │  Font Data (4×6 bitmap font)     │  ← glyph bitmaps for HUD text
-  ;;  0x80000 └──────────────────────────────────┘
-  ;;
-  ;; ═══════════════════════════════════════════════════════════════════════════
-  ;;  RENDERING PIPELINE (per frame)
-  ;; ═══════════════════════════════════════════════════════════════════════════
-  ;;
-  ;;  ┌─────────────┐     ┌──────────────┐     ┌──────────────────────────┐
-  ;;  │ Read Inputs │────▶│ Update Player│────▶│ Physics & Collision      │
-  ;;  │ keys, mouse │     │ move, turn,  │     │ gravity, ground check,   │
-  ;;  │ from CTL blk│     │ look up/down │     │ terrain height query     │
-  ;;  └─────────────┘     └──────────────┘     └────────────┬─────────────┘
-  ;;                                                        │
-  ;;                                                        ▼
-  ;;  ┌─────────────────────────────────────────────────────────────────────┐
-  ;;  │                    SKY GRADIENT FILL                                │
-  ;;  │  8-color palette gradient (pal 1-7) from top to horizon            │
-  ;;  │  Horizon line shifts with look_y (Duke3D y-shearing)               │
-  ;;  └────────────────────────────────┬────────────────────────────────────┘
-  ;;                                   │
-  ;;                                   ▼
-  ;;  ┌─────────────────────────────────────────────────────────────────────┐
-  ;;  │              DDA RAYCASTER (320 columns)                           │
-  ;;  │                                                                    │
-  ;;  │  For each screen column:                                           │
-  ;;  │  ┌───────────────────────────────────────────────────────┐         │
-  ;;  │  │ 1. Compute ray angle (FOV ≈ 60°)                     │         │
-  ;;  │  │ 2. DDA grid traversal (Wolf3D-style stepping)         │         │
-  ;;  │  │ 3. At each cell hit:                                  │         │
-  ;;  │  │    ├─ get_column_top(map_x, map_y)                    │         │
-  ;;  │  │    ├─ For each block top→bottom:                      │         │
-  ;;  │  │    │   ├─ get_block(x,y,z) → check mod table first   │         │
-  ;;  │  │    │   │                    → then procedural gen      │         │
-  ;;  │  │    │   ├─ Project block to screen (variable height)   │         │
-  ;;  │  │    │   ├─ Apply face shading (top/bright/dim)         │         │
-  ;;  │  │    │   ├─ Apply distance fog                          │         │
-  ;;  │  │    │   └─ Texture pattern via block_texture()         │         │
-  ;;  │  │    └─ Store min depth in z-buffer                     │         │
-  ;;  │  │ 4. Max 40 DDA steps per ray                           │         │
-  ;;  │  └───────────────────────────────────────────────────────┘         │
-  ;;  └────────────────────────────────┬────────────────────────────────────┘
-  ;;                                   │
-  ;;                                   ▼
-  ;;  ┌─────────────────────────────────────────────────────────────────────┐
-  ;;  │            BILLBOARD SPRITE RENDERER (24 monsters)                 │
-  ;;  │                                                                    │
-  ;;  │  For each active monster:                                          │
-  ;;  │  ┌───────────────────────────────────────────────────────┐         │
-  ;;  │  │ 1. AI update: walk toward player if dist > 3.0        │         │
-  ;;  │  │ 2. View-space transform:                              │         │
-  ;;  │  │    cx = dx·cos(θ) + dy·sin(θ)  (forward depth)       │         │
-  ;;  │  │    cy = -dx·sin(θ) + dy·cos(θ) (lateral offset)      │         │
-  ;;  │  │ 3. Perspective projection → screen_x, sprite_h       │         │
-  ;;  │  │ 4. Z-buffer test per column (depth occlusion)         │         │
-  ;;  │  │ 5. Procedural body rendering:                         │         │
-  ;;  │  │    ┌────┐                                             │         │
-  ;;  │  │    │head│  ← top 25% of sprite                       │         │
-  ;;  │  │    │body│  ← middle 50%, colored by type              │         │
-  ;;  │  │    │legs│  ← bottom 25%, animated bob                 │         │
-  ;;  │  │    └────┘  Creeper=green(128+), Zombie=brown(144+),   │         │
-  ;;  │  │            Skeleton=bone(160+)                        │         │
-  ;;  │  └───────────────────────────────────────────────────────┘         │
-  ;;  └────────────────────────────────┬────────────────────────────────────┘
-  ;;                                   │
-  ;;                                   ▼
-  ;;  ┌─────────────────────────────────────────────────────────────────────┐
-  ;;  │                   HUD OVERLAY                                      │
-  ;;  │  ┌─ Crosshair (8 pixels, center screen) ──────────────────┐       │
-  ;;  │  │  Mods: N / MaxN  (block modification counter)          │       │
-  ;;  │  │  Title card (first 180 frames)                         │       │
-  ;;  │  │  "Gods angry" message box (when dig limit exceeded)    │       │
-  ;;  │  └────────────────────────────────────────────────────────┘       │
-  ;;  └─────────────────────────────────────────────────────────────────────┘
-  ;;
-  ;; ═══════════════════════════════════════════════════════════════════════════
-  ;;  PROCEDURAL TERRAIN GENERATION
-  ;; ═══════════════════════════════════════════════════════════════════════════
-  ;;
-  ;;  World coordinates (wx, wy) ──► terrain_height(wx, wy) ──► height 2-14
-  ;;
-  ;;        ┌───────────────────────────────────────────┐
-  ;;        │  smooth_hash(wx,wy,16) >> 5  (large hills)│
-  ;;        │  + smooth_hash(+1000,+2000,7) >> 6 (fine) │
-  ;;        │  + hash2d(+5000,+7000) & 1   (noise)      │
-  ;;        │  + base height 2                          │
-  ;;        │  clamped to [2, 14]                       │
-  ;;        └───────────────────────────────────────────┘
-  ;;
-  ;;  Block types at (wx, wy, wz):
-  ;;  ┌────────┐
-  ;;  │ leaves │ z = th+3 to th+6  (if has_tree nearby)
-  ;;  │  wood  │ z = th+1 to th+4  (if has_tree at exact pos)
-  ;;  │ grass  │ z = th            (top surface, height > 4)
-  ;;  │  sand  │ z = th            (top surface, height ≤ 4)
-  ;;  │  dirt  │ z = th-1, th-2    (subsurface)
-  ;;  │ stone  │ z < th-2          (deep underground)
-  ;;  │  coal  │ z < th-2          (random ore, ~3% chance)
-  ;;  │ water  │ z ≤ 4, th ≤ 4    (fills low areas)
-  ;;  │  air   │ z > th            (above terrain, no tree)
-  ;;  └────────┘
-  ;;
-  ;;  Modification overlay:
-  ;;  ┌──────────────────────────────────────────────────┐
-  ;;  │  get_block() checks mod table FIRST (linear scan)│
-  ;;  │  If (wx,wy,wz) found → return stored type        │
-  ;;  │  Else → procedural generation as above            │
-  ;;  │                                                   │
-  ;;  │  set_block() appends to mod table (or updates)    │
-  ;;  │  When mods > threshold → "gods angry" mechanic    │
-  ;;  └──────────────────────────────────────────────────┘
-  ;;
-  ;; ═══════════════════════════════════════════════════════════════════════════
-  ;;  PALETTE LAYOUT (256 colors)
-  ;; ═══════════════════════════════════════════════════════════════════════════
-  ;;
-  ;;  Index    Usage
-  ;;  ─────    ──────────────────────────────────────
-  ;;  0        Black (sky top / void)
-  ;;  1-7      Sky gradient (dark blue → light blue)
-  ;;  8-15     ─── (CGA legacy)
-  ;;  16-31    Grass tones (4 shades × light/face variants)
-  ;;  32-47    Dirt tones
-  ;;  48-63    Stone tones
-  ;;  64-79    Sand tones
-  ;;  80-95    Wood / Leaf tones
-  ;;  96-103   Decoration (flowers, dark foliage)
-  ;;  104-107  Water shimmer (animated via frame count)
-  ;;  108-111  Floor palette (ground between blocks)
-  ;;  128-143  Creeper sprite (green ramp, 16 shades)
-  ;;  144-159  Zombie sprite (brown ramp, 16 shades)
-  ;;  160-175  Skeleton sprite (bone-white ramp, 16 shades)
-  ;;  176-180  Special (white, yellow, dark, red, green)
-  ;;  240-247  HUD white text ramp
-  ;;  248-255  HUD red text ramp
-  ;;
-  ;; ═══════════════════════════════════════════════════════════════════════════
-  ;;  HARNESS ←→ WASM INTERFACE
-  ;; ═══════════════════════════════════════════════════════════════════════════
-  ;;
-  ;;  ┌─────────────┐                      ┌──────────────────┐
-  ;;  │   Browser    │                      │  WASM Module     │
-  ;;  │  (harness.js)│                      │  (vgacraft.wat)  │
-  ;;  │              │   shared memory      │                  │
-  ;;  │  writes CTL ─┼──────────────────────┼─► reads CTL      │
-  ;;  │  block every │   0x0000-0x003F      │   (input state)  │
-  ;;  │  rAF frame   │                      │                  │
-  ;;  │              │                      │  exports:        │
-  ;;  │  calls ──────┼──────────────────────┼─► init()         │
-  ;;  │  frame()     │                      │   frame()        │
-  ;;  │              │                      │                  │
-  ;;  │  reads FB  ◄─┼──────────────────────┼── writes FB      │
-  ;;  │  + palette   │   0x0040-0x103F      │   + palette      │
-  ;;  │              │                      │                  │
-  ;;  │  imports: ◄──┼──────────────────────┼── calls:         │
-  ;;  │  sfx()       │                      │   sfx(addr)      │
-  ;;  │  note()      │                      │   note(t,f,d,v)  │
-  ;;  │  music()     │                      │   music(addr)    │
-  ;;  │              │                      │                  │
-  ;;  │  blits to    │                      │                  │
-  ;;  │  canvas via  │                      │                  │
-  ;;  │  ImageData   │                      │                  │
-  ;;  └─────────────┘                      └──────────────────┘
-  ;;
 
   ;; ---- PRNG (xorshift32) ----
   (func $rand (result i32)
@@ -376,7 +157,7 @@
     (block $mod_done
       (loop $mod_loop
         (br_if $mod_done (i32.ge_u (local.get $i) (local.get $count)))
-        (local.set $addr (i32.add (i32.const 0x11200) (i32.mul (local.get $i) (i32.const 16))))
+        (local.set $addr (i32.add (i32.const 0x10C00) (i32.mul (local.get $i) (i32.const 16))))
         (if (i32.and
               (i32.and
                 (i32.eq (i32.load (local.get $addr)) (local.get $wx))
@@ -411,7 +192,6 @@
     ;; Above terrain = air (or water)
     (if (i32.gt_s (local.get $wz) (local.get $th))
       (then
-        ;; Water fills at level 4
         (if (i32.and (i32.le_s (local.get $wz) (i32.const 4))
                      (i32.le_s (local.get $th) (i32.const 4)))
           (then (return (i32.const 5))))
@@ -443,7 +223,7 @@
     (block $search_done
       (loop $search
         (br_if $search_done (i32.ge_u (local.get $i) (local.get $count)))
-        (local.set $addr (i32.add (i32.const 0x11200) (i32.mul (local.get $i) (i32.const 16))))
+        (local.set $addr (i32.add (i32.const 0x10C00) (i32.mul (local.get $i) (i32.const 16))))
         (if (i32.and
               (i32.and
                 (i32.eq (i32.load (local.get $addr)) (local.get $wx))
@@ -460,7 +240,7 @@
         (i32.store (i32.const 0x10398) (i32.const 1))
         (i32.store (i32.const 0x1039C) (i32.const 300))
         (return)))
-    (local.set $addr (i32.add (i32.const 0x11200) (i32.mul (local.get $count) (i32.const 16))))
+    (local.set $addr (i32.add (i32.const 0x10C00) (i32.mul (local.get $count) (i32.const 16))))
     (i32.store (local.get $addr) (local.get $wx))
     (i32.store (i32.add (local.get $addr) (i32.const 4)) (local.get $wy))
     (i32.store (i32.add (local.get $addr) (i32.const 8)) (local.get $wz))
@@ -533,71 +313,9 @@
       (br $ly)))
   )
 
-  ;; ---- Block texture pattern ----
-  (func $block_texture (param $type i32) (param $u i32) (param $v i32) (param $face i32) (result i32)
-    (local $h i32)
-    ;; Grass top face
-    (if (i32.and (i32.eq (local.get $type) (i32.const 1)) (i32.eq (local.get $face) (i32.const 0)))
-      (then
-        (local.set $h (i32.and (call $hash3d (local.get $u) (local.get $v) (i32.const 111)) (i32.const 7)))
-        (if (i32.lt_u (local.get $h) (i32.const 2)) (then (return (i32.const -1))))
-        (if (i32.eq (local.get $h) (i32.const 6)) (then (return (i32.const 1))))
-        (return (i32.const 0))))
-    ;; Grass side
-    (if (i32.and (i32.eq (local.get $type) (i32.const 1)) (i32.ne (local.get $face) (i32.const 0)))
-      (then
-        (if (i32.lt_u (local.get $v) (i32.const 2))
-          (then (return (i32.const 2))))
-        (return (i32.const 0))))
-    ;; Dirt
-    (if (i32.eq (local.get $type) (i32.const 2))
-      (then
-        (local.set $h (i32.and (call $hash3d (local.get $u) (local.get $v) (i32.const 222)) (i32.const 3)))
-        (if (i32.eqz (local.get $h)) (then (return (i32.const -1))))
-        (return (i32.const 0))))
-    ;; Stone
-    (if (i32.eq (local.get $type) (i32.const 3))
-      (then
-        (local.set $h (i32.and (call $hash3d (local.get $u) (local.get $v) (i32.const 333)) (i32.const 7)))
-        (if (i32.lt_u (local.get $h) (i32.const 2)) (then (return (i32.const -1))))
-        (if (i32.and (i32.eq (i32.and (local.get $v) (i32.const 3)) (i32.const 2))
-                     (i32.lt_u (i32.and (local.get $u) (i32.const 3)) (i32.const 3)))
-          (then (return (i32.const -1))))
-        (return (i32.const 0))))
-    ;; Sand
-    (if (i32.eq (local.get $type) (i32.const 4))
-      (then
-        (local.set $h (i32.and (call $hash3d (local.get $u) (local.get $v) (i32.const 444)) (i32.const 3)))
-        (if (i32.eqz (local.get $h)) (then (return (i32.const 1))))
-        (if (i32.eq (local.get $h) (i32.const 1)) (then (return (i32.const -1))))
-        (return (i32.const 0))))
-    ;; Wood
-    (if (i32.eq (local.get $type) (i32.const 6))
-      (then
-        (if (i32.eq (i32.and (local.get $u) (i32.const 3)) (i32.const 0))
-          (then (return (i32.const -1))))
-        (if (i32.and (i32.eq (i32.and (local.get $u) (i32.const 7)) (i32.const 3))
-                     (i32.eq (i32.and (local.get $v) (i32.const 7)) (i32.const 4)))
-          (then (return (i32.const -2))))
-        (return (i32.const 0))))
-    ;; Leaves
-    (if (i32.eq (local.get $type) (i32.const 7))
-      (then
-        (local.set $h (i32.and (call $hash3d (local.get $u) (local.get $v) (i32.const 777)) (i32.const 3)))
-        (if (i32.eqz (local.get $h)) (then (return (i32.const -2))))
-        (if (i32.eq (local.get $h) (i32.const 3)) (then (return (i32.const 1))))
-        (return (i32.const 0))))
-    ;; Coal ore
-    (if (i32.eq (local.get $type) (i32.const 8))
-      (then
-        (local.set $h (i32.and (call $hash3d (local.get $u) (local.get $v) (i32.const 888)) (i32.const 7)))
-        (if (i32.lt_u (local.get $h) (i32.const 3)) (then (return (i32.const -3))))
-        (return (i32.const 0))))
-    (i32.const 0)
-  )
-
   ;; ---- Block color: returns palette index ----
-  ;; face: 0=top, 1=side-bright, 2=side-dim, 3=bottom
+  ;; face: 0=top, 1=side+X, 2=side-X, 3=side+Y, 4=side-Y, 5=bottom
+  ;; We simplify to: 0=top(bright), 1=side-bright, 2=side-dim, 3=bottom(dark)
   (func $block_color (param $type i32) (param $face i32) (param $shade i32) (result i32)
     (local $base i32)
     (local.set $base (i32.add (i32.const 8) (i32.mul (local.get $type) (i32.const 8))))
@@ -675,36 +393,6 @@
       (local.set $ox (i32.sub (local.get $ox) (i32.const 5)))
       (br_if $dd (i32.eqz (local.get $v)))
       (br $dl)))
-  )
-
-  ;; ---- Get highest solid block at (wx,wy) ----
-  (func $get_column_top (param $wx i32) (param $wy i32) (result i32)
-    (local $z i32) (local $th i32) (local $top i32)
-    (local.set $th (call $terrain_height (local.get $wx) (local.get $wy)))
-    (local.set $top (local.get $th))
-    ;; Check upward for tree blocks
-    (local.set $z (i32.add (local.get $th) (i32.const 1)))
-    (block $done (loop $lp
-      (br_if $done (i32.gt_s (local.get $z) (i32.add (local.get $th) (i32.const 8))))
-      (if (i32.ne (call $get_block (local.get $wx) (local.get $wy) (local.get $z)) (i32.const 0))
-        (then (local.set $top (local.get $z))))
-      (local.set $z (i32.add (local.get $z) (i32.const 1)))
-      (br $lp)))
-    ;; Check if terrain was dug away
-    (if (i32.eqz (call $get_block (local.get $wx) (local.get $wy) (local.get $top)))
-      (then
-        (local.set $z (i32.sub (local.get $top) (i32.const 1)))
-        (block $d2 (loop $l2
-          (br_if $d2 (i32.lt_s (local.get $z) (i32.const 0)))
-          (if (i32.ne (call $get_block (local.get $wx) (local.get $wy) (local.get $z)) (i32.const 0))
-            (then (local.set $top (local.get $z)) (br $d2)))
-          (local.set $z (i32.sub (local.get $z) (i32.const 1)))
-          (br $l2)))))
-    ;; Water surface
-    (if (i32.and (i32.le_s (local.get $th) (i32.const 4))
-                 (i32.lt_s (local.get $top) (i32.const 4)))
-      (then (local.set $top (i32.const 4))))
-    (local.get $top)
   )
 
   ;; ============================================================
@@ -819,26 +507,11 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
 
-    ;; Decoration palettes
-    (call $set_pal (i32.const 96) (i32.const 200) (i32.const 30) (i32.const 30))
-    (call $set_pal (i32.const 97) (i32.const 220) (i32.const 180) (i32.const 40))
-    (call $set_pal (i32.const 98) (i32.const 240) (i32.const 220) (i32.const 40))
-    (call $set_pal (i32.const 99) (i32.const 200) (i32.const 130) (i32.const 20))
-    (call $set_pal (i32.const 100) (i32.const 40) (i32.const 120) (i32.const 25))
-    (call $set_pal (i32.const 101) (i32.const 55) (i32.const 145) (i32.const 35))
-    (call $set_pal (i32.const 102) (i32.const 35) (i32.const 110) (i32.const 22))
-    (call $set_pal (i32.const 103) (i32.const 45) (i32.const 128) (i32.const 28))
     ;; Water shimmer
     (call $set_pal (i32.const 104) (i32.const 40) (i32.const 90) (i32.const 175))
     (call $set_pal (i32.const 105) (i32.const 55) (i32.const 115) (i32.const 200))
     (call $set_pal (i32.const 106) (i32.const 70) (i32.const 140) (i32.const 220))
     (call $set_pal (i32.const 107) (i32.const 100) (i32.const 170) (i32.const 240))
-
-    ;; Floor palette 108-111 (ground colors for when we see floor between blocks)
-    (call $set_pal (i32.const 108) (i32.const 50) (i32.const 95) (i32.const 45))  ;; near grass floor
-    (call $set_pal (i32.const 109) (i32.const 60) (i32.const 110) (i32.const 50))  ;; mid
-    (call $set_pal (i32.const 110) (i32.const 80) (i32.const 125) (i32.const 70))  ;; far
-    (call $set_pal (i32.const 111) (i32.const 100) (i32.const 140) (i32.const 90))  ;; distant
 
     ;; Monster palettes
     ;; 128-143: Creeper (green)
@@ -907,14 +580,14 @@
     (f64.store (i32.const 0x10374) (f64.const 0.0))
 
     ;; Game state
-    (i32.store (i32.const 0x10390) (i32.const 0))
-    (i32.store (i32.const 0x10394) (i32.const 1900))
-    (i32.store (i32.const 0x10398) (i32.const 0))
-    (i32.store (i32.const 0x1039C) (i32.const 0))
-    (i32.store (i32.const 0x103A0) (i32.const 0))
-    (i32.store (i32.const 0x103A4) (i32.const 0))
-    (i32.store (i32.const 0x103A8) (i32.const 1))
-    (i32.store (i32.const 0x103AC) (i32.const 0))  ;; look_y = 0
+    (i32.store (i32.const 0x10390) (i32.const 0))     ;; mod_count
+    (i32.store (i32.const 0x10394) (i32.const 1900))   ;; max_mods
+    (i32.store (i32.const 0x10398) (i32.const 0))     ;; gods_angry
+    (i32.store (i32.const 0x1039C) (i32.const 0))     ;; msg_timer
+    (i32.store (i32.const 0x103A0) (i32.const 0))     ;; dig_cooldown
+    (i32.store (i32.const 0x103A4) (i32.const 0))     ;; prev_mouse
+    (i32.store (i32.const 0x103A8) (i32.const 1))     ;; selected_block
+    (i32.store (i32.const 0x103AC) (i32.const 0))     ;; look_y
 
     ;; Spawn monsters
     (call $spawn_monsters)
@@ -931,7 +604,7 @@
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (i32.const 24)))
-      (local.set $addr (i32.add (i32.const 0x10E00) (i32.mul (local.get $i) (i32.const 32))))
+      (local.set $addr (i32.add (i32.const 0x10900) (i32.mul (local.get $i) (i32.const 32))))
       (local.set $angle (f64.mul (f64.convert_i32_u (local.get $i)) (f64.const 0.2618)))
       (local.set $dist (f64.add (f64.const 8.0)
         (f64.mul (f64.convert_i32_u (i32.and (call $rand) (i32.const 15))) (f64.const 1.5))))
@@ -1044,189 +717,164 @@
     (i32.store8 (i32.add (local.get $base) (i32.const 93)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 94)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 95)) (i32.const 0x00))
-    ;; 'A' offset=198
+    ;; Letters A-Z at offset 198..
     (i32.store8 (i32.add (local.get $base) (i32.const 198)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 199)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 200)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 201)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 202)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 203)) (i32.const 0x00))
-    ;; 'B' offset=204
     (i32.store8 (i32.add (local.get $base) (i32.const 204)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 205)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 206)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 207)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 208)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 209)) (i32.const 0x00))
-    ;; 'C' offset=210
     (i32.store8 (i32.add (local.get $base) (i32.const 210)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 211)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 212)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 213)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 214)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 215)) (i32.const 0x00))
-    ;; 'D' offset=216
     (i32.store8 (i32.add (local.get $base) (i32.const 216)) (i32.const 0x0C))
     (i32.store8 (i32.add (local.get $base) (i32.const 217)) (i32.const 0x0A))
     (i32.store8 (i32.add (local.get $base) (i32.const 218)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 219)) (i32.const 0x0A))
     (i32.store8 (i32.add (local.get $base) (i32.const 220)) (i32.const 0x0C))
     (i32.store8 (i32.add (local.get $base) (i32.const 221)) (i32.const 0x00))
-    ;; 'E' offset=222
     (i32.store8 (i32.add (local.get $base) (i32.const 222)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 223)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 224)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 225)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 226)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 227)) (i32.const 0x00))
-    ;; 'F' offset=228
     (i32.store8 (i32.add (local.get $base) (i32.const 228)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 229)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 230)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 231)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 232)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 233)) (i32.const 0x00))
-    ;; 'G' offset=234
     (i32.store8 (i32.add (local.get $base) (i32.const 234)) (i32.const 0x07))
     (i32.store8 (i32.add (local.get $base) (i32.const 235)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 236)) (i32.const 0x0B))
     (i32.store8 (i32.add (local.get $base) (i32.const 237)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 238)) (i32.const 0x07))
     (i32.store8 (i32.add (local.get $base) (i32.const 239)) (i32.const 0x00))
-    ;; 'H' offset=240
     (i32.store8 (i32.add (local.get $base) (i32.const 240)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 241)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 242)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 243)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 244)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 245)) (i32.const 0x00))
-    ;; 'I' offset=246
     (i32.store8 (i32.add (local.get $base) (i32.const 246)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 247)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 248)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 249)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 250)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 251)) (i32.const 0x00))
-    ;; 'J' offset=252
     (i32.store8 (i32.add (local.get $base) (i32.const 252)) (i32.const 0x01))
     (i32.store8 (i32.add (local.get $base) (i32.const 253)) (i32.const 0x01))
     (i32.store8 (i32.add (local.get $base) (i32.const 254)) (i32.const 0x01))
     (i32.store8 (i32.add (local.get $base) (i32.const 255)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 256)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 257)) (i32.const 0x00))
-    ;; 'K' offset=258
     (i32.store8 (i32.add (local.get $base) (i32.const 258)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 259)) (i32.const 0x0A))
     (i32.store8 (i32.add (local.get $base) (i32.const 260)) (i32.const 0x0C))
     (i32.store8 (i32.add (local.get $base) (i32.const 261)) (i32.const 0x0A))
     (i32.store8 (i32.add (local.get $base) (i32.const 262)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 263)) (i32.const 0x00))
-    ;; 'L' offset=264
     (i32.store8 (i32.add (local.get $base) (i32.const 264)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 265)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 266)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 267)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 268)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 269)) (i32.const 0x00))
-    ;; 'M' offset=270
     (i32.store8 (i32.add (local.get $base) (i32.const 270)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 271)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 272)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 273)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 274)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 275)) (i32.const 0x00))
-    ;; 'N' offset=276
     (i32.store8 (i32.add (local.get $base) (i32.const 276)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 277)) (i32.const 0x0D))
     (i32.store8 (i32.add (local.get $base) (i32.const 278)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 279)) (i32.const 0x0B))
     (i32.store8 (i32.add (local.get $base) (i32.const 280)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 281)) (i32.const 0x00))
-    ;; 'O' offset=282
     (i32.store8 (i32.add (local.get $base) (i32.const 282)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 283)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 284)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 285)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 286)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 287)) (i32.const 0x00))
-    ;; 'P' offset=288
     (i32.store8 (i32.add (local.get $base) (i32.const 288)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 289)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 290)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 291)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 292)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 293)) (i32.const 0x00))
-    ;; 'Q' offset=294
     (i32.store8 (i32.add (local.get $base) (i32.const 294)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 295)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 296)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 297)) (i32.const 0x07))
     (i32.store8 (i32.add (local.get $base) (i32.const 298)) (i32.const 0x01))
     (i32.store8 (i32.add (local.get $base) (i32.const 299)) (i32.const 0x00))
-    ;; 'R' offset=300
     (i32.store8 (i32.add (local.get $base) (i32.const 300)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 301)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 302)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 303)) (i32.const 0x0A))
     (i32.store8 (i32.add (local.get $base) (i32.const 304)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 305)) (i32.const 0x00))
-    ;; 'S' offset=306
     (i32.store8 (i32.add (local.get $base) (i32.const 306)) (i32.const 0x07))
     (i32.store8 (i32.add (local.get $base) (i32.const 307)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 308)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 309)) (i32.const 0x01))
     (i32.store8 (i32.add (local.get $base) (i32.const 310)) (i32.const 0x0E))
     (i32.store8 (i32.add (local.get $base) (i32.const 311)) (i32.const 0x00))
-    ;; 'T' offset=312
     (i32.store8 (i32.add (local.get $base) (i32.const 312)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 313)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 314)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 315)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 316)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 317)) (i32.const 0x00))
-    ;; 'U' offset=318
     (i32.store8 (i32.add (local.get $base) (i32.const 318)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 319)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 320)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 321)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 322)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 323)) (i32.const 0x00))
-    ;; 'V' offset=324
     (i32.store8 (i32.add (local.get $base) (i32.const 324)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 325)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 326)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 327)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 328)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 329)) (i32.const 0x00))
-    ;; 'W' offset=330
     (i32.store8 (i32.add (local.get $base) (i32.const 330)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 331)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 332)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 333)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 334)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 335)) (i32.const 0x00))
-    ;; 'X' offset=336
     (i32.store8 (i32.add (local.get $base) (i32.const 336)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 337)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 338)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 339)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 340)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 341)) (i32.const 0x00))
-    ;; 'Y' offset=342
     (i32.store8 (i32.add (local.get $base) (i32.const 342)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 343)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 344)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 345)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 346)) (i32.const 0x04))
     (i32.store8 (i32.add (local.get $base) (i32.const 347)) (i32.const 0x00))
-    ;; 'Z' offset=348
     (i32.store8 (i32.add (local.get $base) (i32.const 348)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 349)) (i32.const 0x01))
     (i32.store8 (i32.add (local.get $base) (i32.const 350)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 351)) (i32.const 0x08))
     (i32.store8 (i32.add (local.get $base) (i32.const 352)) (i32.const 0x0F))
     (i32.store8 (i32.add (local.get $base) (i32.const 353)) (i32.const 0x00))
-    ;; Lowercase copies
+    ;; Lowercase copies (a-z = same as A-Z)
     (i32.store8 (i32.add (local.get $base) (i32.const 390)) (i32.const 0x06))
     (i32.store8 (i32.add (local.get $base) (i32.const 391)) (i32.const 0x09))
     (i32.store8 (i32.add (local.get $base) (i32.const 392)) (i32.const 0x0F))
@@ -1388,7 +1036,7 @@
   ;; ============================================================
   ;; Strings
   ;; ============================================================
-  (data (i32.const 0x19000) "VGACRAFT\00")
+  (data (i32.const 0x19000) "VGACRAFT RT\00")
   (data (i32.const 0x19010) "WASD:move LR:turn\00")
   (data (i32.const 0x19030) "CLICK:dig SHIFT:place\00")
   (data (i32.const 0x19050) "You angered the\00")
@@ -1399,59 +1047,204 @@
   (data (i32.const 0x190D0) "/\00")
 
   ;; ============================================================
-  ;; FRAME — DDA raycaster with variable block heights
-  ;; Duke3D-style y-shearing for look up/down
+  ;; 3D DDA VOXEL RAYTRACER — cast_ray
+  ;; Returns: block_type in result, face via global
+  ;; Amanatides & Woo grid traversal in 3D
+  ;; ============================================================
+  ;; Global to communicate hit face and distance back
+  (global $g_hit_face (mut i32) (i32.const 0))
+  (global $g_hit_dist (mut f64) (f64.const 0.0))
+
+  (func $cast_ray (param $ox f64) (param $oy f64) (param $oz f64)
+                   (param $dx f64) (param $dy f64) (param $dz f64)
+                   (result i32)
+    (local $vx i32) (local $vy i32) (local $vz i32)
+    (local $step_x i32) (local $step_y i32) (local $step_z i32)
+    (local $t_max_x f64) (local $t_max_y f64) (local $t_max_z f64)
+    (local $t_delta_x f64) (local $t_delta_y f64) (local $t_delta_z f64)
+    (local $steps i32) (local $block i32) (local $face i32)
+    (local $t_cur f64)
+
+    ;; Starting voxel
+    (local.set $vx (i32.trunc_f64_s (f64.floor (local.get $ox))))
+    (local.set $vy (i32.trunc_f64_s (f64.floor (local.get $oy))))
+    (local.set $vz (i32.trunc_f64_s (f64.floor (local.get $oz))))
+
+    ;; Step direction and t_delta for X
+    (if (f64.gt (local.get $dx) (f64.const 0.0))
+      (then
+        (local.set $step_x (i32.const 1))
+        (local.set $t_max_x (f64.div
+          (f64.sub (f64.add (f64.convert_i32_s (local.get $vx)) (f64.const 1.0)) (local.get $ox))
+          (local.get $dx)))
+        (local.set $t_delta_x (f64.div (f64.const 1.0) (local.get $dx))))
+      (else (if (f64.lt (local.get $dx) (f64.const 0.0))
+        (then
+          (local.set $step_x (i32.const -1))
+          (local.set $t_max_x (f64.div
+            (f64.sub (f64.convert_i32_s (local.get $vx)) (local.get $ox))
+            (local.get $dx)))
+          (local.set $t_delta_x (f64.div (f64.const -1.0) (local.get $dx))))
+        (else
+          (local.set $step_x (i32.const 0))
+          (local.set $t_max_x (f64.const 999999.0))
+          (local.set $t_delta_x (f64.const 999999.0))))))
+
+    ;; Step direction and t_delta for Y
+    (if (f64.gt (local.get $dy) (f64.const 0.0))
+      (then
+        (local.set $step_y (i32.const 1))
+        (local.set $t_max_y (f64.div
+          (f64.sub (f64.add (f64.convert_i32_s (local.get $vy)) (f64.const 1.0)) (local.get $oy))
+          (local.get $dy)))
+        (local.set $t_delta_y (f64.div (f64.const 1.0) (local.get $dy))))
+      (else (if (f64.lt (local.get $dy) (f64.const 0.0))
+        (then
+          (local.set $step_y (i32.const -1))
+          (local.set $t_max_y (f64.div
+            (f64.sub (f64.convert_i32_s (local.get $vy)) (local.get $oy))
+            (local.get $dy)))
+          (local.set $t_delta_y (f64.div (f64.const -1.0) (local.get $dy))))
+        (else
+          (local.set $step_y (i32.const 0))
+          (local.set $t_max_y (f64.const 999999.0))
+          (local.set $t_delta_y (f64.const 999999.0))))))
+
+    ;; Step direction and t_delta for Z
+    (if (f64.gt (local.get $dz) (f64.const 0.0))
+      (then
+        (local.set $step_z (i32.const 1))
+        (local.set $t_max_z (f64.div
+          (f64.sub (f64.add (f64.convert_i32_s (local.get $vz)) (f64.const 1.0)) (local.get $oz))
+          (local.get $dz)))
+        (local.set $t_delta_z (f64.div (f64.const 1.0) (local.get $dz))))
+      (else (if (f64.lt (local.get $dz) (f64.const 0.0))
+        (then
+          (local.set $step_z (i32.const -1))
+          (local.set $t_max_z (f64.div
+            (f64.sub (f64.convert_i32_s (local.get $vz)) (local.get $oz))
+            (local.get $dz)))
+          (local.set $t_delta_z (f64.div (f64.const -1.0) (local.get $dz))))
+        (else
+          (local.set $step_z (i32.const 0))
+          (local.set $t_max_z (f64.const 999999.0))
+          (local.set $t_delta_z (f64.const 999999.0))))))
+
+    (local.set $face (i32.const 0))
+    (local.set $t_cur (f64.const 0.0))
+    (local.set $steps (i32.const 0))
+
+    ;; Check starting block
+    (if (i32.and (i32.ge_s (local.get $vz) (i32.const -1)) (i32.le_s (local.get $vz) (i32.const 24)))
+      (then
+        (local.set $block (call $get_block (local.get $vx) (local.get $vy) (local.get $vz)))
+        (if (i32.ne (local.get $block) (i32.const 0))
+          (then
+            (global.set $g_hit_face (i32.const 0))
+            (global.set $g_hit_dist (f64.const 0.0))
+            (return (local.get $block))))))
+
+    ;; Main traversal loop — max 48 steps, view distance ~24 blocks
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $steps) (i32.const 48)))
+
+      ;; Step along smallest t_max axis
+      (if (f64.le (local.get $t_max_x) (local.get $t_max_y))
+        (then
+          (if (f64.le (local.get $t_max_x) (local.get $t_max_z))
+            (then
+              ;; Step X
+              (local.set $t_cur (local.get $t_max_x))
+              (local.set $vx (i32.add (local.get $vx) (local.get $step_x)))
+              (local.set $t_max_x (f64.add (local.get $t_max_x) (local.get $t_delta_x)))
+              ;; face: 1=bright(+X), 2=dim(-X)
+              (if (i32.eq (local.get $step_x) (i32.const 1))
+                (then (local.set $face (i32.const 2)))
+                (else (local.set $face (i32.const 1)))))
+            (else
+              ;; Step Z
+              (local.set $t_cur (local.get $t_max_z))
+              (local.set $vz (i32.add (local.get $vz) (local.get $step_z)))
+              (local.set $t_max_z (f64.add (local.get $t_max_z) (local.get $t_delta_z)))
+              ;; face: 0=top, 3=bottom
+              (if (i32.eq (local.get $step_z) (i32.const 1))
+                (then (local.set $face (i32.const 3)))
+                (else (local.set $face (i32.const 0)))))))
+        (else
+          (if (f64.le (local.get $t_max_y) (local.get $t_max_z))
+            (then
+              ;; Step Y
+              (local.set $t_cur (local.get $t_max_y))
+              (local.set $vy (i32.add (local.get $vy) (local.get $step_y)))
+              (local.set $t_max_y (f64.add (local.get $t_max_y) (local.get $t_delta_y)))
+              ;; face: 1=bright(+Y), 2=dim(-Y)
+              (if (i32.eq (local.get $step_y) (i32.const 1))
+                (then (local.set $face (i32.const 2)))
+                (else (local.set $face (i32.const 1)))))
+            (else
+              ;; Step Z
+              (local.set $t_cur (local.get $t_max_z))
+              (local.set $vz (i32.add (local.get $vz) (local.get $step_z)))
+              (local.set $t_max_z (f64.add (local.get $t_max_z) (local.get $t_delta_z)))
+              (if (i32.eq (local.get $step_z) (i32.const 1))
+                (then (local.set $face (i32.const 3)))
+                (else (local.set $face (i32.const 0))))))))
+
+      ;; Bail if too far or out of Z range
+      (br_if $done (f64.gt (local.get $t_cur) (f64.const 24.0)))
+      (br_if $done (i32.lt_s (local.get $vz) (i32.const -1)))
+      (br_if $done (i32.gt_s (local.get $vz) (i32.const 24)))
+
+      ;; Check block
+      (local.set $block (call $get_block (local.get $vx) (local.get $vy) (local.get $vz)))
+      (if (i32.ne (local.get $block) (i32.const 0))
+        (then
+          (global.set $g_hit_face (local.get $face))
+          (global.set $g_hit_dist (local.get $t_cur))
+          (return (local.get $block))))
+
+      (local.set $steps (i32.add (local.get $steps) (i32.const 1)))
+      (br $lp)))
+
+    ;; No hit
+    (global.set $g_hit_face (i32.const 0))
+    (global.set $g_hit_dist (f64.const 999.0))
+    (i32.const 0)
+  )
+
+  ;; ============================================================
+  ;; FRAME — Per-pixel voxel raytracer
   ;; ============================================================
   (func (export "frame")
-    (local $col i32) (local $tick i32) (local $keys i32)
+    (local $px_col i32) (local $px_row i32) (local $tick i32) (local $keys i32)
     (local $px f64) (local $py f64) (local $pz f64) (local $angle f64)
-    (local $cos_a f64) (local $sin_a f64)
+    (local $cos_a_v f64) (local $sin_a_v f64)
     (local $move_x f64) (local $move_y f64) (local $speed f64)
-    (local $ray_angle f64) (local $ray_dx f64) (local $ray_dy f64)
-    (local $hit_type i32)
-    (local $row i32) (local $color i32) (local $shade i32)
-    (local $wx i32) (local $wy i32) (local $wz i32)
-    (local $horizon i32)
     (local $mouse_btn i32) (local $prev_mouse i32)
     (local $mouse_y i32) (local $look_y i32)
     (local $msg_timer i32) (local $dig_cd i32)
     (local $vz f64) (local $on_ground i32) (local $ground_h i32)
     (local $bob f64) (local $bob_phase f64)
-    (local $tex_u i32) (local $tex_v i32)
-    (local $i i32) (local $m_addr i32) (local $m_active i32)
-    (local $m_type i32) (local $m_wx f64) (local $m_wy f64)
-    (local $dx f64) (local $dy f64) (local $dist f64)
-    (local $screen_x i32) (local $sprite_h i32)
-    (local $sprite_top i32) (local $sprite_bot i32) (local $sx i32)
-    (local $sy i32) (local $sp_color i32) (local $m_anim i32)
-    (local $zbuf_val f64)
-    (local $cx f64) (local $cy f64)
     (local $new_px f64) (local $new_py f64)
     (local $check_x i32) (local $check_y i32) (local $check_h i32)
-    (local $sky_idx i32) (local $frame_ct i32)
-    (local $hit_face i32) (local $sample_z i32)
-    (local $column_top i32) (local $block_scr_top i32) (local $block_scr_bot i32)
-    (local $drawn_to i32)
-    (local $tex_off i32)
-    (local $above_type i32) (local $below_type i32)
-    (local $cur_face i32)
-    (local $bot_drawn_to i32) (local $bot_scr_top i32) (local $bot_scr_bot i32)
-    (local $bot_color i32) (local $bot_sp_color i32) (local $bot_tex_off i32)
-    (local $column_bot i32)
-    ;; DDA locals
-    (local $map_x i32) (local $map_y i32)
-    (local $step_x i32) (local $step_y i32)
-    (local $side_dist_x f64) (local $side_dist_y f64)
-    (local $delta_dist_x f64) (local $delta_dist_y f64)
-    (local $perp_dist f64)
-    (local $side i32)  ;; 0=x side, 1=y side
-    (local $dda_steps i32)
-    (local $wall_x f64)  ;; fractional hit position along wall
-    (local $cos_corr f64) ;; fisheye correction factor
-    (local $t f64)
-    (local $floor_row i32) (local $floor_col i32) (local $floor_c i32)
-    (local $prev_wx i32) (local $prev_wy i32)
-    (local $step_size f64)
+    (local $frame_ct i32)
+    ;; Ray-tracing locals
+    (local $screen_u f64) (local $screen_v f64)
+    (local $ray_dx f64) (local $ray_dy f64) (local $ray_dz f64)
+    (local $fwd_x f64) (local $fwd_y f64) (local $fwd_z f64)
+    (local $right_x f64) (local $right_y f64)
+    (local $up_x f64) (local $up_y f64) (local $up_z f64)
+    (local $pitch f64)
+    (local $cos_pitch f64) (local $sin_pitch f64)
+    (local $hit_type i32) (local $face i32) (local $dist f64)
+    (local $shade i32) (local $color i32)
+    (local $fb_addr i32)
+    (local $sky_idx i32)
+    (local $len f64)
+    ;; Monster locals
+    (local $i i32) (local $m_addr i32) (local $m_active i32)
+    (local $m_type i32) (local $m_wx f64) (local $m_wy f64)
+    (local $dx f64) (local $dy f64) (local $m_dist f64)
 
     (local.set $tick (i32.load (i32.const 12)))
     (local.set $frame_ct (i32.load (i32.const 0)))
@@ -1469,12 +1262,10 @@
     (local.set $bob_phase (f64.load (i32.const 0x10374)))
     (local.set $look_y (i32.load (i32.const 0x103AC)))
 
-    ;; ---- Mouse Y → look up/down (Duke3D y-shearing) ----
+    ;; ---- Mouse Y → look pitch ----
     (local.set $mouse_y (i32.or
       (i32.load8_u (i32.const 0x06))
       (i32.shl (i32.load8_u (i32.const 0x07)) (i32.const 8))))
-    ;; Map mouse Y (0..199) to look offset (-60..60)
-    ;; Center at 100, scale: (mouse_y - 100) * 0.6
     (local.set $look_y (i32.trunc_f64_s (f64.mul
       (f64.sub (f64.convert_i32_s (local.get $mouse_y)) (f64.const 100.0))
       (f64.const -0.6))))
@@ -1492,21 +1283,21 @@
     (if (i32.and (local.get $keys) (i32.const 8))
       (then (local.set $angle (f64.add (local.get $angle) (f64.const 0.04)))))
 
-    (local.set $cos_a (call $cos_a (local.get $angle)))
-    (local.set $sin_a (call $sin_a (local.get $angle)))
+    (local.set $cos_a_v (call $cos_a (local.get $angle)))
+    (local.set $sin_a_v (call $sin_a (local.get $angle)))
 
     (local.set $move_x (f64.const 0.0))
     (local.set $move_y (f64.const 0.0))
     ;; Forward
     (if (i32.and (local.get $keys) (i32.const 1))
       (then
-        (local.set $move_x (f64.add (local.get $move_x) (f64.mul (local.get $cos_a) (local.get $speed))))
-        (local.set $move_y (f64.add (local.get $move_y) (f64.mul (local.get $sin_a) (local.get $speed))))))
+        (local.set $move_x (f64.add (local.get $move_x) (f64.mul (local.get $cos_a_v) (local.get $speed))))
+        (local.set $move_y (f64.add (local.get $move_y) (f64.mul (local.get $sin_a_v) (local.get $speed))))))
     ;; Backward
     (if (i32.and (local.get $keys) (i32.const 2))
       (then
-        (local.set $move_x (f64.sub (local.get $move_x) (f64.mul (local.get $cos_a) (local.get $speed))))
-        (local.set $move_y (f64.sub (local.get $move_y) (f64.mul (local.get $sin_a) (local.get $speed))))))
+        (local.set $move_x (f64.sub (local.get $move_x) (f64.mul (local.get $cos_a_v) (local.get $speed))))
+        (local.set $move_y (f64.sub (local.get $move_y) (f64.mul (local.get $sin_a_v) (local.get $speed))))))
 
     ;; Collision check
     (local.set $new_px (f64.add (local.get $px) (local.get $move_x)))
@@ -1569,519 +1360,167 @@
     (i32.store (i32.const 0x1036C) (local.get $on_ground))
     (f64.store (i32.const 0x10374) (local.get $bob_phase))
 
-    ;; Horizon shifted by look_y (Duke3D y-shearing)
-    (local.set $horizon (i32.add (i32.const 100) (local.get $look_y)))
-
-    ;; ---- Clear: sky gradient ----
-    (local.set $row (i32.const 0))
-    (block $sky_done (loop $sky_lp
-      (br_if $sky_done (i32.ge_u (local.get $row) (i32.const 200)))
-      ;; Sky color based on row relative to horizon
-      (local.set $sky_idx
-        (if (result i32) (i32.lt_s (local.get $row) (local.get $horizon))
-          (then
-            ;; rows above horizon = sky, gradient based on distance from horizon
-            (local.set $i (i32.div_u (i32.mul (i32.sub (local.get $horizon) (local.get $row)) (i32.const 7))
-                                     (i32.add (local.get $horizon) (i32.const 1))))
-            (if (result i32) (i32.gt_s (local.get $i) (i32.const 6))
-              (then (i32.const 1))
-              (else (i32.sub (i32.const 7) (local.get $i)))))
-          (else (i32.const 7))))  ;; below horizon - will be overwritten by terrain
-      (local.set $col (i32.const 0))
-      (block $row_done (loop $row_lp
-        (br_if $row_done (i32.ge_u (local.get $col) (i32.const 320)))
-        (i32.store8
-          (i32.add (i32.const 0x0340) (i32.add (i32.mul (local.get $row) (i32.const 320)) (local.get $col)))
-          (local.get $sky_idx))
-        (local.set $col (i32.add (local.get $col) (i32.const 1)))
-        (br $row_lp)))
-      (local.set $row (i32.add (local.get $row) (i32.const 1)))
-      (br $sky_lp)))
-
-    ;; ---- Clear z-buffer ----
+    ;; ---- Update monsters (AI) ----
     (local.set $i (i32.const 0))
-    (block $zb_done (loop $zb_lp
-      (br_if $zb_done (i32.ge_u (local.get $i) (i32.const 320)))
-      (f64.store (i32.add (i32.const 0x103B0) (i32.mul (local.get $i) (i32.const 8))) (f64.const 999.0))
+    (block $mob_done (loop $mob_lp
+      (br_if $mob_done (i32.ge_u (local.get $i) (i32.const 24)))
+      (local.set $m_addr (i32.add (i32.const 0x10900) (i32.mul (local.get $i) (i32.const 32))))
+      (local.set $m_active (i32.load (local.get $m_addr)))
+      (if (local.get $m_active)
+        (then
+          (local.set $m_wx (f64.load (i32.add (local.get $m_addr) (i32.const 8))))
+          (local.set $m_wy (f64.load (i32.add (local.get $m_addr) (i32.const 16))))
+          (local.set $dx (f64.sub (local.get $px) (local.get $m_wx)))
+          (local.set $dy (f64.sub (local.get $py) (local.get $m_wy)))
+          (local.set $m_dist (f64.sqrt (f64.add (f64.mul (local.get $dx) (local.get $dx))
+                                                 (f64.mul (local.get $dy) (local.get $dy)))))
+          (if (f64.gt (local.get $m_dist) (f64.const 3.0))
+            (then
+              (f64.store (i32.add (local.get $m_addr) (i32.const 8))
+                (f64.add (local.get $m_wx) (f64.mul (f64.div (local.get $dx) (local.get $m_dist)) (f64.const 0.01))))
+              (f64.store (i32.add (local.get $m_addr) (i32.const 16))
+                (f64.add (local.get $m_wy) (f64.mul (f64.div (local.get $dy) (local.get $m_dist)) (f64.const 0.01))))))
+          (i32.store (i32.add (local.get $m_addr) (i32.const 28))
+            (i32.add (i32.load (i32.add (local.get $m_addr) (i32.const 28))) (i32.const 1)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $zb_lp)))
+      (br $mob_lp)))
 
     ;; ============================================================
-    ;; RENDER TERRAIN — DDA raycaster
-    ;; For each column, cast a ray using DDA grid traversal.
-    ;; At each grid cell hit, project all blocks in that column.
-    ;; This ensures we never skip a cell (like Wolf3D DDA) but
-    ;; we handle variable height blocks (like Duke3D/BUILD engine).
+    ;; PER-PIXEL RAYTRACING
     ;; ============================================================
-    (local.set $col (i32.const 0))
-    (block $render_done (loop $render_lp
-      (br_if $render_done (i32.ge_u (local.get $col) (i32.const 320)))
+    ;; Build camera basis vectors from yaw (angle) and pitch (look_y)
+    ;; pitch = look_y * pi/180 * some scale
+    (local.set $pitch (f64.mul (f64.convert_i32_s (local.get $look_y)) (f64.const 0.015)))
 
-      ;; Ray angle for this column (FOV ~60 degrees = 1.0472 rad)
-      (local.set $ray_angle (f64.add (local.get $angle)
-        (f64.mul (f64.div (f64.sub (f64.convert_i32_s (local.get $col)) (f64.const 160.0)) (f64.const 320.0))
-                 (f64.const 1.0472))))
-      (local.set $ray_dx (call $cos_a (local.get $ray_angle)))
-      (local.set $ray_dy (call $sin_a (local.get $ray_angle)))
+    (local.set $cos_pitch (call $cos_a (local.get $pitch)))
+    (local.set $sin_pitch (call $sin_a (local.get $pitch)))
 
-      ;; Fisheye correction: cos(ray_angle - player_angle)
-      (local.set $cos_corr (call $cos_a (f64.sub (local.get $ray_angle) (local.get $angle))))
-      (if (f64.lt (local.get $cos_corr) (f64.const 0.001))
-        (then (local.set $cos_corr (f64.const 0.001))))
+    ;; Forward direction in world space (yaw + pitch)
+    ;; fwd = (cos(yaw)*cos(pitch), sin(yaw)*cos(pitch), sin(pitch))
+    (local.set $fwd_x (f64.mul (local.get $cos_a_v) (local.get $cos_pitch)))
+    (local.set $fwd_y (f64.mul (local.get $sin_a_v) (local.get $cos_pitch)))
+    (local.set $fwd_z (local.get $sin_pitch))
 
-      ;; DDA setup
-      (local.set $map_x (i32.trunc_f64_s (f64.floor (local.get $px))))
-      (local.set $map_y (i32.trunc_f64_s (f64.floor (local.get $py))))
+    ;; Right = (sin(yaw), -cos(yaw), 0) — perpendicular to forward on XY plane
+    (local.set $right_x (local.get $sin_a_v))
+    (local.set $right_y (f64.neg (local.get $cos_a_v)))
 
-      ;; delta_dist = abs(1.0 / ray_d)
-      (local.set $delta_dist_x
-        (if (result f64) (f64.ne (local.get $ray_dx) (f64.const 0.0))
-          (then (f64.div (f64.const 1.0) (f64.abs (local.get $ray_dx))))
-          (else (f64.const 1000000.0))))
-      (local.set $delta_dist_y
-        (if (result f64) (f64.ne (local.get $ray_dy) (f64.const 0.0))
-          (then (f64.div (f64.const 1.0) (f64.abs (local.get $ray_dy))))
-          (else (f64.const 1000000.0))))
+    ;; Up = right × fwd (simplified for our coordinate system)
+    ;; up = (-cos(yaw)*sin(pitch), -sin(yaw)*sin(pitch), cos(pitch))
+    (local.set $up_x (f64.neg (f64.mul (local.get $cos_a_v) (local.get $sin_pitch))))
+    (local.set $up_y (f64.neg (f64.mul (local.get $sin_a_v) (local.get $sin_pitch))))
+    (local.set $up_z (local.get $cos_pitch))
 
-      ;; Step direction and initial side distance
-      (if (f64.lt (local.get $ray_dx) (f64.const 0.0))
-        (then
-          (local.set $step_x (i32.const -1))
-          (local.set $side_dist_x (f64.mul
-            (f64.sub (local.get $px) (f64.convert_i32_s (local.get $map_x)))
-            (local.get $delta_dist_x))))
-        (else
-          (local.set $step_x (i32.const 1))
-          (local.set $side_dist_x (f64.mul
-            (f64.sub (f64.add (f64.convert_i32_s (local.get $map_x)) (f64.const 1.0)) (local.get $px))
-            (local.get $delta_dist_x)))))
+    ;; FOV ~60 degrees → half-plane distance = 1.0 / tan(30°) ≈ 1.732
+    ;; We'll use plane_dist = 1.6 for a nice FOV
 
-      (if (f64.lt (local.get $ray_dy) (f64.const 0.0))
-        (then
-          (local.set $step_y (i32.const -1))
-          (local.set $side_dist_y (f64.mul
-            (f64.sub (local.get $py) (f64.convert_i32_s (local.get $map_y)))
-            (local.get $delta_dist_y))))
-        (else
-          (local.set $step_y (i32.const 1))
-          (local.set $side_dist_y (f64.mul
-            (f64.sub (f64.add (f64.convert_i32_s (local.get $map_y)) (f64.const 1.0)) (local.get $py))
-            (local.get $delta_dist_y)))))
+    (local.set $px_row (i32.const 0))
+    (block $row_done (loop $row_lp
+      (br_if $row_done (i32.ge_s (local.get $px_row) (i32.const 200)))
 
-      (local.set $drawn_to (i32.const 200))
-      (local.set $dda_steps (i32.const 0))
+      ;; screen_v: map row to [-0.625, 0.625] (200/320 = 0.625 aspect)
+      (local.set $screen_v (f64.mul
+        (f64.sub (f64.const 0.5) (f64.div (f64.convert_i32_s (local.get $px_row)) (f64.const 200.0)))
+        (f64.const 1.25)))
 
-      ;; DDA main loop — step through grid cells
-      (block $dda_done (loop $dda_lp
-        (br_if $dda_done (i32.ge_u (local.get $dda_steps) (i32.const 40)))
-        (br_if $dda_done (i32.le_s (local.get $drawn_to) (i32.const 2)))
+      (local.set $px_col (i32.const 0))
+      (block $col_done (loop $col_lp
+        (br_if $col_done (i32.ge_s (local.get $px_col) (i32.const 320)))
 
-        ;; Step to next cell boundary
-        (if (f64.lt (local.get $side_dist_x) (local.get $side_dist_y))
+        ;; screen_u: map col to [-1.0, 1.0]
+        (local.set $screen_u (f64.sub
+          (f64.div (f64.convert_i32_s (local.get $px_col)) (f64.const 160.0))
+          (f64.const 1.0)))
+
+        ;; Ray direction = fwd * 1.6 + right * screen_u + up * screen_v
+        (local.set $ray_dx (f64.add (f64.add
+          (f64.mul (local.get $fwd_x) (f64.const 1.6))
+          (f64.mul (local.get $right_x) (local.get $screen_u)))
+          (f64.mul (local.get $up_x) (local.get $screen_v))))
+        (local.set $ray_dy (f64.add (f64.add
+          (f64.mul (local.get $fwd_y) (f64.const 1.6))
+          (f64.mul (local.get $right_y) (local.get $screen_u)))
+          (f64.mul (local.get $up_y) (local.get $screen_v))))
+        (local.set $ray_dz (f64.add
+          (f64.mul (local.get $fwd_z) (f64.const 1.6))
+          (f64.mul (local.get $up_z) (local.get $screen_v))))
+
+        ;; Normalize ray direction
+        (local.set $len (f64.sqrt (f64.add
+          (f64.add (f64.mul (local.get $ray_dx) (local.get $ray_dx))
+                   (f64.mul (local.get $ray_dy) (local.get $ray_dy)))
+          (f64.mul (local.get $ray_dz) (local.get $ray_dz)))))
+        (if (f64.gt (local.get $len) (f64.const 0.001))
           (then
-            ;; Step in X
-            (local.set $perp_dist (local.get $side_dist_x))
-            (local.set $side_dist_x (f64.add (local.get $side_dist_x) (local.get $delta_dist_x)))
-            (local.set $map_x (i32.add (local.get $map_x) (local.get $step_x)))
-            (local.set $side (i32.const 0)))
-          (else
-            ;; Step in Y
-            (local.set $perp_dist (local.get $side_dist_y))
-            (local.set $side_dist_y (f64.add (local.get $side_dist_y) (local.get $delta_dist_y)))
-            (local.set $map_y (i32.add (local.get $map_y) (local.get $step_y)))
-            (local.set $side (i32.const 1))))
+            (local.set $ray_dx (f64.div (local.get $ray_dx) (local.get $len)))
+            (local.set $ray_dy (f64.div (local.get $ray_dy) (local.get $len)))
+            (local.set $ray_dz (f64.div (local.get $ray_dz) (local.get $len)))))
 
-        ;; Correct distance for fisheye
-        (local.set $dist (f64.mul (local.get $perp_dist) (local.get $cos_corr)))
+        ;; Cast ray
+        (local.set $hit_type (call $cast_ray
+          (local.get $px) (local.get $py)
+          (f64.add (local.get $pz) (local.get $bob))
+          (local.get $ray_dx) (local.get $ray_dy) (local.get $ray_dz)))
 
-        (if (f64.gt (local.get $dist) (f64.const 0.1))
+        (local.set $face (global.get $g_hit_face))
+        (local.set $dist (global.get $g_hit_dist))
+
+        (local.set $fb_addr (i32.add (i32.const 0x0340)
+          (i32.add (i32.mul (local.get $px_row) (i32.const 320)) (local.get $px_col))))
+
+        (if (i32.ne (local.get $hit_type) (i32.const 0))
           (then
-            ;; Determine which face we hit based on DDA side and step direction
-            ;; side=0: X boundary hit → face depends on step_x
-            ;; side=1: Y boundary hit → face depends on step_y
-            ;; face: 1=bright side (facing toward camera), 2=dim side (facing away)
-            (if (i32.eqz (local.get $side))
-              (then
-                ;; X side: bright if ray coming from positive X (step_x=-1)
-                (if (i32.eq (local.get $step_x) (i32.const -1))
-                  (then (local.set $hit_face (i32.const 1)))
-                  (else (local.set $hit_face (i32.const 2))))
-                ;; Wall hit position along Y axis
-                (local.set $wall_x (f64.add (local.get $py) (f64.mul (local.get $perp_dist) (local.get $ray_dy)))))
-              (else
-                ;; Y side
-                (if (i32.eq (local.get $step_y) (i32.const -1))
-                  (then (local.set $hit_face (i32.const 1)))
-                  (else (local.set $hit_face (i32.const 2))))
-                (local.set $wall_x (f64.add (local.get $px) (f64.mul (local.get $perp_dist) (local.get $ray_dx))))))
-
-            ;; Get fractional part of wall hit for texturing
-            (local.set $wall_x (f64.sub (local.get $wall_x) (f64.floor (local.get $wall_x))))
-
             ;; Distance shade
             (local.set $shade (i32.sub (i32.const 7)
-              (i32.trunc_f64_s (f64.div (local.get $dist) (f64.const 4.5)))))
+              (i32.trunc_f64_s (f64.div (local.get $dist) (f64.const 4.0)))))
             (if (i32.lt_s (local.get $shade) (i32.const 1))
               (then (local.set $shade (i32.const 1))))
             (if (i32.gt_s (local.get $shade) (i32.const 7))
               (then (local.set $shade (i32.const 7))))
 
-            ;; Get the highest solid block at this XY
-            (local.set $column_top (call $get_column_top (local.get $map_x) (local.get $map_y)))
+            (local.set $color (call $block_color (local.get $hit_type) (local.get $face) (local.get $shade)))
 
-            ;; Compute bottom of scan range (go deeper than before for floating structures)
-            (local.set $column_bot (i32.sub (local.get $column_top) (i32.const 8)))
-            (if (i32.lt_s (local.get $column_bot) (i32.const 0))
-              (then (local.set $column_bot (i32.const 0))))
+            ;; Water shimmer
+            (if (i32.eq (local.get $hit_type) (i32.const 5))
+              (then
+                (local.set $color (i32.add (i32.const 104)
+                  (i32.and
+                    (i32.add (local.get $px_col)
+                      (i32.add (local.get $px_row)
+                        (i32.shr_u (local.get $tick) (i32.const 4))))
+                    (i32.const 3))))))
 
-            ;; Draw blocks from top down in this column
-            ;; Also track bottom-drawn-to for rendering bottom faces of floating blocks
-            (local.set $sample_z (local.get $column_top))
-            (local.set $bot_drawn_to (i32.const 0))
-            (block $blk_done (loop $blk_lp
-              (br_if $blk_done (i32.lt_s (local.get $sample_z) (local.get $column_bot)))
-              (br_if $blk_done (i32.and
-                (i32.le_s (local.get $drawn_to) (i32.const 2))
-                (i32.ge_s (local.get $bot_drawn_to) (i32.const 198))))
+            ;; Distance fog blend
+            (if (f64.gt (local.get $dist) (f64.const 18.0))
+              (then
+                (local.set $color (i32.add (i32.const 80)
+                  (i32.trunc_f64_s (f64.mul (f64.sub (local.get $dist) (f64.const 18.0)) (f64.const 2.0)))))
+                (if (i32.gt_s (local.get $color) (i32.const 95))
+                  (then (local.set $color (i32.const 95))))))
 
-              (local.set $hit_type (call $get_block (local.get $map_x) (local.get $map_y) (local.get $sample_z)))
-              (if (i32.ne (local.get $hit_type) (i32.const 0))
-                (then
-                  ;; Project this block's top and bottom screen Y
-                  ;; screen_y = horizon - (world_z - eye_z) * projection_scale / perp_dist
-                  ;; projection_scale = 200.0 (fills screen height when 1 block at distance 1)
-                  (local.set $block_scr_top (i32.sub (local.get $horizon)
-                    (i32.trunc_f64_s (f64.div
-                      (f64.mul
-                        (f64.sub (f64.add (f64.convert_i32_s (local.get $sample_z)) (f64.const 1.0))
-                                 (f64.add (local.get $pz) (local.get $bob)))
-                        (f64.const 200.0))
-                      (local.get $perp_dist)))))
-                  (local.set $block_scr_bot (i32.sub (local.get $horizon)
-                    (i32.trunc_f64_s (f64.div
-                      (f64.mul
-                        (f64.sub (f64.convert_i32_s (local.get $sample_z))
-                                 (f64.add (local.get $pz) (local.get $bob)))
-                        (f64.const 200.0))
-                      (local.get $perp_dist)))))
+            (i32.store8 (local.get $fb_addr) (local.get $color)))
+          (else
+            ;; Sky: gradient based on ray_dz
+            ;; dz > 0 → looking up → sky, dz < 0 → looking down → dark
+            (if (f64.gt (local.get $ray_dz) (f64.const 0.0))
+              (then
+                ;; Map dz (0..1) to sky gradient (7..1)
+                (local.set $sky_idx (i32.sub (i32.const 7)
+                  (i32.trunc_f64_s (f64.mul (local.get $ray_dz) (f64.const 8.0)))))
+                (if (i32.lt_s (local.get $sky_idx) (i32.const 1))
+                  (then (local.set $sky_idx (i32.const 1))))
+                (if (i32.gt_s (local.get $sky_idx) (i32.const 7))
+                  (then (local.set $sky_idx (i32.const 7))))
+                (i32.store8 (local.get $fb_addr) (local.get $sky_idx)))
+              (else
+                ;; Below horizon fog
+                (i32.store8 (local.get $fb_addr) (i32.const 87))))))
 
-                  ;; Determine face: check if block above is air → top face
-                  ;; Check if block above is air for top face assignment
-                  (local.set $above_type (call $get_block (local.get $map_x) (local.get $map_y) (i32.add (local.get $sample_z) (i32.const 1))))
-                  ;; Check if block below is air for bottom face
-                  (local.set $below_type (call $get_block (local.get $map_x) (local.get $map_y) (i32.sub (local.get $sample_z) (i32.const 1))))
+        (local.set $px_col (i32.add (local.get $px_col) (i32.const 1)))
+        (br $col_lp)))
 
-                  ;; Decide face for coloring: top face if air above, else wall face
-                  (if (i32.eqz (local.get $above_type))
-                    (then (local.set $cur_face (i32.const 0)))  ;; top face
-                    (else (local.set $cur_face (local.get $hit_face))))  ;; wall face
-
-                  ;; === RENDER TOP PORTION (wall/top face — drawn top-down) ===
-                  ;; Only draw if extends above what's already drawn
-                  (if (i32.lt_s (local.get $block_scr_top) (local.get $drawn_to))
-                    (then
-                      (local.set $bot_scr_top (local.get $block_scr_top))
-                      (local.set $bot_scr_bot (local.get $block_scr_bot))
-                      (if (i32.lt_s (local.get $bot_scr_top) (i32.const 0))
-                        (then (local.set $bot_scr_top (i32.const 0))))
-                      (if (i32.gt_s (local.get $bot_scr_bot) (local.get $drawn_to))
-                        (then (local.set $bot_scr_bot (local.get $drawn_to))))
-                      (if (i32.gt_s (local.get $bot_scr_bot) (i32.const 200))
-                        (then (local.set $bot_scr_bot (i32.const 200))))
-
-                      ;; Color based on face
-                      (local.set $color (call $block_color (local.get $hit_type) (local.get $cur_face) (local.get $shade)))
-
-                      ;; Distance fog
-                      (if (f64.gt (local.get $dist) (f64.const 22.0))
-                        (then
-                          (local.set $color (i32.add (i32.const 80)
-                            (i32.trunc_f64_s (f64.mul (f64.sub (local.get $dist) (f64.const 22.0)) (f64.const 0.8)))))
-                          (if (i32.gt_s (local.get $color) (i32.const 95))
-                            (then (local.set $color (i32.const 95))))))
-
-                      ;; Draw pixels with texturing
-                      (local.set $row (local.get $bot_scr_top))
-                      (block $stripe_done (loop $stripe_lp
-                        (br_if $stripe_done (i32.ge_s (local.get $row) (local.get $bot_scr_bot)))
-                        (if (i32.and (i32.ge_s (local.get $row) (i32.const 0))
-                                     (i32.lt_s (local.get $row) (i32.const 200)))
-                          (then
-                            ;; Texture U from wall hit, V from vertical position
-                            (local.set $tex_u (i32.and
-                              (i32.trunc_f64_s (f64.mul (local.get $wall_x) (f64.const 8.0)))
-                              (i32.const 7)))
-                            (local.set $tex_v (i32.and
-                              (i32.div_u
-                                (i32.mul (i32.sub (local.get $row) (local.get $bot_scr_top)) (i32.const 8))
-                                (i32.add (i32.const 1) (i32.sub (local.get $bot_scr_bot) (local.get $bot_scr_top))))
-                              (i32.const 7)))
-
-                            ;; Apply texture pattern
-                            (local.set $sp_color (local.get $color))
-                            (if (i32.and (i32.ge_s (local.get $sp_color) (i32.const 16))
-                                         (i32.lt_s (local.get $sp_color) (i32.const 80)))
-                              (then
-                                (local.set $tex_off (call $block_texture (local.get $hit_type) (local.get $tex_u) (local.get $tex_v)
-                                  (local.get $cur_face)))
-                                (local.set $sp_color (i32.add (local.get $sp_color) (local.get $tex_off)))
-                                ;; Clamp within block palette
-                                (if (i32.lt_s (local.get $sp_color)
-                                      (i32.add (i32.const 8) (i32.mul (local.get $hit_type) (i32.const 8))))
-                                  (then (local.set $sp_color
-                                    (i32.add (i32.const 8) (i32.mul (local.get $hit_type) (i32.const 8))))))
-                                (if (i32.gt_s (local.get $sp_color)
-                                      (i32.add (i32.const 15) (i32.mul (local.get $hit_type) (i32.const 8))))
-                                  (then (local.set $sp_color
-                                    (i32.add (i32.const 15) (i32.mul (local.get $hit_type) (i32.const 8))))))))
-
-                            ;; Water shimmer
-                            (if (i32.eq (local.get $hit_type) (i32.const 5))
-                              (then
-                                (local.set $sp_color (i32.add (i32.const 104)
-                                  (i32.and
-                                    (i32.add (local.get $col)
-                                      (i32.add (local.get $row)
-                                        (i32.shr_u (local.get $tick) (i32.const 4))))
-                                    (i32.const 3))))))
-
-                            (i32.store8
-                              (i32.add (i32.const 0x0340) (i32.add (i32.mul (local.get $row) (i32.const 320)) (local.get $col)))
-                              (local.get $sp_color))))
-                        (local.set $row (i32.add (local.get $row) (i32.const 1)))
-                        (br $stripe_lp)))
-
-                      ;; Update drawn_to
-                      (local.set $drawn_to (local.get $bot_scr_top))
-
-                      ;; Store z distance for sprite occlusion
-                      (if (f64.lt (local.get $perp_dist)
-                            (f64.load (i32.add (i32.const 0x103B0) (i32.mul (local.get $col) (i32.const 8)))))
-                        (then
-                          (f64.store (i32.add (i32.const 0x103B0) (i32.mul (local.get $col) (i32.const 8))) (local.get $perp_dist))))
-                    ))
-
-                  ;; === RENDER BOTTOM FACE of floating blocks ===
-                  ;; If block below is air, render the bottom face (visible from below)
-                  (if (i32.and (i32.eqz (local.get $below_type))
-                               (i32.gt_s (local.get $sample_z) (i32.const 0)))
-                    (then
-                      ;; Bottom face is drawn from block_scr_bot downward
-                      ;; Only render if block_scr_bot is within visible range and below bot_drawn_to
-                      (if (i32.and (i32.gt_s (local.get $block_scr_bot) (local.get $bot_drawn_to))
-                                   (i32.lt_s (local.get $block_scr_bot) (i32.const 200)))
-                        (then
-                          ;; Compute bottom face color (face=3 = bottom, darker)
-                          (local.set $bot_color (call $block_color (local.get $hit_type) (i32.const 3) (local.get $shade)))
-
-                          ;; Distance fog for bottom face
-                          (if (f64.gt (local.get $dist) (f64.const 22.0))
-                            (then
-                              (local.set $bot_color (i32.add (i32.const 80)
-                                (i32.trunc_f64_s (f64.mul (f64.sub (local.get $dist) (f64.const 22.0)) (f64.const 0.8)))))
-                              (if (i32.gt_s (local.get $bot_color) (i32.const 95))
-                                (then (local.set $bot_color (i32.const 95))))))
-
-                          ;; Find where bottom face ends: next solid block's top or screen bottom
-                          (local.set $bot_scr_top (local.get $block_scr_bot))
-                          (if (i32.lt_s (local.get $bot_scr_top) (local.get $bot_drawn_to))
-                            (then (local.set $bot_scr_top (local.get $bot_drawn_to))))
-                          (local.set $bot_scr_bot (i32.add (local.get $block_scr_bot)
-                            (i32.div_s (i32.sub (local.get $block_scr_bot) (local.get $block_scr_top)) (i32.const 3))))
-                          (if (i32.gt_s (local.get $bot_scr_bot) (i32.const 200))
-                            (then (local.set $bot_scr_bot (i32.const 200))))
-
-                          ;; Draw bottom face pixels
-                          (if (i32.gt_s (local.get $bot_scr_bot) (local.get $bot_scr_top))
-                            (then
-                              (local.set $row (local.get $bot_scr_top))
-                              (block $bstripe_done (loop $bstripe_lp
-                                (br_if $bstripe_done (i32.ge_s (local.get $row) (local.get $bot_scr_bot)))
-                                (if (i32.and (i32.ge_s (local.get $row) (i32.const 0))
-                                             (i32.lt_s (local.get $row) (i32.const 200)))
-                                  (then
-                                    (local.set $bot_sp_color (local.get $bot_color))
-                                    ;; Simple texture for bottom face
-                                    (if (i32.and (i32.ge_s (local.get $bot_sp_color) (i32.const 16))
-                                                 (i32.lt_s (local.get $bot_sp_color) (i32.const 80)))
-                                      (then
-                                        (local.set $tex_u (i32.and
-                                          (i32.trunc_f64_s (f64.mul (local.get $wall_x) (f64.const 8.0)))
-                                          (i32.const 7)))
-                                        (local.set $tex_v (i32.and
-                                          (i32.div_u
-                                            (i32.mul (i32.sub (local.get $row) (local.get $bot_scr_top)) (i32.const 8))
-                                            (i32.add (i32.const 1) (i32.sub (local.get $bot_scr_bot) (local.get $bot_scr_top))))
-                                          (i32.const 7)))
-                                        (local.set $bot_tex_off (call $block_texture (local.get $hit_type) (local.get $tex_u) (local.get $tex_v)
-                                          (i32.const 3)))
-                                        (local.set $bot_sp_color (i32.add (local.get $bot_sp_color) (local.get $bot_tex_off)))
-                                        (if (i32.lt_s (local.get $bot_sp_color)
-                                              (i32.add (i32.const 8) (i32.mul (local.get $hit_type) (i32.const 8))))
-                                          (then (local.set $bot_sp_color
-                                            (i32.add (i32.const 8) (i32.mul (local.get $hit_type) (i32.const 8))))))
-                                        (if (i32.gt_s (local.get $bot_sp_color)
-                                              (i32.add (i32.const 15) (i32.mul (local.get $hit_type) (i32.const 8))))
-                                          (then (local.set $bot_sp_color
-                                            (i32.add (i32.const 15) (i32.mul (local.get $hit_type) (i32.const 8))))))))
-
-                                    (i32.store8
-                                      (i32.add (i32.const 0x0340) (i32.add (i32.mul (local.get $row) (i32.const 320)) (local.get $col)))
-                                      (local.get $bot_sp_color))))
-                                (local.set $row (i32.add (local.get $row) (i32.const 1)))
-                                (br $bstripe_lp)))
-
-                              ;; Update bot_drawn_to so we don't double-draw
-                              (local.set $bot_drawn_to (local.get $bot_scr_bot))
-                            ))
-                        ))
-                    ))
-                ))
-
-              (local.set $sample_z (i32.sub (local.get $sample_z) (i32.const 1)))
-              (br_if $blk_done (i32.lt_s (local.get $sample_z) (i32.sub (local.get $column_top) (i32.const 8))))
-              (br $blk_lp)))
-          ))
-
-        (local.set $dda_steps (i32.add (local.get $dda_steps) (i32.const 1)))
-        (br $dda_lp)))
-
-      (local.set $col (i32.add (local.get $col) (i32.const 1)))
-      (br $render_lp)))
-
-    ;; ---- Render billboard sprites (monsters) ----
-    (local.set $i (i32.const 0))
-    (block $mob_done (loop $mob_lp
-      (br_if $mob_done (i32.ge_u (local.get $i) (i32.const 24)))
-      (local.set $m_addr (i32.add (i32.const 0x10E00) (i32.mul (local.get $i) (i32.const 32))))
-      (local.set $m_active (i32.load (local.get $m_addr)))
-      (if (local.get $m_active)
-        (then
-          (local.set $m_type (i32.load (i32.add (local.get $m_addr) (i32.const 4))))
-          (local.set $m_wx (f64.load (i32.add (local.get $m_addr) (i32.const 8))))
-          (local.set $m_wy (f64.load (i32.add (local.get $m_addr) (i32.const 16))))
-          (local.set $m_anim (i32.load (i32.add (local.get $m_addr) (i32.const 28))))
-
-          ;; AI: walk toward player
-          (local.set $dx (f64.sub (local.get $px) (local.get $m_wx)))
-          (local.set $dy (f64.sub (local.get $py) (local.get $m_wy)))
-          (local.set $dist (f64.sqrt (f64.add (f64.mul (local.get $dx) (local.get $dx))
-                                               (f64.mul (local.get $dy) (local.get $dy)))))
-          (if (f64.gt (local.get $dist) (f64.const 3.0))
-            (then
-              (local.set $m_wx (f64.add (local.get $m_wx)
-                (f64.mul (f64.div (local.get $dx) (local.get $dist)) (f64.const 0.01))))
-              (local.set $m_wy (f64.add (local.get $m_wy)
-                (f64.mul (f64.div (local.get $dy) (local.get $dist)) (f64.const 0.01))))
-              (f64.store (i32.add (local.get $m_addr) (i32.const 8)) (local.get $m_wx))
-              (f64.store (i32.add (local.get $m_addr) (i32.const 16)) (local.get $m_wy))))
-
-          (i32.store (i32.add (local.get $m_addr) (i32.const 28))
-            (i32.add (local.get $m_anim) (i32.const 1)))
-
-          ;; Screen projection — using view-space transform
-          (local.set $dx (f64.sub (local.get $m_wx) (local.get $px)))
-          (local.set $dy (f64.sub (local.get $m_wy) (local.get $py)))
-          ;; Transform to camera space: cx = forward component, cy = lateral component
-          (local.set $cx (f64.add (f64.mul (local.get $dx) (local.get $cos_a))
-                                  (f64.mul (local.get $dy) (local.get $sin_a))))
-          (local.set $cy (f64.add (f64.mul (f64.neg (local.get $dx)) (local.get $sin_a))
-                                  (f64.mul (local.get $dy) (local.get $cos_a))))
-          (if (f64.gt (local.get $cx) (f64.const 0.3))
-            (then
-              (local.set $screen_x (i32.add (i32.const 160)
-                (i32.trunc_f64_s (f64.div (f64.mul (local.get $cy) (f64.const 320.0)) (local.get $cx)))))
-              (local.set $sprite_h (i32.trunc_f64_s (f64.div (f64.const 120.0) (local.get $cx))))
-              (if (i32.gt_s (local.get $sprite_h) (i32.const 120))
-                (then (local.set $sprite_h (i32.const 120))))
-
-              (local.set $ground_h (call $terrain_height
-                (i32.trunc_f64_s (f64.floor (local.get $m_wx)))
-                (i32.trunc_f64_s (f64.floor (local.get $m_wy)))))
-
-              ;; Sprite bottom: project the monster's feet position
-              (local.set $sprite_bot (i32.sub (local.get $horizon)
-                (i32.trunc_f64_s (f64.div
-                  (f64.mul (f64.sub (f64.add (f64.convert_i32_s (local.get $ground_h)) (f64.const 1.0))
-                    (f64.add (local.get $pz) (local.get $bob)))
-                    (f64.const 200.0))
-                  (local.get $cx)))))
-              (local.set $sprite_top (i32.sub (local.get $sprite_bot) (local.get $sprite_h)))
-
-              ;; Color base by type
-              (local.set $sp_color (i32.add
-                (select (i32.const 128) (select (i32.const 144) (i32.const 160)
-                  (i32.eq (local.get $m_type) (i32.const 1)))
-                  (i32.eqz (local.get $m_type)))
-                (i32.const 0)))
-
-              ;; Draw sprite columns
-              (local.set $sx (i32.sub (local.get $screen_x) (i32.shr_s (local.get $sprite_h) (i32.const 1))))
-              (local.set $col (i32.const 0))
-              (block $sp_done (loop $sp_lp
-                (br_if $sp_done (i32.ge_s (local.get $col) (local.get $sprite_h)))
-                (local.set $check_x (i32.add (local.get $sx) (local.get $col)))
-                (if (i32.and (i32.ge_s (local.get $check_x) (i32.const 0))
-                             (i32.lt_s (local.get $check_x) (i32.const 320)))
-                  (then
-                    (local.set $zbuf_val (f64.load (i32.add (i32.const 0x103B0)
-                      (i32.mul (local.get $check_x) (i32.const 8)))))
-                    (if (f64.lt (local.get $cx) (local.get $zbuf_val))
-                      (then
-                        (local.set $tex_u (i32.div_u (i32.mul (local.get $col) (i32.const 8)) (local.get $sprite_h)))
-                        (local.set $sy (local.get $sprite_top))
-                        (block $spy_done (loop $spy_lp
-                          (br_if $spy_done (i32.ge_s (local.get $sy) (local.get $sprite_bot)))
-                          (if (i32.and (i32.ge_s (local.get $sy) (i32.const 0))
-                                       (i32.lt_s (local.get $sy) (i32.const 200)))
-                            (then
-                              (local.set $tex_v (i32.div_u
-                                (i32.mul (i32.sub (local.get $sy) (local.get $sprite_top)) (i32.const 8))
-                                (i32.add (i32.const 1) (i32.sub (local.get $sprite_bot) (local.get $sprite_top)))))
-                              (local.set $color (i32.const 0))
-                              ;; Head
-                              (if (i32.and (i32.lt_u (local.get $tex_v) (i32.const 3))
-                                           (i32.and (i32.ge_u (local.get $tex_u) (i32.const 2))
-                                                    (i32.lt_u (local.get $tex_u) (i32.const 6))))
-                                (then
-                                  (local.set $color (i32.add (local.get $sp_color) (i32.const 10)))
-                                  ;; Eyes
-                                  (if (i32.and (i32.eq (local.get $tex_v) (i32.const 1))
-                                               (i32.or (i32.eq (local.get $tex_u) (i32.const 3))
-                                                       (i32.eq (local.get $tex_u) (i32.const 4))))
-                                    (then (local.set $color (i32.add (local.get $sp_color) (i32.const 2)))))))
-                              ;; Body
-                              (if (i32.and (i32.and (i32.ge_u (local.get $tex_v) (i32.const 3))
-                                                    (i32.lt_u (local.get $tex_v) (i32.const 6)))
-                                           (i32.and (i32.ge_u (local.get $tex_u) (i32.const 1))
-                                                    (i32.lt_u (local.get $tex_u) (i32.const 7))))
-                                (then (local.set $color (i32.add (local.get $sp_color) (i32.const 8)))))
-                              ;; Legs
-                              (if (i32.ge_u (local.get $tex_v) (i32.const 6))
-                                (then
-                                  (if (i32.or
-                                        (i32.and (i32.ge_u (local.get $tex_u) (i32.const 2))
-                                                 (i32.lt_u (local.get $tex_u) (i32.const 4)))
-                                        (i32.and (i32.ge_u (local.get $tex_u) (i32.const 4))
-                                                 (i32.lt_u (local.get $tex_u) (i32.const 6))))
-                                    (then (local.set $color (i32.add (local.get $sp_color) (i32.const 6)))))))
-                              (if (local.get $color)
-                                (then
-                                  ;; Distance fade
-                                  (if (f64.gt (local.get $cx) (f64.const 15.0))
-                                    (then (local.set $color (i32.sub (local.get $color) (i32.const 3)))
-                                      (if (i32.lt_s (local.get $color) (local.get $sp_color))
-                                        (then (local.set $color (local.get $sp_color))))))
-                                  (i32.store8
-                                    (i32.add (i32.const 0x0340)
-                                      (i32.add (i32.mul (local.get $sy) (i32.const 320)) (local.get $check_x)))
-                                    (local.get $color))))))
-                          (local.set $sy (i32.add (local.get $sy) (i32.const 1)))
-                          (br $spy_lp)))))))
-                (local.set $col (i32.add (local.get $col) (i32.const 1)))
-                (br $sp_lp)))))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $mob_lp)))
+      (local.set $px_row (i32.add (local.get $px_row) (i32.const 1)))
+      (br $row_lp)))
 
     ;; ---- Crosshair ----
     (call $put_pixel (i32.const 160) (i32.const 98) (i32.const 176))
@@ -2114,7 +1553,7 @@
     ;; ---- Title (first 180 frames) ----
     (if (i32.lt_u (local.get $frame_ct) (i32.const 180))
       (then
-        (call $draw_str (i32.const 0x19000) (i32.const 115) (i32.const 30) (i32.const 180))
+        (call $draw_str (i32.const 0x19000) (i32.const 105) (i32.const 30) (i32.const 180))
         (call $draw_str (i32.const 0x19010) (i32.const 70) (i32.const 180) (i32.const 245))
         (call $draw_str (i32.const 0x19030) (i32.const 60) (i32.const 190) (i32.const 245))))
 
@@ -2127,13 +1566,20 @@
 
   ;; ---- Dig or place block ----
   (func $dig_or_place (param $px f64) (param $py f64) (param $pz f64) (param $angle f64) (param $place_mode i32)
-    (local $t f64) (local $cx f64) (local $cy f64)
+    (local $t f64) (local $cx f64) (local $cy f64) (local $cz f64)
     (local $wx i32) (local $wy i32) (local $wz i32)
-    (local $ground_h i32) (local $block i32)
-    (local $ray_dx f64) (local $ray_dy f64)
+    (local $block i32)
+    (local $ray_dx f64) (local $ray_dy f64) (local $ray_dz f64)
+    (local $look_y i32) (local $pitch f64)
+    (local $cos_pitch f64)
 
-    (local.set $ray_dx (call $cos_a (local.get $angle)))
-    (local.set $ray_dy (call $sin_a (local.get $angle)))
+    ;; Construct forward ray with pitch
+    (local.set $look_y (i32.load (i32.const 0x103AC)))
+    (local.set $pitch (f64.mul (f64.convert_i32_s (local.get $look_y)) (f64.const 0.015)))
+    (local.set $cos_pitch (call $cos_a (local.get $pitch)))
+    (local.set $ray_dx (f64.mul (call $cos_a (local.get $angle)) (local.get $cos_pitch)))
+    (local.set $ray_dy (f64.mul (call $sin_a (local.get $angle)) (local.get $cos_pitch)))
+    (local.set $ray_dz (call $sin_a (local.get $pitch)))
 
     (local.set $t (f64.const 0.5))
     (block $done (loop $lp
@@ -2141,18 +1587,25 @@
 
       (local.set $cx (f64.add (local.get $px) (f64.mul (local.get $ray_dx) (local.get $t))))
       (local.set $cy (f64.add (local.get $py) (f64.mul (local.get $ray_dy) (local.get $t))))
+      (local.set $cz (f64.add (local.get $pz) (f64.mul (local.get $ray_dz) (local.get $t))))
       (local.set $wx (i32.trunc_f64_s (f64.floor (local.get $cx))))
       (local.set $wy (i32.trunc_f64_s (f64.floor (local.get $cy))))
-      (local.set $ground_h (call $terrain_height (local.get $wx) (local.get $wy)))
-      (local.set $wz (local.get $ground_h))
+      (local.set $wz (i32.trunc_f64_s (f64.floor (local.get $cz))))
       (local.set $block (call $get_block (local.get $wx) (local.get $wy) (local.get $wz)))
 
       (if (i32.ne (local.get $block) (i32.const 0))
         (then
           (if (local.get $place_mode)
             (then
-              (call $set_block (local.get $wx) (local.get $wy)
-                (i32.add (local.get $wz) (i32.const 1)) (i32.const 2))
+              ;; Place block: step back slightly and place there
+              (local.set $cx (f64.sub (local.get $cx) (f64.mul (local.get $ray_dx) (f64.const 0.3))))
+              (local.set $cy (f64.sub (local.get $cy) (f64.mul (local.get $ray_dy) (f64.const 0.3))))
+              (local.set $cz (f64.sub (local.get $cz) (f64.mul (local.get $ray_dz) (f64.const 0.3))))
+              (call $set_block
+                (i32.trunc_f64_s (f64.floor (local.get $cx)))
+                (i32.trunc_f64_s (f64.floor (local.get $cy)))
+                (i32.trunc_f64_s (f64.floor (local.get $cz)))
+                (i32.const 2))
               (call $note (i32.const 1) (i32.const 300) (i32.const 60) (i32.const 120)))
             (else
               (call $set_block (local.get $wx) (local.get $wy) (local.get $wz) (i32.const 0))
