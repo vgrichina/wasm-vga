@@ -30,13 +30,13 @@
   ;;     +16: dig_cooldown (i32)
   ;;     +20: prev_mouse (i32) - previous mouse button state
   ;;     +24: selected_block (i32) - block type to place
-  ;;   0x103B0  zbuffer (320 * 4 = 1280 bytes)
-  ;;   0x10890  Monster array (32 monsters * 32 bytes = 1024)
+  ;;   0x103B0  zbuffer (320 * 8 = 2560 bytes) → ends at 0x10DB0
+  ;;   0x10E00  Monster array (32 monsters * 32 bytes = 1024) → ends at 0x11200
   ;;     per monster: active(i32), type(i32), wx(f64), wy(f64), hp(i32), anim(i32), pad
-  ;;   0x10C90  Modification table (max ~2048 entries * 16 bytes = 32768)
+  ;;   0x11200  Modification table (max ~2048 entries * 16 bytes = 32768) → ends at 0x19200
   ;;     per mod: chunk_x(i32), chunk_y(i32), local_idx(i32), block_type(i32)
-  ;;   0x18C90  Font data (reuse from other demos)
-  ;;   0x19000  Scratch/temp
+  ;;   0x19200  Font data (reuse from other demos)
+  ;;   0x19600  Scratch/temp
   ;; ============================================================
 
   ;; Constants
@@ -57,37 +57,85 @@
 
   ;; ---- Hash function for procedural terrain ----
   ;; Returns a deterministic pseudo-random value for world coords
+  ;; Uses constant seed mixing so hash2d(0,0) != 0
   (func $hash2d (param $x i32) (param $y i32) (result i32)
     (local $h i32)
-    (local.set $h (i32.xor (i32.mul (local.get $x) (i32.const 374761393))
-                           (i32.mul (local.get $y) (i32.const 668265263))))
+    ;; Start with a nonzero seed to prevent hash(0,0)=0
+    (local.set $h (i32.const 0x27d4eb2d))
+    (local.set $h (i32.xor (local.get $h) (i32.mul (local.get $x) (i32.const 374761393))))
+    (local.set $h (i32.xor (local.get $h) (i32.mul (local.get $y) (i32.const 668265263))))
     (local.set $h (i32.xor (local.get $h) (i32.shr_u (local.get $h) (i32.const 13))))
     (local.set $h (i32.mul (local.get $h) (i32.const 1274126177)))
     (local.set $h (i32.xor (local.get $h) (i32.shr_u (local.get $h) (i32.const 16))))
+    (local.set $h (i32.mul (local.get $h) (i32.const 2654435761)))
+    (local.set $h (i32.xor (local.get $h) (i32.shr_u (local.get $h) (i32.const 13))))
     (local.get $h)
   )
 
+  ;; ---- Smooth noise interpolation helper ----
+  ;; Returns 0-255 smoothed noise value at (wx, wy) with given period
+  (func $smooth_hash (param $wx i32) (param $wy i32) (param $period i32) (result i32)
+    (local $gx i32) (local $gy i32)
+    (local $fx i32) (local $fy i32)
+    (local $h00 i32) (local $h10 i32) (local $h01 i32) (local $h11 i32)
+    (local $top i32) (local $bot i32) (local $result i32)
+    ;; Grid coords
+    (local.set $gx (i32.div_s (local.get $wx) (local.get $period)))
+    ;; Fix negative division: if wx < 0 and wx not divisible, subtract 1
+    (if (i32.and (i32.lt_s (local.get $wx) (i32.const 0))
+                 (i32.ne (i32.mul (local.get $gx) (local.get $period)) (local.get $wx)))
+      (then (local.set $gx (i32.sub (local.get $gx) (i32.const 1)))))
+    (local.set $gy (i32.div_s (local.get $wy) (local.get $period)))
+    (if (i32.and (i32.lt_s (local.get $wy) (i32.const 0))
+                 (i32.ne (i32.mul (local.get $gy) (local.get $period)) (local.get $wy)))
+      (then (local.set $gy (i32.sub (local.get $gy) (i32.const 1)))))
+    ;; Fractional part (0 to period-1)
+    (local.set $fx (i32.sub (local.get $wx) (i32.mul (local.get $gx) (local.get $period))))
+    (local.set $fy (i32.sub (local.get $wy) (i32.mul (local.get $gy) (local.get $period))))
+    ;; Four corner hashes
+    (local.set $h00 (i32.and (call $hash2d (local.get $gx) (local.get $gy)) (i32.const 255)))
+    (local.set $h10 (i32.and (call $hash2d (i32.add (local.get $gx) (i32.const 1)) (local.get $gy)) (i32.const 255)))
+    (local.set $h01 (i32.and (call $hash2d (local.get $gx) (i32.add (local.get $gy) (i32.const 1))) (i32.const 255)))
+    (local.set $h11 (i32.and (call $hash2d (i32.add (local.get $gx) (i32.const 1)) (i32.add (local.get $gy) (i32.const 1))) (i32.const 255)))
+    ;; Bilinear interpolation (integer math, scale by period)
+    (local.set $top (i32.div_u
+      (i32.add (i32.mul (local.get $h00) (i32.sub (local.get $period) (local.get $fx)))
+               (i32.mul (local.get $h10) (local.get $fx)))
+      (local.get $period)))
+    (local.set $bot (i32.div_u
+      (i32.add (i32.mul (local.get $h01) (i32.sub (local.get $period) (local.get $fx)))
+               (i32.mul (local.get $h11) (local.get $fx)))
+      (local.get $period)))
+    (local.set $result (i32.div_u
+      (i32.add (i32.mul (local.get $top) (i32.sub (local.get $period) (local.get $fy)))
+               (i32.mul (local.get $bot) (local.get $fy)))
+      (local.get $period)))
+    (local.get $result)
+  )
+
   ;; ---- Noise-like height function for world coords ----
-  ;; Returns terrain height 0-12 for a given (wx, wy) world block position
+  ;; Returns terrain height 1-12 for a given (wx, wy) world block position
+  ;; Uses smoothed multi-octave noise for rolling hills
   (func $terrain_height (param $wx i32) (param $wy i32) (result i32)
     (local $h1 i32) (local $h2 i32) (local $h3 i32) (local $result i32)
-    ;; Multi-octave hash noise
-    ;; Octave 1: large scale hills (sample every 16 blocks)
-    (local.set $h1 (i32.and
-      (call $hash2d (i32.shr_s (local.get $wx) (i32.const 4)) (i32.shr_s (local.get $wy) (i32.const 4)))
-      (i32.const 7)))
-    ;; Octave 2: medium detail (every 4 blocks)
-    (local.set $h2 (i32.and
-      (call $hash2d (i32.add (i32.shr_s (local.get $wx) (i32.const 2)) (i32.const 1000))
-                    (i32.add (i32.shr_s (local.get $wy) (i32.const 2)) (i32.const 2000)))
-      (i32.const 3)))
-    ;; Octave 3: fine detail (every block)
+    ;; Octave 1: large scale rolling hills (period=16 blocks, smoothed)
+    ;; Returns 0-255, we want 0-7
+    (local.set $h1 (i32.shr_u (call $smooth_hash (local.get $wx) (local.get $wy) (i32.const 16)) (i32.const 5)))
+    ;; Octave 2: medium bumps (period=6 blocks, smoothed)
+    ;; Returns 0-255, we want 0-3
+    (local.set $h2 (i32.shr_u
+      (call $smooth_hash
+        (i32.add (local.get $wx) (i32.const 1000))
+        (i32.add (local.get $wy) (i32.const 2000))
+        (i32.const 6))
+      (i32.const 6)))
+    ;; Octave 3: fine detail per block (unsmoothed hash, 0-1)
     (local.set $h3 (i32.and
       (call $hash2d (i32.add (local.get $wx) (i32.const 5000))
                     (i32.add (local.get $wy) (i32.const 7000)))
       (i32.const 1)))
-    ;; Combine: base 2 + large hills + medium + fine
-    (local.set $result (i32.add (i32.add (i32.const 2) (local.get $h1))
+    ;; Combine: base 3 + large hills(0-7) + medium(0-3) + fine(0-1) = 3..14
+    (local.set $result (i32.add (i32.add (i32.const 3) (local.get $h1))
                                 (i32.add (local.get $h2) (local.get $h3))))
     ;; Clamp to 1-12
     (if (i32.gt_s (local.get $result) (i32.const 12))
@@ -108,7 +156,7 @@
     (block $mod_done
       (loop $mod_loop
         (br_if $mod_done (i32.ge_u (local.get $i) (local.get $count)))
-        (local.set $addr (i32.add (i32.const 0x10C90) (i32.mul (local.get $i) (i32.const 16))))
+        (local.set $addr (i32.add (i32.const 0x11200) (i32.mul (local.get $i) (i32.const 16))))
         (if (i32.and
               (i32.and
                 (i32.eq (i32.load (local.get $addr)) (local.get $wx))
@@ -163,7 +211,7 @@
     (block $search_done
       (loop $search
         (br_if $search_done (i32.ge_u (local.get $i) (local.get $count)))
-        (local.set $addr (i32.add (i32.const 0x10C90) (i32.mul (local.get $i) (i32.const 16))))
+        (local.set $addr (i32.add (i32.const 0x11200) (i32.mul (local.get $i) (i32.const 16))))
         (if (i32.and
               (i32.and
                 (i32.eq (i32.load (local.get $addr)) (local.get $wx))
@@ -190,7 +238,7 @@
       )
     )
     ;; Add new entry
-    (local.set $addr (i32.add (i32.const 0x10C90) (i32.mul (local.get $count) (i32.const 16))))
+    (local.set $addr (i32.add (i32.const 0x11200) (i32.mul (local.get $count) (i32.const 16))))
     (i32.store (local.get $addr) (local.get $wx))
     (i32.store (i32.add (local.get $addr) (i32.const 4)) (local.get $wy))
     (i32.store (i32.add (local.get $addr) (i32.const 8)) (local.get $wz))
@@ -303,11 +351,11 @@
   ;; Draw a single character (simplified 4x6 font)
   (func $draw_char (param $ch i32) (param $dx i32) (param $dy i32) (param $color i32)
     (local $addr i32) (local $row i32) (local $col i32) (local $bits i32)
-    ;; Font at 0x18C90, each char 6 bytes (6 rows of 4-bit patterns stored in low nibble)
+    ;; Font at 0x19200, each char 6 bytes (6 rows of 4-bit patterns stored in low nibble)
     ;; char index = ch - 32
     (if (i32.lt_u (local.get $ch) (i32.const 32)) (then (return)))
     (if (i32.gt_u (local.get $ch) (i32.const 127)) (then (return)))
-    (local.set $addr (i32.add (i32.const 0x18C90)
+    (local.set $addr (i32.add (i32.const 0x19200)
       (i32.mul (i32.sub (local.get $ch) (i32.const 32)) (i32.const 6))))
     (local.set $row (i32.const 0))
     (block $done (loop $lr
@@ -552,17 +600,17 @@
     (call $set_pal (i32.const 180) (i32.const 50) (i32.const 255) (i32.const 100))
 
     ;; Initialize player position
-    (f64.store (i32.const 0x10344) (f64.const 8.5))    ;; px
-    (f64.store (i32.const 0x1034C) (f64.const 8.5))    ;; py
-    (f64.store (i32.const 0x10354) (f64.const 0.0))    ;; angle
-    (f64.store (i32.const 0x1035C) (f64.const 6.0))    ;; pz (eye height)
+    (f64.store (i32.const 0x10344) (f64.const 32.5))   ;; px - start further out for terrain variety
+    (f64.store (i32.const 0x1034C) (f64.const 32.5))   ;; py
+    (f64.store (i32.const 0x10354) (f64.const 0.5))    ;; angle - look slightly right
+    (f64.store (i32.const 0x1035C) (f64.const 16.0))   ;; pz (eye height - start high, gravity pulls down)
     (f64.store (i32.const 0x10364) (f64.const 0.0))    ;; vz
     (i32.store (i32.const 0x1036C) (i32.const 1))      ;; on_ground
     (f64.store (i32.const 0x10374) (f64.const 0.0))    ;; bob_phase
 
     ;; Game state
     (i32.store (i32.const 0x10390) (i32.const 0))      ;; mod_count
-    (i32.store (i32.const 0x10394) (i32.const 2048))    ;; max_mods
+    (i32.store (i32.const 0x10394) (i32.const 1900))    ;; max_mods (limited to avoid overwriting string data)
     (i32.store (i32.const 0x10398) (i32.const 0))      ;; gods_angry
     (i32.store (i32.const 0x1039C) (i32.const 0))      ;; msg_timer
     (i32.store (i32.const 0x103A0) (i32.const 0))      ;; dig_cooldown
@@ -572,7 +620,7 @@
     ;; Spawn some monsters
     (call $spawn_monsters)
 
-    ;; Init mini font data at 0x18C90
+    ;; Init mini font data at 0x19200
     (call $init_font)
   )
 
@@ -585,7 +633,7 @@
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (i32.const 24)))
-      (local.set $addr (i32.add (i32.const 0x10890) (i32.mul (local.get $i) (i32.const 32))))
+      (local.set $addr (i32.add (i32.const 0x10E00) (i32.mul (local.get $i) (i32.const 32))))
       ;; Place at random positions around player
       (local.set $angle (f64.mul (f64.convert_i32_u (local.get $i)) (f64.const 0.2618)))
       (local.set $dist (f64.add (f64.const 8.0)
@@ -613,7 +661,7 @@
   ;; ---- Initialize mini 4x6 bitmap font ----
   (func $init_font
     (local $base i32)
-    (local.set $base (i32.const 0x18C90))
+    (local.set $base (i32.const 0x19200))
     ;; Space (32) = all zeros (already 0)
     ;; We only need digits 0-9, A-Z, and a few punctuation
     ;; Encoding: 4 bits per row, stored in low nibble, 6 rows per char
@@ -1485,7 +1533,7 @@
     (local.set $i (i32.const 0))
     (block $mob_done (loop $mob_lp
       (br_if $mob_done (i32.ge_u (local.get $i) (i32.const 24)))
-      (local.set $m_addr (i32.add (i32.const 0x10890) (i32.mul (local.get $i) (i32.const 32))))
+      (local.set $m_addr (i32.add (i32.const 0x10E00) (i32.mul (local.get $i) (i32.const 32))))
       (local.set $m_active (i32.load (local.get $m_addr)))
       (if (local.get $m_active)
         (then
