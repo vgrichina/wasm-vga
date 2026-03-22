@@ -239,24 +239,39 @@ function toggleMute() {
   if (btn) btn.textContent = isMuted ? 'OFF' : 'SND';
 }
 
-// RGB+Brightness palette: 2 bits R, 2 bits G, 2 bits B, 2 bits brightness
-// index = (R<<6) | (G<<4) | (B<<2) | L
-// R,G,B channel values: 0→0, 1→85, 2→170, 3→255
-// L brightness: 0→0.13, 1→0.40, 2→0.70, 3→1.0
+// Standard VGA Mode 13h 256-color palette
 function defaultPalette() {
   const pal = new Uint8Array(768);
-  const chanLevels = [0, 85, 170, 255];
-  const brightLevels = [0.13, 0.40, 0.70, 1.0];
-  for (let i = 0; i < 256; i++) {
-    const rb = (i >> 6) & 3;
-    const gb = (i >> 4) & 3;
-    const bb = (i >> 2) & 3;
-    const lb = i & 3;
-    const bright = brightLevels[lb];
-    const idx = i * 3;
-    pal[idx]     = Math.round(chanLevels[rb] * bright);
-    pal[idx + 1] = Math.round(chanLevels[gb] * bright);
-    pal[idx + 2] = Math.round(chanLevels[bb] * bright);
+  // 16 standard CGA/EGA colors (indices 0-15)
+  const cga = [
+    [0,0,0],[0,0,170],[0,170,0],[0,170,170],
+    [170,0,0],[170,0,170],[170,85,0],[170,170,170],
+    [85,85,85],[85,85,255],[85,255,85],[85,255,255],
+    [255,85,85],[255,85,255],[255,255,85],[255,255,255]
+  ];
+  for (let i = 0; i < 16; i++) {
+    pal[i*3] = cga[i][0]; pal[i*3+1] = cga[i][1]; pal[i*3+2] = cga[i][2];
+  }
+  // 16 grayscale (indices 16-31)
+  for (let i = 0; i < 16; i++) {
+    const v = Math.round(i * 255 / 15);
+    pal[(16+i)*3] = v; pal[(16+i)*3+1] = v; pal[(16+i)*3+2] = v;
+  }
+  // 216 color cube (indices 32-247): 6x6x6 RGB
+  for (let r = 0; r < 6; r++) {
+    for (let g = 0; g < 6; g++) {
+      for (let b = 0; b < 6; b++) {
+        const idx = 32 + r*36 + g*6 + b;
+        pal[idx*3]   = Math.round(r * 255 / 5);
+        pal[idx*3+1] = Math.round(g * 255 / 5);
+        pal[idx*3+2] = Math.round(b * 255 / 5);
+      }
+    }
+  }
+  // 24 additional grays (indices 248-255 — only 8 slots left, fill with grays)
+  for (let i = 248; i < 256; i++) {
+    const v = Math.round((i - 248) * 255 / 7);
+    pal[i*3] = v; pal[i*3+1] = v; pal[i*3+2] = v;
   }
   return pal;
 }

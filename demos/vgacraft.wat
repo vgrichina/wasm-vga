@@ -1132,8 +1132,139 @@
     ;; RGB+Brightness palette: 2-bit R, G, B + 2-bit brightness = 256 colors
     ;; index = (R<<6)|(G<<4)|(B<<2)|L  R,G,B,L in 0..3
     ;; Channel values: 0→0, 1→85, 2→170, 3→255
-    ;; Brightness: 0→very dark, 1→dim, 2→medium, 3→full
-    ;; Palette is set by harness defaultPalette() with this encoding.
+    ;; Brightness: L=0→0.13, L=1→0.40, L=2→0.70, L=3→1.0
+    ;; We must write this palette ourselves since harness uses standard VGA.
+    ;; ================================================================
+    ;; Write RGBL palette to 0x0040 (256 entries × 3 bytes = 768 bytes)
+    ;; Channel levels table at 0x19600 (4 bytes): 0, 85, 170, 255
+    ;; Brightness table at 0x19604 (4 × 2 bytes as fixed-point 0..256):
+    ;;   L=0: 33, L=1: 102, L=2: 179, L=3: 255
+    i32.const 0x19600
+    i32.const 0     ;; chan[0] = 0
+    i32.store8
+    i32.const 0x19601
+    i32.const 85    ;; chan[1] = 85
+    i32.store8
+    i32.const 0x19602
+    i32.const 170   ;; chan[2] = 170
+    i32.store8
+    i32.const 0x19603
+    i32.const 255   ;; chan[3] = 255
+    i32.store8
+    i32.const 0x19604
+    i32.const 33    ;; bright[0] = 33/255 ≈ 0.13
+    i32.store8
+    i32.const 0x19605
+    i32.const 102   ;; bright[1] = 102/255 ≈ 0.40
+    i32.store8
+    i32.const 0x19606
+    i32.const 179   ;; bright[2] = 179/255 ≈ 0.70
+    i32.store8
+    i32.const 0x19607
+    i32.const 255   ;; bright[3] = 255/255 = 1.0
+    i32.store8
+    ;; Loop over 256 palette entries
+    i32.const 0
+    local.set $i
+    block $pal_done
+      loop $pal_lp
+        local.get $i
+        i32.const 256
+        i32.ge_u
+        br_if $pal_done
+        ;; Decode: R = (i>>6)&3, G = (i>>4)&3, B = (i>>2)&3, L = i&3
+        ;; bright = table[L]
+        ;; R_out = chan[R] * bright / 255
+        ;; G_out = chan[G] * bright / 255
+        ;; B_out = chan[B] * bright / 255
+        ;; Palette address = 0x0040 + i*3
+        ;; Write R
+        i32.const 0x0040
+        local.get $i
+        i32.const 3
+        i32.mul
+        i32.add
+        ;; chan[(i>>6)&3] * bright[i&3] / 255
+        i32.const 0x19600
+        local.get $i
+        i32.const 6
+        i32.shr_u
+        i32.const 3
+        i32.and
+        i32.add
+        i32.load8_u
+        i32.const 0x19604
+        local.get $i
+        i32.const 3
+        i32.and
+        i32.add
+        i32.load8_u
+        i32.mul
+        i32.const 255
+        i32.div_u
+        i32.store8
+        ;; Write G
+        i32.const 0x0040
+        local.get $i
+        i32.const 3
+        i32.mul
+        i32.add
+        i32.const 1
+        i32.add
+        ;; chan[(i>>4)&3] * bright[i&3] / 255
+        i32.const 0x19600
+        local.get $i
+        i32.const 4
+        i32.shr_u
+        i32.const 3
+        i32.and
+        i32.add
+        i32.load8_u
+        i32.const 0x19604
+        local.get $i
+        i32.const 3
+        i32.and
+        i32.add
+        i32.load8_u
+        i32.mul
+        i32.const 255
+        i32.div_u
+        i32.store8
+        ;; Write B
+        i32.const 0x0040
+        local.get $i
+        i32.const 3
+        i32.mul
+        i32.add
+        i32.const 2
+        i32.add
+        ;; chan[(i>>2)&3] * bright[i&3] / 255
+        i32.const 0x19600
+        local.get $i
+        i32.const 2
+        i32.shr_u
+        i32.const 3
+        i32.and
+        i32.add
+        i32.load8_u
+        i32.const 0x19604
+        local.get $i
+        i32.const 3
+        i32.and
+        i32.add
+        i32.load8_u
+        i32.mul
+        i32.const 255
+        i32.div_u
+        i32.store8
+        ;; Next
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $pal_lp
+      end
+    end
     ;; ================================================================
     ;; Block type base color table at 0x19500 (8 bytes):
     ;;   type 0 (grass):  R=0,G=3,B=0 → 0x0C
