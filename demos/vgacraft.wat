@@ -1337,17 +1337,17 @@
     f64.const 0.0
     f64.store
 
-    ;; Write monster base color table at 0x19510 (3 bytes)
+    ;; Write monster base color table at 0x1950C (3 bytes)
     ;; creeper(type 0): dark green R=0,G=2,B=0 → 0x20
     ;; zombie(type 1): olive R=1,G=2,B=0 → 0x60
     ;; skeleton(type 2): bone R=3,G=3,B=2 → 0xF8
-    i32.const 0x19510
+    i32.const 0x1950C
     i32.const 0x20
     i32.store8
-    i32.const 0x19511
+    i32.const 0x1950D
     i32.const 0x60
     i32.store8
-    i32.const 0x19512
+    i32.const 0x1950E
     i32.const 0xF8
     i32.store8
 
@@ -4743,7 +4743,6 @@
     ;; Update sky palette: 4 brightness levels of sky blue (0x5C..0x5F)
     ;; Sky at full day: R=85, G=170, B=255
     ;; Brightness scales: L0=33/255, L1=102/255, L2=179/255, L3=255/255
-    ;; Stored as a 4-byte lookup at 0x19510
     ;; Each sky palette entry: R = 85*scale*day_bright/65025, etc.
 
     ;; L=0: scale=33
@@ -4881,7 +4880,7 @@
         local.get $m_active
         if
           ;; Monster type at offset +4 (0=creep,1=zombie,2=skeleton)
-          ;; Monster base from table at 0x19508
+          ;; Monster base from table at 0x1950C
           local.get $m_addr
           i32.const 4
           i32.add
