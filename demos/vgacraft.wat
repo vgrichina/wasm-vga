@@ -1530,6 +1530,10 @@
     (local $sun_sx i32) (local $sun_sy i32) (local $sun_screen_x i32) (local $sun_screen_y i32)
     (local $sun_dx i32) (local $sun_dy i32) (local $sun_r2 i32)
     (local $game_hour i32) (local $game_min i32)
+    ;; Sun/moon 3D direction locals (for ray-traced celestial bodies)
+    (local $cel_dir_x f64) (local $cel_dir_y f64) (local $cel_dir_z f64)
+    (local $cel_active i32) (local $cel_is_sun i32)
+    (local $cel_angle f64) (local $cel_dot f64)
 
     (local.set $tick (i32.load (i32.const 12)))
     (local.set $frame_ct (i32.load (i32.const 0)))
@@ -1771,6 +1775,49 @@
       (br $mob_lp)))
 
     ;; ============================================================
+    ;; COMPUTE SUN/MOON 3D WORLD DIRECTION (for ray-traced sky)
+    ;; ============================================================
+    ;; Sun arcs east-to-west across the sky in the XZ plane.
+    ;; Sun angle = (day_phase - 48) * PI / 160 when day_phase 48..208
+    ;; Direction: (cos(angle), 0, sin(angle)) — normalized on unit sphere
+    ;; Moon arcs similarly during nighttime phases.
+    (local.set $cel_active (i32.const 0))
+
+    ;; Sun: visible when day_phase 48..208
+    (if (i32.and (i32.ge_u (local.get $day_phase) (i32.const 48))
+                 (i32.lt_u (local.get $day_phase) (i32.const 208)))
+      (then
+        (local.set $cel_active (i32.const 1))
+        (local.set $cel_is_sun (i32.const 1))
+        ;; sun_angle = (phase - 48) * PI / 160
+        (local.set $cel_angle (f64.mul
+          (f64.div (f64.convert_i32_u (i32.sub (local.get $day_phase) (i32.const 48)))
+                   (f64.const 160.0))
+          (f64.const 3.14159265358979)))
+        ;; Direction in world space: travels from +X toward -X, arcing up through Z
+        (local.set $cel_dir_x (call $cos_a (local.get $cel_angle)))
+        (local.set $cel_dir_y (f64.const 0.0))
+        (local.set $cel_dir_z (call $sin_a (local.get $cel_angle)))))
+
+    ;; Moon: visible when day_phase 0..48 or 208..255
+    (if (i32.or (i32.lt_u (local.get $day_phase) (i32.const 48))
+                (i32.ge_u (local.get $day_phase) (i32.const 208)))
+      (then
+        (local.set $cel_active (i32.const 1))
+        (local.set $cel_is_sun (i32.const 0))
+        ;; Normalize night phase to 0..96: 208..255→0..47, 0..48→48..96
+        ;; moon_angle = moon_t * PI / 96
+        (if (i32.lt_u (local.get $day_phase) (i32.const 48))
+          (then (local.set $cel_angle (f64.convert_i32_u (i32.add (local.get $day_phase) (i32.const 48)))))
+          (else (local.set $cel_angle (f64.convert_i32_u (i32.sub (local.get $day_phase) (i32.const 208))))))
+        (local.set $cel_angle (f64.mul
+          (f64.div (local.get $cel_angle) (f64.const 96.0))
+          (f64.const 3.14159265358979)))
+        (local.set $cel_dir_x (call $cos_a (local.get $cel_angle)))
+        (local.set $cel_dir_y (f64.const 0.0))
+        (local.set $cel_dir_z (call $sin_a (local.get $cel_angle)))))
+
+    ;; ============================================================
     ;; PER-PIXEL RAYTRACING
     ;; ============================================================
     ;; Build camera basis vectors from yaw (angle) and pitch (look_y)
@@ -1982,29 +2029,83 @@
             (i32.store8 (local.get $fb_addr) (local.get $color)))
           (else
             ;; Sky: gradient based on ray_dz with dithering
+            ;; PLUS ray-traced sun/moon — check if ray points toward celestial body
             ;; dz > 0 → looking up → sky, dz < 0 → looking down → dark
             (if (f64.gt (local.get $ray_dz) (f64.const 0.0))
               (then
-                ;; Map dz (0..1) to sky gradient with 16 sub-steps for dithering
-                ;; sky_full maps to range 0..111 (7 colors * 16 sub-steps)
-                ;; We compute a high-precision value, then extract integer + fractional
-                (local.set $shade_full (i32.sub (i32.const 111)
-                  (i32.trunc_f64_s (f64.mul (local.get $ray_dz) (f64.const 128.0)))))
-                (if (i32.lt_s (local.get $shade_full) (i32.const 0))
-                  (then (local.set $shade_full (i32.const 0))))
-                (if (i32.gt_s (local.get $shade_full) (i32.const 111))
-                  (then (local.set $shade_full (i32.const 111))))
-                ;; Integer sky index (0-6) and fractional part (0-15)
-                (local.set $sky_idx (i32.add
-                  (i32.shr_u (local.get $shade_full) (i32.const 4))
-                  (i32.const 1)))
-                (local.set $shade_frac (i32.and (local.get $shade_full) (i32.const 15)))
-                ;; Dither between adjacent sky colors
+                ;; First check if this ray hits the sun or moon
+                ;; dot = ray_dx * cel_dir_x + ray_dy * cel_dir_y + ray_dz * cel_dir_z
+                (local.set $cel_dot (f64.const 0.0))
+                (if (local.get $cel_active)
+                  (then
+                    (local.set $cel_dot (f64.add
+                      (f64.add
+                        (f64.mul (local.get $ray_dx) (local.get $cel_dir_x))
+                        (f64.mul (local.get $ray_dy) (local.get $cel_dir_y)))
+                      (f64.mul (local.get $ray_dz) (local.get $cel_dir_z))))))
+
                 (if (i32.and
-                      (call $dither_test (local.get $px_col) (local.get $px_row) (local.get $shade_frac))
-                      (i32.lt_s (local.get $sky_idx) (i32.const 7)))
-                  (then (local.set $sky_idx (i32.add (local.get $sky_idx) (i32.const 1)))))
-                (i32.store8 (local.get $fb_addr) (local.get $sky_idx)))
+                      (local.get $cel_active)
+                      (i32.and
+                        (local.get $cel_is_sun)
+                        (f64.gt (local.get $cel_dot) (f64.const 0.990))))
+                  (then
+                    ;; Sun hit! Core (dot > 0.997) or glow (dot > 0.990)
+                    (if (f64.gt (local.get $cel_dot) (f64.const 0.997))
+                      (then (i32.store8 (local.get $fb_addr) (i32.const 210)))  ;; sun core
+                      (else
+                        ;; Dither between sun glow and sky for soft edge
+                        (if (f64.gt (local.get $cel_dot) (f64.const 0.994))
+                          (then (i32.store8 (local.get $fb_addr) (i32.const 209)))  ;; sun bright
+                          (else
+                            ;; Outer glow — dither sun glow with sky
+                            (if (i32.and (local.get $px_col) (i32.const 1))
+                              (then (i32.store8 (local.get $fb_addr) (i32.const 214)))  ;; sunset glow
+                              (else
+                                ;; Fall through to normal sky
+                                (local.set $shade_full (i32.sub (i32.const 111)
+                                  (i32.trunc_f64_s (f64.mul (local.get $ray_dz) (f64.const 128.0)))))
+                                (if (i32.lt_s (local.get $shade_full) (i32.const 0))
+                                  (then (local.set $shade_full (i32.const 0))))
+                                (if (i32.gt_s (local.get $shade_full) (i32.const 111))
+                                  (then (local.set $shade_full (i32.const 111))))
+                                (local.set $sky_idx (i32.add
+                                  (i32.shr_u (local.get $shade_full) (i32.const 4))
+                                  (i32.const 1)))
+                                (i32.store8 (local.get $fb_addr) (local.get $sky_idx)))))))))
+
+                (else (if (i32.and
+                      (local.get $cel_active)
+                      (i32.and
+                        (i32.eqz (local.get $cel_is_sun))
+                        (f64.gt (local.get $cel_dot) (f64.const 0.992))))
+                  (then
+                    ;; Moon hit! Core (dot > 0.998) or dim edge (dot > 0.992)
+                    (if (f64.gt (local.get $cel_dot) (f64.const 0.998))
+                      (then (i32.store8 (local.get $fb_addr) (i32.const 211)))  ;; moon core
+                      (else (i32.store8 (local.get $fb_addr) (i32.const 212)))))  ;; moon dim
+
+                (else
+                  ;; Normal sky gradient with dithering
+                  ;; Map dz (0..1) to sky gradient with 16 sub-steps for dithering
+                  ;; sky_full maps to range 0..111 (7 colors * 16 sub-steps)
+                  (local.set $shade_full (i32.sub (i32.const 111)
+                    (i32.trunc_f64_s (f64.mul (local.get $ray_dz) (f64.const 128.0)))))
+                  (if (i32.lt_s (local.get $shade_full) (i32.const 0))
+                    (then (local.set $shade_full (i32.const 0))))
+                  (if (i32.gt_s (local.get $shade_full) (i32.const 111))
+                    (then (local.set $shade_full (i32.const 111))))
+                  ;; Integer sky index (0-6) and fractional part (0-15)
+                  (local.set $sky_idx (i32.add
+                    (i32.shr_u (local.get $shade_full) (i32.const 4))
+                    (i32.const 1)))
+                  (local.set $shade_frac (i32.and (local.get $shade_full) (i32.const 15)))
+                  ;; Dither between adjacent sky colors
+                  (if (i32.and
+                        (call $dither_test (local.get $px_col) (local.get $px_row) (local.get $shade_frac))
+                        (i32.lt_s (local.get $sky_idx) (i32.const 7)))
+                    (then (local.set $sky_idx (i32.add (local.get $sky_idx) (i32.const 1)))))
+                  (i32.store8 (local.get $fb_addr) (local.get $sky_idx))))))
               (else
                 ;; Below horizon fog (now at 136+7=143)
                 (i32.store8 (local.get $fb_addr) (i32.const 143))))))
@@ -2015,101 +2116,8 @@
       (local.set $px_row (i32.add (local.get $px_row) (i32.const 1)))
       (br $row_lp)))
 
-    ;; ---- Draw sun or moon in the sky ----
-    ;; Sun visible when day_phase 48..208 (daytime)
-    ;; Moon visible when day_phase 0..48 or 208..255 (nighttime)
-    ;; Sun/Moon position: circle across the sky arc
-    ;; Sun angle = (day_phase - 48) * PI / 160 → 0 at sunrise, PI at sunset
-    ;; Screen X center based on sun direction relative to player yaw
-
-    ;; Sun: phase 48-208
-    (if (i32.and (i32.ge_u (local.get $day_phase) (i32.const 48))
-                 (i32.lt_u (local.get $day_phase) (i32.const 208)))
-      (then
-        ;; sun_angle = (phase-48) * pi / 160  → 0..pi
-        ;; sun Y on screen: sin(sun_angle) → 0..1..0, map to row 10..90
-        ;; sun X on screen: cos(sun_angle) → 1..-1, map to col 40..280
-        ;; Simple: sx = 280 - (phase-48) * 240 / 160 = 280 - (phase-48)*3/2
-        (local.set $sun_sx (i32.sub (i32.const 280)
-          (i32.div_u (i32.mul (i32.sub (local.get $day_phase) (i32.const 48)) (i32.const 3)) (i32.const 2))))
-        ;; sy: parabolic arc. peak at phase=128 (noon), edges at 48/208
-        ;; normalized t = (phase-128), t in [-80,80]
-        ;; sy = 15 + (80*80 - t*t) * 60 / (80*80)
-        (local.set $sun_sy (i32.sub (local.get $day_phase) (i32.const 128)))
-        (local.set $sun_sy (i32.add (i32.const 15)
-          (i32.div_u (i32.mul
-            (i32.sub (i32.const 6400) (i32.mul (local.get $sun_sy) (local.get $sun_sy)))
-            (i32.const 55)) (i32.const 6400))))
-        ;; Draw sun disc (radius 5)
-        (local.set $sun_dy (i32.const -5))
-        (block $sd_done (loop $sd_lp
-          (br_if $sd_done (i32.gt_s (local.get $sun_dy) (i32.const 5)))
-          (local.set $sun_dx (i32.const -5))
-          (block $sd2_done (loop $sd2_lp
-            (br_if $sd2_done (i32.gt_s (local.get $sun_dx) (i32.const 5)))
-            (local.set $sun_r2 (i32.add
-              (i32.mul (local.get $sun_dx) (local.get $sun_dx))
-              (i32.mul (local.get $sun_dy) (local.get $sun_dy))))
-            (if (i32.le_u (local.get $sun_r2) (i32.const 9))
-              (then (call $put_pixel
-                (i32.add (local.get $sun_sx) (local.get $sun_dx))
-                (i32.add (local.get $sun_sy) (local.get $sun_dy))
-                (i32.const 210)))  ;; sun core
-            (else (if (i32.le_u (local.get $sun_r2) (i32.const 25))
-              (then (call $put_pixel
-                (i32.add (local.get $sun_sx) (local.get $sun_dx))
-                (i32.add (local.get $sun_sy) (local.get $sun_dy))
-                (i32.const 209))))))  ;; sun glow
-            (local.set $sun_dx (i32.add (local.get $sun_dx) (i32.const 1)))
-            (br $sd2_lp)))
-          (local.set $sun_dy (i32.add (local.get $sun_dy) (i32.const 1)))
-          (br $sd_lp)))))
-
-    ;; Moon: phase 0..48 or 208..255
-    (if (i32.or (i32.lt_u (local.get $day_phase) (i32.const 48))
-                (i32.ge_u (local.get $day_phase) (i32.const 208)))
-      (then
-        ;; Moon arc: normalize night phase 0..96 (208..255=0..47, 0..48=48..96)
-        ;; moon_t = phase < 48 ? phase+48 : phase-208
-        (if (i32.lt_u (local.get $day_phase) (i32.const 48))
-          (then (local.set $sun_sx (i32.add (local.get $day_phase) (i32.const 48))))
-          (else (local.set $sun_sx (i32.sub (local.get $day_phase) (i32.const 208)))))
-        ;; sx = 280 - moon_t * 240 / 96 = 280 - moon_t * 5 / 2
-        (local.set $sun_sy (local.get $sun_sx))  ;; save moon_t
-        (local.set $sun_sx (i32.sub (i32.const 280)
-          (i32.div_u (i32.mul (local.get $sun_sy) (i32.const 5)) (i32.const 2))))
-        ;; sy: parabolic, peak at moon_t=48, edges at 0/96
-        ;; t = moon_t - 48, t in [-48,48]
-        ;; sy = 20 + (48*48 - t*t) * 50 / (48*48)
-        (local.set $sun_sy (i32.sub (local.get $sun_sy) (i32.const 48)))
-        (local.set $sun_sy (i32.add (i32.const 20)
-          (i32.div_u (i32.mul
-            (i32.sub (i32.const 2304) (i32.mul (local.get $sun_sy) (local.get $sun_sy)))
-            (i32.const 50)) (i32.const 2304))))
-        ;; Draw moon disc (radius 4)
-        (local.set $sun_dy (i32.const -4))
-        (block $md_done (loop $md_lp
-          (br_if $md_done (i32.gt_s (local.get $sun_dy) (i32.const 4)))
-          (local.set $sun_dx (i32.const -4))
-          (block $md2_done (loop $md2_lp
-            (br_if $md2_done (i32.gt_s (local.get $sun_dx) (i32.const 4)))
-            (local.set $sun_r2 (i32.add
-              (i32.mul (local.get $sun_dx) (local.get $sun_dx))
-              (i32.mul (local.get $sun_dy) (local.get $sun_dy))))
-            (if (i32.le_u (local.get $sun_r2) (i32.const 6))
-              (then (call $put_pixel
-                (i32.add (local.get $sun_sx) (local.get $sun_dx))
-                (i32.add (local.get $sun_sy) (local.get $sun_dy))
-                (i32.const 211)))  ;; moon core
-            (else (if (i32.le_u (local.get $sun_r2) (i32.const 16))
-              (then (call $put_pixel
-                (i32.add (local.get $sun_sx) (local.get $sun_dx))
-                (i32.add (local.get $sun_sy) (local.get $sun_dy))
-                (i32.const 212))))))  ;; moon dim
-            (local.set $sun_dx (i32.add (local.get $sun_dx) (i32.const 1)))
-            (br $md2_lp)))
-          (local.set $sun_dy (i32.add (local.get $sun_dy) (i32.const 1)))
-          (br $md_lp)))))
+    ;; Sun and moon are now ray-traced per-pixel in the sky rendering above.
+    ;; No post-process overlay needed!
 
     ;; ---- Crosshair ---- (special white at 204)
     (call $put_pixel (i32.const 160) (i32.const 98) (i32.const 204))
