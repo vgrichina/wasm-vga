@@ -2153,7 +2153,7 @@
                           (local.set $sky_idx (i32.add
                             (i32.shr_u (local.get $shade_full) (i32.const 4))
                             (i32.const 1)))
-                          (i32.store8 (local.get $fb_addr) (local.get $sky_idx))))))))))))))))))
+                          (i32.store8 (local.get $fb_addr) (local.get $sky_idx)))))))))))))))))
 
                 (else (if (i32.and
                       (local.get $cel_active)
