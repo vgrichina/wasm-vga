@@ -647,6 +647,13 @@
     (call $set_pal (i32.const 206) (i32.const 20) (i32.const 15) (i32.const 15))
     (call $set_pal (i32.const 207) (i32.const 255) (i32.const 50) (i32.const 50))
     (call $set_pal (i32.const 208) (i32.const 50) (i32.const 255) (i32.const 100))
+    ;; Sun/moon palette entries
+    (call $set_pal (i32.const 209) (i32.const 255) (i32.const 250) (i32.const 200))  ;; sun bright
+    (call $set_pal (i32.const 210) (i32.const 255) (i32.const 235) (i32.const 140))  ;; sun core
+    (call $set_pal (i32.const 211) (i32.const 200) (i32.const 210) (i32.const 235))  ;; moon bright
+    (call $set_pal (i32.const 212) (i32.const 170) (i32.const 180) (i32.const 210))  ;; moon dim
+    (call $set_pal (i32.const 213) (i32.const 255) (i32.const 140) (i32.const 50))   ;; sunset orange
+    (call $set_pal (i32.const 214) (i32.const 255) (i32.const 180) (i32.const 90))   ;; sunset glow
 
     ;; Initialize player position
     (f64.store (i32.const 0x10344) (f64.const 32.5))
@@ -1124,6 +1131,7 @@
   (data (i32.const 0x190B0) "Blocks:\00")
   (data (i32.const 0x190C0) "Mods:\00")
   (data (i32.const 0x190D0) "/\00")
+  (data (i32.const 0x190E0) ":\00")
 
   ;; ============================================================
   ;; 3D DDA VOXEL RAYTRACER — cast_ray
@@ -1516,6 +1524,12 @@
     (local $i i32) (local $m_addr i32) (local $m_active i32)
     (local $m_type i32) (local $m_wx f64) (local $m_wy f64)
     (local $dx f64) (local $dy f64) (local $m_dist f64)
+    ;; Day/night cycle locals
+    (local $day_tick i32) (local $day_phase i32) (local $day_bright i32)
+    (local $sky_r i32) (local $sky_g i32) (local $sky_b i32)
+    (local $sun_sx i32) (local $sun_sy i32) (local $sun_screen_x i32) (local $sun_screen_y i32)
+    (local $sun_dx i32) (local $sun_dy i32) (local $sun_r2 i32)
+    (local $game_hour i32) (local $game_min i32)
 
     (local.set $tick (i32.load (i32.const 12)))
     (local.set $frame_ct (i32.load (i32.const 0)))
@@ -1538,7 +1552,8 @@
       (i32.load8_u (i32.const 0x04))
       (i32.shl (i32.load8_u (i32.const 0x05)) (i32.const 8))))
     ;; Map mouse_x (0..320) to angle: center=160, sensitivity ~0.01 rad/pixel
-    (local.set $angle (f64.add (local.get $angle)
+    ;; Negate so moving mouse right turns right
+    (local.set $angle (f64.sub (local.get $angle)
       (f64.mul
         (f64.sub (f64.convert_i32_s (local.get $mouse_x)) (f64.const 160.0))
         (f64.const 0.0002))))
@@ -1558,11 +1573,11 @@
 
     ;; ---- Input ----
     (local.set $speed (f64.const 0.06))
-    ;; Turn (Left arrow/A = subtract angle, Right arrow/D = add angle)
+    ;; Turn (Left arrow/A = add angle = turn left, Right arrow/D = subtract = turn right)
     (if (i32.and (local.get $keys) (i32.const 4))
-      (then (local.set $angle (f64.add (local.get $angle) (f64.const 0.04)))))
-    (if (i32.and (local.get $keys) (i32.const 8))
       (then (local.set $angle (f64.sub (local.get $angle) (f64.const 0.04)))))
+    (if (i32.and (local.get $keys) (i32.const 8))
+      (then (local.set $angle (f64.add (local.get $angle) (f64.const 0.04)))))
 
     (local.set $cos_a_v (call $cos_a (local.get $angle)))
     (local.set $sin_a_v (call $sin_a (local.get $angle)))
@@ -1640,6 +1655,95 @@
     (f64.store (i32.const 0x10364) (local.get $vz))
     (i32.store (i32.const 0x1036C) (local.get $on_ground))
     (f64.store (i32.const 0x10374) (local.get $bob_phase))
+
+    ;; ============================================================
+    ;; DAY/NIGHT CYCLE — update sky palette each frame
+    ;; ============================================================
+    ;; Full cycle = 120 seconds (2 min real = 1 game day)
+    ;; day_tick = tick_ms mod 120000 → 0..119999
+    ;; day_phase = day_tick * 256 / 120000 → 0..255
+    ;; 0=midnight, 64=sunrise(6AM), 128=noon, 192=sunset(6PM)
+    (local.set $day_tick (i32.rem_u (local.get $tick) (i32.const 120000)))
+    (local.set $day_phase (i32.div_u (i32.mul (local.get $day_tick) (i32.const 256)) (i32.const 120000)))
+
+    ;; Compute game time: 120000ms = 24 hours
+    ;; hour = day_tick * 24 / 120000, minute = (day_tick * 1440 / 120000) % 60
+    (local.set $game_hour (i32.div_u (i32.mul (local.get $day_tick) (i32.const 24)) (i32.const 120000)))
+    (local.set $game_min (i32.rem_u
+      (i32.div_u (i32.mul (local.get $day_tick) (i32.const 1440)) (i32.const 120000))
+      (i32.const 60)))
+
+    ;; Brightness curve: 0 at midnight(0), ramp up 48-80, full 80-176, ramp down 176-208, 0 at 208-255
+    ;; day_bright = 0..255
+    (if (i32.lt_u (local.get $day_phase) (i32.const 48))
+      (then (local.set $day_bright (i32.const 0)))     ;; deep night
+    (else (if (i32.lt_u (local.get $day_phase) (i32.const 80))
+      (then (local.set $day_bright (i32.div_u (i32.mul (i32.sub (local.get $day_phase) (i32.const 48)) (i32.const 255)) (i32.const 32))))  ;; sunrise
+    (else (if (i32.lt_u (local.get $day_phase) (i32.const 176))
+      (then (local.set $day_bright (i32.const 255)))    ;; full day
+    (else (if (i32.lt_u (local.get $day_phase) (i32.const 208))
+      (then (local.set $day_bright (i32.div_u (i32.mul (i32.sub (i32.const 208) (local.get $day_phase)) (i32.const 255)) (i32.const 32))))  ;; sunset
+    (else
+      (local.set $day_bright (i32.const 0))             ;; night
+    ))))))))
+
+    ;; Update 7 sky gradient palette entries (1-7)
+    ;; Day sky base: R=40..140, G=80..190, B=180..240
+    ;; Night sky: R=5..15, G=5..20, B=15..40
+    (local.set $i (i32.const 0))
+    (block $sky_done (loop $sky_lp
+      (br_if $sky_done (i32.ge_u (local.get $i) (i32.const 7)))
+      ;; Interpolate: color = night_base + (day_base - night_base) * bright / 255
+      ;; Day R: 40 + i*~15
+      ;; Day G: 80 + i*~18
+      ;; Day B: 180 + i*~10
+      ;; Night R: 2 + i*2
+      ;; Night G: 2 + i*3
+      ;; Night B: 10 + i*5
+      (local.set $sky_r (i32.add
+        (i32.add (i32.const 2) (i32.mul (local.get $i) (i32.const 2)))
+        (i32.div_u (i32.mul
+          (i32.sub (i32.add (i32.const 40) (i32.mul (local.get $i) (i32.const 15)))
+                   (i32.add (i32.const 2) (i32.mul (local.get $i) (i32.const 2))))
+          (local.get $day_bright)) (i32.const 255))))
+      (local.set $sky_g (i32.add
+        (i32.add (i32.const 2) (i32.mul (local.get $i) (i32.const 3)))
+        (i32.div_u (i32.mul
+          (i32.sub (i32.add (i32.const 80) (i32.mul (local.get $i) (i32.const 18)))
+                   (i32.add (i32.const 2) (i32.mul (local.get $i) (i32.const 3))))
+          (local.get $day_bright)) (i32.const 255))))
+      (local.set $sky_b (i32.add
+        (i32.add (i32.const 10) (i32.mul (local.get $i) (i32.const 5)))
+        (i32.div_u (i32.mul
+          (i32.sub (i32.add (i32.const 180) (i32.mul (local.get $i) (i32.const 10)))
+                   (i32.add (i32.const 10) (i32.mul (local.get $i) (i32.const 5))))
+          (local.get $day_bright)) (i32.const 255))))
+      ;; Clamp
+      (if (i32.gt_u (local.get $sky_r) (i32.const 255))
+        (then (local.set $sky_r (i32.const 255))))
+      (if (i32.gt_u (local.get $sky_g) (i32.const 255))
+        (then (local.set $sky_g (i32.const 255))))
+      (if (i32.gt_u (local.get $sky_b) (i32.const 255))
+        (then (local.set $sky_b (i32.const 255))))
+      (call $set_pal (i32.add (local.get $i) (i32.const 1))
+        (local.get $sky_r) (local.get $sky_g) (local.get $sky_b))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $sky_lp)))
+
+    ;; Update fog palette (136-151) based on day brightness
+    (local.set $i (i32.const 0))
+    (block $fog_done (loop $fog_lp
+      (br_if $fog_done (i32.ge_u (local.get $i) (i32.const 16)))
+      (local.set $sky_r (i32.add (i32.const 5)
+        (i32.div_u (i32.mul (i32.add (i32.const 95) (i32.mul (local.get $i) (i32.const 4))) (local.get $day_bright)) (i32.const 255))))
+      (local.set $sky_g (i32.add (i32.const 5)
+        (i32.div_u (i32.mul (i32.add (i32.const 125) (i32.mul (local.get $i) (i32.const 4))) (local.get $day_bright)) (i32.const 255))))
+      (local.set $sky_b (i32.add (i32.const 15)
+        (i32.div_u (i32.mul (i32.add (i32.const 155) (i32.mul (local.get $i) (i32.const 3))) (local.get $day_bright)) (i32.const 255))))
+      (call $set_pal (i32.add (i32.const 136) (local.get $i))
+        (local.get $sky_r) (local.get $sky_g) (local.get $sky_b))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $fog_lp)))
 
     ;; ---- Update monsters (AI) ----
     (local.set $i (i32.const 0))
@@ -1911,6 +2015,102 @@
       (local.set $px_row (i32.add (local.get $px_row) (i32.const 1)))
       (br $row_lp)))
 
+    ;; ---- Draw sun or moon in the sky ----
+    ;; Sun visible when day_phase 48..208 (daytime)
+    ;; Moon visible when day_phase 0..48 or 208..255 (nighttime)
+    ;; Sun/Moon position: circle across the sky arc
+    ;; Sun angle = (day_phase - 48) * PI / 160 → 0 at sunrise, PI at sunset
+    ;; Screen X center based on sun direction relative to player yaw
+
+    ;; Sun: phase 48-208
+    (if (i32.and (i32.ge_u (local.get $day_phase) (i32.const 48))
+                 (i32.lt_u (local.get $day_phase) (i32.const 208)))
+      (then
+        ;; sun_angle = (phase-48) * pi / 160  → 0..pi
+        ;; sun Y on screen: sin(sun_angle) → 0..1..0, map to row 10..90
+        ;; sun X on screen: cos(sun_angle) → 1..-1, map to col 40..280
+        ;; Simple: sx = 280 - (phase-48) * 240 / 160 = 280 - (phase-48)*3/2
+        (local.set $sun_sx (i32.sub (i32.const 280)
+          (i32.div_u (i32.mul (i32.sub (local.get $day_phase) (i32.const 48)) (i32.const 3)) (i32.const 2))))
+        ;; sy: parabolic arc. peak at phase=128 (noon), edges at 48/208
+        ;; normalized t = (phase-128), t in [-80,80]
+        ;; sy = 15 + (80*80 - t*t) * 60 / (80*80)
+        (local.set $sun_sy (i32.sub (local.get $day_phase) (i32.const 128)))
+        (local.set $sun_sy (i32.add (i32.const 15)
+          (i32.div_u (i32.mul
+            (i32.sub (i32.const 6400) (i32.mul (local.get $sun_sy) (local.get $sun_sy)))
+            (i32.const 55)) (i32.const 6400))))
+        ;; Draw sun disc (radius 5)
+        (local.set $sun_dy (i32.const -5))
+        (block $sd_done (loop $sd_lp
+          (br_if $sd_done (i32.gt_s (local.get $sun_dy) (i32.const 5)))
+          (local.set $sun_dx (i32.const -5))
+          (block $sd2_done (loop $sd2_lp
+            (br_if $sd2_done (i32.gt_s (local.get $sun_dx) (i32.const 5)))
+            (local.set $sun_r2 (i32.add
+              (i32.mul (local.get $sun_dx) (local.get $sun_dx))
+              (i32.mul (local.get $sun_dy) (local.get $sun_dy))))
+            (if (i32.le_u (local.get $sun_r2) (i32.const 9))
+              (then (call $put_pixel
+                (i32.add (local.get $sun_sx) (local.get $sun_dx))
+                (i32.add (local.get $sun_sy) (local.get $sun_dy))
+                (i32.const 210)))  ;; sun core
+            (else (if (i32.le_u (local.get $sun_r2) (i32.const 25))
+              (then (call $put_pixel
+                (i32.add (local.get $sun_sx) (local.get $sun_dx))
+                (i32.add (local.get $sun_sy) (local.get $sun_dy))
+                (i32.const 209))))))  ;; sun glow
+            (local.set $sun_dx (i32.add (local.get $sun_dx) (i32.const 1)))
+            (br $sd2_lp)))
+          (local.set $sun_dy (i32.add (local.get $sun_dy) (i32.const 1)))
+          (br $sd_lp)))))
+
+    ;; Moon: phase 0..48 or 208..255
+    (if (i32.or (i32.lt_u (local.get $day_phase) (i32.const 48))
+                (i32.ge_u (local.get $day_phase) (i32.const 208)))
+      (then
+        ;; Moon arc: normalize night phase 0..96 (208..255=0..47, 0..48=48..96)
+        ;; moon_t = phase < 48 ? phase+48 : phase-208
+        (if (i32.lt_u (local.get $day_phase) (i32.const 48))
+          (then (local.set $sun_sx (i32.add (local.get $day_phase) (i32.const 48))))
+          (else (local.set $sun_sx (i32.sub (local.get $day_phase) (i32.const 208)))))
+        ;; sx = 280 - moon_t * 240 / 96 = 280 - moon_t * 5 / 2
+        (local.set $sun_sy (local.get $sun_sx))  ;; save moon_t
+        (local.set $sun_sx (i32.sub (i32.const 280)
+          (i32.div_u (i32.mul (local.get $sun_sy) (i32.const 5)) (i32.const 2))))
+        ;; sy: parabolic, peak at moon_t=48, edges at 0/96
+        ;; t = moon_t - 48, t in [-48,48]
+        ;; sy = 20 + (48*48 - t*t) * 50 / (48*48)
+        (local.set $sun_sy (i32.sub (local.get $sun_sy) (i32.const 48)))
+        (local.set $sun_sy (i32.add (i32.const 20)
+          (i32.div_u (i32.mul
+            (i32.sub (i32.const 2304) (i32.mul (local.get $sun_sy) (local.get $sun_sy)))
+            (i32.const 50)) (i32.const 2304))))
+        ;; Draw moon disc (radius 4)
+        (local.set $sun_dy (i32.const -4))
+        (block $md_done (loop $md_lp
+          (br_if $md_done (i32.gt_s (local.get $sun_dy) (i32.const 4)))
+          (local.set $sun_dx (i32.const -4))
+          (block $md2_done (loop $md2_lp
+            (br_if $md2_done (i32.gt_s (local.get $sun_dx) (i32.const 4)))
+            (local.set $sun_r2 (i32.add
+              (i32.mul (local.get $sun_dx) (local.get $sun_dx))
+              (i32.mul (local.get $sun_dy) (local.get $sun_dy))))
+            (if (i32.le_u (local.get $sun_r2) (i32.const 6))
+              (then (call $put_pixel
+                (i32.add (local.get $sun_sx) (local.get $sun_dx))
+                (i32.add (local.get $sun_sy) (local.get $sun_dy))
+                (i32.const 211)))  ;; moon core
+            (else (if (i32.le_u (local.get $sun_r2) (i32.const 16))
+              (then (call $put_pixel
+                (i32.add (local.get $sun_sx) (local.get $sun_dx))
+                (i32.add (local.get $sun_sy) (local.get $sun_dy))
+                (i32.const 212))))))  ;; moon dim
+            (local.set $sun_dx (i32.add (local.get $sun_dx) (i32.const 1)))
+            (br $md2_lp)))
+          (local.set $sun_dy (i32.add (local.get $sun_dy) (i32.const 1)))
+          (br $md_lp)))))
+
     ;; ---- Crosshair ---- (special white at 204)
     (call $put_pixel (i32.const 160) (i32.const 98) (i32.const 204))
     (call $put_pixel (i32.const 160) (i32.const 99) (i32.const 204))
@@ -1922,6 +2122,26 @@
     (call $put_pixel (i32.const 162) (i32.const 100) (i32.const 204))
 
     ;; ---- HUD ----
+    ;; Time display (top-right)
+    ;; Draw hour:minute
+    (if (i32.lt_u (local.get $game_hour) (i32.const 10))
+      (then
+        (call $draw_char (i32.const 48) (i32.const 275) (i32.const 2) (i32.const 247))
+        (call $draw_num (local.get $game_hour) (i32.const 280) (i32.const 2) (i32.const 247)))
+      (else
+        (call $draw_num (local.get $game_hour) (i32.const 275) (i32.const 2) (i32.const 247))))
+    (call $draw_str (i32.const 0x190E0) (i32.const 285) (i32.const 2) (i32.const 247))
+    (if (i32.lt_u (local.get $game_min) (i32.const 10))
+      (then
+        (call $draw_char (i32.const 48) (i32.const 290) (i32.const 2) (i32.const 247))
+        (call $draw_num (local.get $game_min) (i32.const 295) (i32.const 2) (i32.const 247)))
+      (else
+        (call $draw_num (local.get $game_min) (i32.const 290) (i32.const 2) (i32.const 247))))
+    ;; Day/Night indicator
+    (if (i32.gt_u (local.get $day_bright) (i32.const 128))
+      (then (call $draw_char (i32.const 42) (i32.const 305) (i32.const 2) (i32.const 205)))  ;; * = sun
+      (else (call $draw_char (i32.const 111) (i32.const 305) (i32.const 2) (i32.const 245))))  ;; o = moon
+
     (call $draw_str (i32.const 0x190C0) (i32.const 2) (i32.const 2) (i32.const 247))
     (call $draw_num (i32.load (i32.const 0x10390)) (i32.const 32) (i32.const 2) (i32.const 247))
     (call $draw_str (i32.const 0x190D0) (i32.const 57) (i32.const 2) (i32.const 245))
