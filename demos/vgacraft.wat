@@ -877,14 +877,14 @@
   ;; ---- Block color: returns palette index ----
   ;; face: 0=top, 1=side+X, 2=side-X, 3=side+Y, 4=side-Y, 5=bottom
   ;; We simplify to: 0=top(bright), 1=side-bright, 2=side-dim, 3=bottom(dark)
-  ;; Now uses 16 shades per block type for smoother lighting
+  ;; 16 base colors × 16 light levels: index = (type+1)*16 + shade
   (func $block_color (param $type i32) (param $face i32) (param $shade i32) (result i32)
     (local $base i32)
     local.get $type
+    i32.const 1
+    i32.add
     i32.const 16
     i32.mul
-    i32.const 8
-    i32.sub
     local.set $base
     ;; Top face gets +4 brightness
     local.get $face
@@ -1114,1023 +1114,24 @@
     i32.const 42069
     i32.store
 
-    ;; Palette 0: black
-    i32.const 0
-    i32.const 0
-    i32.const 0
-    i32.const 0
-    call $set_pal
-
-    ;; Palette 1-7: sky gradient
-    i32.const 1
-    i32.const 40
-    i32.const 80
-    i32.const 180
-    call $set_pal
-    i32.const 2
-    i32.const 50
-    i32.const 95
-    i32.const 190
-    call $set_pal
-    i32.const 3
-    i32.const 65
-    i32.const 110
-    i32.const 200
-    call $set_pal
-    i32.const 4
-    i32.const 80
-    i32.const 130
-    i32.const 210
-    call $set_pal
-    i32.const 5
-    i32.const 100
-    i32.const 150
-    i32.const 220
-    call $set_pal
-    i32.const 6
-    i32.const 120
-    i32.const 170
-    i32.const 230
-    call $set_pal
-    i32.const 7
-    i32.const 140
-    i32.const 190
-    i32.const 240
-    call $set_pal
-
     ;; ================================================================
-    ;; 16-shade block palettes for smooth lighting + dithering
-    ;; Each block type gets 16 entries: dark(0) → bright(15)
-    ;; Layout: type*16 - 8 + shade = palette index
-    ;; Type 1 (grass):  8-23
-    ;; Type 2 (dirt):   24-39
-    ;; Type 3 (stone):  40-55
-    ;; Type 4 (sand):   56-71
-    ;; Type 5 (water):  72-87
-    ;; Type 6 (wood):   88-103
-    ;; Type 7 (leaves): 104-119
-    ;; Type 8 (coal):   120-135
+    ;; Simple palette: 16 base colors × 16 light levels = 256 colors
+    ;; index = base * 16 + light (light 0=darkest, 15=brightest)
+    ;; Base 0:  black/void       Base 8:  leaves green
+    ;; Base 1:  sky blue         Base 9:  coal dark gray
+    ;; Base 2:  grass green      Base 10: creeper green
+    ;; Base 3:  dirt brown       Base 11: zombie brown-green
+    ;; Base 4:  stone gray       Base 12: skeleton bone
+    ;; Base 5:  sand yellow      Base 13: white (HUD/crosshair)
+    ;; Base 6:  water blue       Base 14: red (damage/health)
+    ;; Base 7:  wood brown       Base 15: yellow/gold (sun)
+    ;; Block type N uses base (N+1): grass=2, dirt=3, etc.
     ;; ================================================================
+    ;; Palette is already set by harness defaultPalette(), no need to
+    ;; set individual entries — the harness generates the 16×16 palette.
+    ;; We only need to skip to player init.
 
-    ;; Block type 1: grass → palette 8..23 (16 shades)
-    i32.const 8
-    i32.const 12
-    i32.const 30
-    i32.const 5
-    call $set_pal
-    i32.const 9
-    i32.const 18
-    i32.const 45
-    i32.const 8
-    call $set_pal
-    i32.const 10
-    i32.const 24
-    i32.const 58
-    i32.const 10
-    call $set_pal
-    i32.const 11
-    i32.const 30
-    i32.const 72
-    i32.const 14
-    call $set_pal
-    i32.const 12
-    i32.const 38
-    i32.const 88
-    i32.const 18
-    call $set_pal
-    i32.const 13
-    i32.const 45
-    i32.const 102
-    i32.const 22
-    call $set_pal
-    i32.const 14
-    i32.const 52
-    i32.const 118
-    i32.const 26
-    call $set_pal
-    i32.const 15
-    i32.const 60
-    i32.const 132
-    i32.const 30
-    call $set_pal
-    i32.const 16
-    i32.const 68
-    i32.const 148
-    i32.const 35
-    call $set_pal
-    i32.const 17
-    i32.const 76
-    i32.const 162
-    i32.const 40
-    call $set_pal
-    i32.const 18
-    i32.const 84
-    i32.const 175
-    i32.const 45
-    call $set_pal
-    i32.const 19
-    i32.const 92
-    i32.const 188
-    i32.const 50
-    call $set_pal
-    i32.const 20
-    i32.const 100
-    i32.const 200
-    i32.const 55
-    call $set_pal
-    i32.const 21
-    i32.const 110
-    i32.const 212
-    i32.const 62
-    call $set_pal
-    i32.const 22
-    i32.const 120
-    i32.const 222
-    i32.const 70
-    call $set_pal
-    i32.const 23
-    i32.const 132
-    i32.const 232
-    i32.const 80
-    call $set_pal
-
-    ;; Block type 2: dirt → palette 24..39 (16 shades)
-    i32.const 24
-    i32.const 28
-    i32.const 15
-    i32.const 5
-    call $set_pal
-    i32.const 25
-    i32.const 38
-    i32.const 20
-    i32.const 7
-    call $set_pal
-    i32.const 26
-    i32.const 48
-    i32.const 26
-    i32.const 9
-    call $set_pal
-    i32.const 27
-    i32.const 58
-    i32.const 32
-    i32.const 12
-    call $set_pal
-    i32.const 28
-    i32.const 68
-    i32.const 40
-    i32.const 15
-    call $set_pal
-    i32.const 29
-    i32.const 80
-    i32.const 48
-    i32.const 18
-    call $set_pal
-    i32.const 30
-    i32.const 90
-    i32.const 58
-    i32.const 22
-    call $set_pal
-    i32.const 31
-    i32.const 102
-    i32.const 68
-    i32.const 26
-    call $set_pal
-    i32.const 32
-    i32.const 112
-    i32.const 78
-    i32.const 30
-    call $set_pal
-    i32.const 33
-    i32.const 124
-    i32.const 88
-    i32.const 36
-    call $set_pal
-    i32.const 34
-    i32.const 135
-    i32.const 98
-    i32.const 42
-    call $set_pal
-    i32.const 35
-    i32.const 146
-    i32.const 108
-    i32.const 48
-    call $set_pal
-    i32.const 36
-    i32.const 156
-    i32.const 118
-    i32.const 54
-    call $set_pal
-    i32.const 37
-    i32.const 166
-    i32.const 128
-    i32.const 60
-    call $set_pal
-    i32.const 38
-    i32.const 176
-    i32.const 138
-    i32.const 68
-    call $set_pal
-    i32.const 39
-    i32.const 186
-    i32.const 148
-    i32.const 76
-    call $set_pal
-
-    ;; Block type 3: stone → palette 40..55 (16 shades)
-    i32.const 40
-    i32.const 30
-    i32.const 30
-    i32.const 34
-    call $set_pal
-    i32.const 41
-    i32.const 40
-    i32.const 40
-    i32.const 44
-    call $set_pal
-    i32.const 42
-    i32.const 50
-    i32.const 50
-    i32.const 55
-    call $set_pal
-    i32.const 43
-    i32.const 60
-    i32.const 60
-    i32.const 66
-    call $set_pal
-    i32.const 44
-    i32.const 70
-    i32.const 70
-    i32.const 77
-    call $set_pal
-    i32.const 45
-    i32.const 80
-    i32.const 80
-    i32.const 88
-    call $set_pal
-    i32.const 46
-    i32.const 90
-    i32.const 90
-    i32.const 98
-    call $set_pal
-    i32.const 47
-    i32.const 100
-    i32.const 100
-    i32.const 108
-    call $set_pal
-    i32.const 48
-    i32.const 110
-    i32.const 110
-    i32.const 118
-    call $set_pal
-    i32.const 49
-    i32.const 120
-    i32.const 120
-    i32.const 128
-    call $set_pal
-    i32.const 50
-    i32.const 130
-    i32.const 130
-    i32.const 138
-    call $set_pal
-    i32.const 51
-    i32.const 140
-    i32.const 140
-    i32.const 148
-    call $set_pal
-    i32.const 52
-    i32.const 150
-    i32.const 150
-    i32.const 158
-    call $set_pal
-    i32.const 53
-    i32.const 160
-    i32.const 160
-    i32.const 168
-    call $set_pal
-    i32.const 54
-    i32.const 172
-    i32.const 172
-    i32.const 180
-    call $set_pal
-    i32.const 55
-    i32.const 185
-    i32.const 185
-    i32.const 192
-    call $set_pal
-
-    ;; Block type 4: sand → palette 56..71 (16 shades)
-    i32.const 56
-    i32.const 90
-    i32.const 75
-    i32.const 35
-    call $set_pal
-    i32.const 57
-    i32.const 105
-    i32.const 88
-    i32.const 42
-    call $set_pal
-    i32.const 58
-    i32.const 118
-    i32.const 100
-    i32.const 48
-    call $set_pal
-    i32.const 59
-    i32.const 132
-    i32.const 112
-    i32.const 55
-    call $set_pal
-    i32.const 60
-    i32.const 145
-    i32.const 124
-    i32.const 62
-    call $set_pal
-    i32.const 61
-    i32.const 158
-    i32.const 136
-    i32.const 70
-    call $set_pal
-    i32.const 62
-    i32.const 170
-    i32.const 148
-    i32.const 78
-    call $set_pal
-    i32.const 63
-    i32.const 182
-    i32.const 158
-    i32.const 86
-    call $set_pal
-    i32.const 64
-    i32.const 194
-    i32.const 170
-    i32.const 95
-    call $set_pal
-    i32.const 65
-    i32.const 205
-    i32.const 180
-    i32.const 104
-    call $set_pal
-    i32.const 66
-    i32.const 214
-    i32.const 190
-    i32.const 112
-    call $set_pal
-    i32.const 67
-    i32.const 222
-    i32.const 200
-    i32.const 122
-    call $set_pal
-    i32.const 68
-    i32.const 230
-    i32.const 210
-    i32.const 132
-    call $set_pal
-    i32.const 69
-    i32.const 236
-    i32.const 218
-    i32.const 142
-    call $set_pal
-    i32.const 70
-    i32.const 242
-    i32.const 226
-    i32.const 152
-    call $set_pal
-    i32.const 71
-    i32.const 248
-    i32.const 234
-    i32.const 165
-    call $set_pal
-
-    ;; Block type 5: water → palette 72..87 (16 shades)
-    i32.const 72
-    i32.const 5
-    i32.const 15
-    i32.const 55
-    call $set_pal
-    i32.const 73
-    i32.const 8
-    i32.const 22
-    i32.const 70
-    call $set_pal
-    i32.const 74
-    i32.const 12
-    i32.const 30
-    i32.const 85
-    call $set_pal
-    i32.const 75
-    i32.const 16
-    i32.const 40
-    i32.const 100
-    call $set_pal
-    i32.const 76
-    i32.const 22
-    i32.const 50
-    i32.const 118
-    call $set_pal
-    i32.const 77
-    i32.const 28
-    i32.const 62
-    i32.const 135
-    call $set_pal
-    i32.const 78
-    i32.const 35
-    i32.const 75
-    i32.const 152
-    call $set_pal
-    i32.const 79
-    i32.const 42
-    i32.const 88
-    i32.const 168
-    call $set_pal
-    i32.const 80
-    i32.const 50
-    i32.const 100
-    i32.const 182
-    call $set_pal
-    i32.const 81
-    i32.const 58
-    i32.const 112
-    i32.const 195
-    call $set_pal
-    i32.const 82
-    i32.const 66
-    i32.const 125
-    i32.const 206
-    call $set_pal
-    i32.const 83
-    i32.const 75
-    i32.const 138
-    i32.const 216
-    call $set_pal
-    i32.const 84
-    i32.const 85
-    i32.const 150
-    i32.const 224
-    call $set_pal
-    i32.const 85
-    i32.const 95
-    i32.const 162
-    i32.const 232
-    call $set_pal
-    i32.const 86
-    i32.const 108
-    i32.const 175
-    i32.const 238
-    call $set_pal
-    i32.const 87
-    i32.const 120
-    i32.const 188
-    i32.const 245
-    call $set_pal
-
-    ;; Block type 6: wood → palette 88..103 (16 shades)
-    i32.const 88
-    i32.const 20
-    i32.const 10
-    i32.const 3
-    call $set_pal
-    i32.const 89
-    i32.const 28
-    i32.const 15
-    i32.const 5
-    call $set_pal
-    i32.const 90
-    i32.const 36
-    i32.const 20
-    i32.const 7
-    call $set_pal
-    i32.const 91
-    i32.const 45
-    i32.const 25
-    i32.const 10
-    call $set_pal
-    i32.const 92
-    i32.const 55
-    i32.const 32
-    i32.const 13
-    call $set_pal
-    i32.const 93
-    i32.const 64
-    i32.const 38
-    i32.const 16
-    call $set_pal
-    i32.const 94
-    i32.const 74
-    i32.const 45
-    i32.const 20
-    call $set_pal
-    i32.const 95
-    i32.const 84
-    i32.const 52
-    i32.const 24
-    call $set_pal
-    i32.const 96
-    i32.const 94
-    i32.const 60
-    i32.const 28
-    call $set_pal
-    i32.const 97
-    i32.const 104
-    i32.const 68
-    i32.const 33
-    call $set_pal
-    i32.const 98
-    i32.const 112
-    i32.const 76
-    i32.const 38
-    call $set_pal
-    i32.const 99
-    i32.const 122
-    i32.const 84
-    i32.const 43
-    call $set_pal
-    i32.const 100
-    i32.const 130
-    i32.const 92
-    i32.const 48
-    call $set_pal
-    i32.const 101
-    i32.const 140
-    i32.const 100
-    i32.const 54
-    call $set_pal
-    i32.const 102
-    i32.const 148
-    i32.const 108
-    i32.const 60
-    call $set_pal
-    i32.const 103
-    i32.const 158
-    i32.const 118
-    i32.const 68
-    call $set_pal
-
-    ;; Block type 7: leaves → palette 104..119 (16 shades)
-    i32.const 104
-    i32.const 5
-    i32.const 22
-    i32.const 3
-    call $set_pal
-    i32.const 105
-    i32.const 8
-    i32.const 32
-    i32.const 5
-    call $set_pal
-    i32.const 106
-    i32.const 12
-    i32.const 42
-    i32.const 7
-    call $set_pal
-    i32.const 107
-    i32.const 18
-    i32.const 55
-    i32.const 10
-    call $set_pal
-    i32.const 108
-    i32.const 24
-    i32.const 68
-    i32.const 14
-    call $set_pal
-    i32.const 109
-    i32.const 30
-    i32.const 82
-    i32.const 18
-    call $set_pal
-    i32.const 110
-    i32.const 38
-    i32.const 98
-    i32.const 24
-    call $set_pal
-    i32.const 111
-    i32.const 46
-    i32.const 112
-    i32.const 30
-    call $set_pal
-    i32.const 112
-    i32.const 55
-    i32.const 128
-    i32.const 36
-    call $set_pal
-    i32.const 113
-    i32.const 64
-    i32.const 142
-    i32.const 42
-    call $set_pal
-    i32.const 114
-    i32.const 72
-    i32.const 156
-    i32.const 48
-    call $set_pal
-    i32.const 115
-    i32.const 82
-    i32.const 170
-    i32.const 55
-    call $set_pal
-    i32.const 116
-    i32.const 90
-    i32.const 182
-    i32.const 62
-    call $set_pal
-    i32.const 117
-    i32.const 100
-    i32.const 195
-    i32.const 70
-    call $set_pal
-    i32.const 118
-    i32.const 112
-    i32.const 206
-    i32.const 78
-    call $set_pal
-    i32.const 119
-    i32.const 125
-    i32.const 218
-    i32.const 88
-    call $set_pal
-
-    ;; Block type 8: coal ore → palette 120..135 (16 shades)
-    i32.const 120
-    i32.const 12
-    i32.const 12
-    i32.const 14
-    call $set_pal
-    i32.const 121
-    i32.const 18
-    i32.const 18
-    i32.const 21
-    call $set_pal
-    i32.const 122
-    i32.const 25
-    i32.const 25
-    i32.const 28
-    call $set_pal
-    i32.const 123
-    i32.const 32
-    i32.const 32
-    i32.const 36
-    call $set_pal
-    i32.const 124
-    i32.const 40
-    i32.const 40
-    i32.const 45
-    call $set_pal
-    i32.const 125
-    i32.const 48
-    i32.const 48
-    i32.const 54
-    call $set_pal
-    i32.const 126
-    i32.const 58
-    i32.const 58
-    i32.const 64
-    call $set_pal
-    i32.const 127
-    i32.const 66
-    i32.const 66
-    i32.const 74
-    call $set_pal
-    i32.const 128
-    i32.const 76
-    i32.const 76
-    i32.const 84
-    call $set_pal
-    i32.const 129
-    i32.const 85
-    i32.const 85
-    i32.const 94
-    call $set_pal
-    i32.const 130
-    i32.const 95
-    i32.const 95
-    i32.const 104
-    call $set_pal
-    i32.const 131
-    i32.const 105
-    i32.const 105
-    i32.const 114
-    call $set_pal
-    i32.const 132
-    i32.const 115
-    i32.const 115
-    i32.const 124
-    call $set_pal
-    i32.const 133
-    i32.const 125
-    i32.const 125
-    i32.const 135
-    call $set_pal
-    i32.const 134
-    i32.const 136
-    i32.const 136
-    i32.const 146
-    call $set_pal
-    i32.const 135
-    i32.const 148
-    i32.const 148
-    i32.const 158
-    call $set_pal
-
-    ;; Fog palette 136-151 (16 shades)
-    i32.const 0
-    local.set $i
-    block $done
-      loop $lp
-        local.get $i
-        i32.const 16
-        i32.ge_u
-        br_if $done
-        i32.const 136
-        local.get $i
-        i32.add
-        i32.const 100
-        local.get $i
-        i32.const 4
-        i32.mul
-        i32.add
-        i32.const 130
-        local.get $i
-        i32.const 4
-        i32.mul
-        i32.add
-        i32.const 170
-        local.get $i
-        i32.const 3
-        i32.mul
-        i32.add
-        call $set_pal
-        local.get $i
-        i32.const 1
-        i32.add
-        local.set $i
-        br $lp
-      end
-    end
-
-    ;; Water shimmer 152-155
-    i32.const 152
-    i32.const 40
-    i32.const 90
-    i32.const 175
-    call $set_pal
-    i32.const 153
-    i32.const 55
-    i32.const 115
-    i32.const 200
-    call $set_pal
-    i32.const 154
-    i32.const 70
-    i32.const 140
-    i32.const 220
-    call $set_pal
-    i32.const 155
-    i32.const 100
-    i32.const 170
-    i32.const 240
-    call $set_pal
-
-    ;; Monster palettes
-    ;; 156-171: Creeper (green)
-    i32.const 0
-    local.set $i
-    block $done
-      loop $lp
-        local.get $i
-        i32.const 16
-        i32.ge_u
-        br_if $done
-        i32.const 156
-        local.get $i
-        i32.add
-        local.get $i
-        i32.const 4
-        i32.mul
-        i32.const 40
-        local.get $i
-        i32.const 12
-        i32.mul
-        i32.add
-        local.get $i
-        i32.const 2
-        i32.mul
-        call $set_pal
-        local.get $i
-        i32.const 1
-        i32.add
-        local.set $i
-        br $lp
-      end
-    end
-
-    ;; 172-187: Zombie (brownish)
-    i32.const 0
-    local.set $i
-    block $done
-      loop $lp
-        local.get $i
-        i32.const 16
-        i32.ge_u
-        br_if $done
-        i32.const 172
-        local.get $i
-        i32.add
-        i32.const 40
-        local.get $i
-        i32.const 8
-        i32.mul
-        i32.add
-        i32.const 50
-        local.get $i
-        i32.const 6
-        i32.mul
-        i32.add
-        i32.const 20
-        local.get $i
-        i32.const 3
-        i32.mul
-        i32.add
-        call $set_pal
-        local.get $i
-        i32.const 1
-        i32.add
-        local.set $i
-        br $lp
-      end
-    end
-
-    ;; 188-203: Skeleton (bone white)
-    i32.const 0
-    local.set $i
-    block $done
-      loop $lp
-        local.get $i
-        i32.const 16
-        i32.ge_u
-        br_if $done
-        i32.const 188
-        local.get $i
-        i32.add
-        i32.const 120
-        local.get $i
-        i32.const 8
-        i32.mul
-        i32.add
-        i32.const 115
-        local.get $i
-        i32.const 8
-        i32.mul
-        i32.add
-        i32.const 100
-        local.get $i
-        i32.const 8
-        i32.mul
-        i32.add
-        call $set_pal
-        local.get $i
-        i32.const 1
-        i32.add
-        local.set $i
-        br $lp
-      end
-    end
-
-    ;; HUD: 240-247 white, 248-255 red
-    i32.const 0
-    local.set $i
-    block $done
-      loop $lp
-        local.get $i
-        i32.const 8
-        i32.ge_u
-        br_if $done
-        i32.const 240
-        local.get $i
-        i32.add
-        i32.const 128
-        local.get $i
-        i32.const 16
-        i32.mul
-        i32.add
-        i32.const 128
-        local.get $i
-        i32.const 16
-        i32.mul
-        i32.add
-        i32.const 128
-        local.get $i
-        i32.const 16
-        i32.mul
-        i32.add
-        call $set_pal
-        i32.const 248
-        local.get $i
-        i32.add
-        i32.const 128
-        local.get $i
-        i32.const 16
-        i32.mul
-        i32.add
-        local.get $i
-        i32.const 4
-        i32.mul
-        local.get $i
-        i32.const 4
-        i32.mul
-        call $set_pal
-        local.get $i
-        i32.const 1
-        i32.add
-        local.set $i
-        br $lp
-      end
-    end
-
-    ;; Special colors (moved to 204+)
-    i32.const 204
-    i32.const 255
-    i32.const 255
-    i32.const 255
-    call $set_pal
-    i32.const 205
-    i32.const 255
-    i32.const 255
-    i32.const 100
-    call $set_pal
-    i32.const 206
-    i32.const 20
-    i32.const 15
-    i32.const 15
-    call $set_pal
-    i32.const 207
-    i32.const 255
-    i32.const 50
-    i32.const 50
-    call $set_pal
-    i32.const 208
-    i32.const 50
-    i32.const 255
-    i32.const 100
-    call $set_pal
-    ;; Sun/moon palette entries
-    i32.const 209
-    i32.const 255
-    i32.const 252
-    i32.const 240
-    call $set_pal
-    i32.const 210
-    i32.const 255
-    i32.const 245
-    i32.const 200
-    call $set_pal
-    i32.const 211
-    i32.const 200
-    i32.const 210
-    i32.const 235
-    call $set_pal
-    i32.const 212
-    i32.const 170
-    i32.const 180
-    i32.const 210
-    call $set_pal
-    i32.const 213
-    i32.const 255
-    i32.const 140
-    i32.const 50
-    call $set_pal
-    i32.const 214
-    i32.const 255
-    i32.const 235
-    i32.const 160
-    call $set_pal
-    i32.const 215
-    i32.const 255
-    i32.const 215
-    i32.const 120
-    call $set_pal
-    i32.const 216
-    i32.const 255
-    i32.const 200
-    i32.const 100
-    call $set_pal
-    i32.const 217
-    i32.const 250
-    i32.const 185
-    i32.const 95
-    call $set_pal
-    i32.const 218
-    i32.const 240
-    i32.const 175
-    i32.const 110
-    call $set_pal
-    i32.const 219
-    i32.const 220
-    i32.const 190
-    i32.const 150
-    call $set_pal
-    i32.const 220
-    i32.const 190
-    i32.const 200
-    i32.const 210
-    call $set_pal
-
-    ;; Initialize player position
+    ;; Initialize player position (palette already set by harness)
     i32.const 0x10344
     f64.const 32.5
     f64.store
@@ -5547,83 +4548,42 @@
       end
     end
 
-    ;; Update 7 sky gradient palette entries (1-7)
+    ;; Update sky palette (base 1 = indices 16..31) based on day brightness
+    ;; Sky base color at full bright: R=100, G=160, B=240
     i32.const 0
     local.set $i
     block $sky_done
       loop $sky_lp
         local.get $i
-        i32.const 7
+        i32.const 16
         i32.ge_u
         br_if $sky_done
-        ;; sky_r
-        i32.const 2
+        ;; sky_r = 100 * i/15 * day_bright/255
+        i32.const 100
         local.get $i
-        i32.const 2
         i32.mul
-        i32.add
-        i32.const 40
-        local.get $i
-        i32.const 15
-        i32.mul
-        i32.add
-        i32.const 2
-        local.get $i
-        i32.const 2
-        i32.mul
-        i32.add
-        i32.sub
         local.get $day_bright
         i32.mul
-        i32.const 255
+        i32.const 3825  ;; 15*255
         i32.div_u
-        i32.add
         local.set $sky_r
-        ;; sky_g
-        i32.const 2
+        ;; sky_g = 160 * i/15 * day_bright/255
+        i32.const 160
         local.get $i
-        i32.const 3
         i32.mul
-        i32.add
-        i32.const 80
-        local.get $i
-        i32.const 18
-        i32.mul
-        i32.add
-        i32.const 2
-        local.get $i
-        i32.const 3
-        i32.mul
-        i32.add
-        i32.sub
         local.get $day_bright
         i32.mul
-        i32.const 255
+        i32.const 3825
         i32.div_u
-        i32.add
         local.set $sky_g
-        ;; sky_b
-        i32.const 10
+        ;; sky_b = 240 * i/15 * day_bright/255
+        i32.const 240
         local.get $i
-        i32.const 5
         i32.mul
-        i32.add
-        i32.const 180
-        local.get $i
-        i32.const 10
-        i32.mul
-        i32.add
-        i32.const 10
-        local.get $i
-        i32.const 5
-        i32.mul
-        i32.add
-        i32.sub
         local.get $day_bright
         i32.mul
-        i32.const 255
+        i32.const 3825
         i32.div_u
-        i32.add
         local.set $sky_b
         ;; Clamp
         local.get $sky_r
@@ -5638,8 +4598,9 @@
         i32.const 255
         i32.gt_u
         if  i32.const 255  local.set $sky_b  end
+        ;; Write to palette index 16 + i
+        i32.const 16
         local.get $i
-        i32.const 1
         i32.add
         local.get $sky_r
         local.get $sky_g
@@ -5650,66 +4611,6 @@
         i32.add
         local.set $i
         br $sky_lp
-      end
-    end
-
-    ;; Update fog palette (136-151) based on day brightness
-    i32.const 0
-    local.set $i
-    block $fog_done
-      loop $fog_lp
-        local.get $i
-        i32.const 16
-        i32.ge_u
-        br_if $fog_done
-        i32.const 5
-        i32.const 95
-        local.get $i
-        i32.const 4
-        i32.mul
-        i32.add
-        local.get $day_bright
-        i32.mul
-        i32.const 255
-        i32.div_u
-        i32.add
-        local.set $sky_r
-        i32.const 5
-        i32.const 125
-        local.get $i
-        i32.const 4
-        i32.mul
-        i32.add
-        local.get $day_bright
-        i32.mul
-        i32.const 255
-        i32.div_u
-        i32.add
-        local.set $sky_g
-        i32.const 15
-        i32.const 155
-        local.get $i
-        i32.const 3
-        i32.mul
-        i32.add
-        local.get $day_bright
-        i32.mul
-        i32.const 255
-        i32.div_u
-        i32.add
-        local.set $sky_b
-        i32.const 136
-        local.get $i
-        i32.add
-        local.get $sky_r
-        local.get $sky_g
-        local.get $sky_b
-        call $set_pal
-        local.get $i
-        i32.const 1
-        i32.add
-        local.set $i
-        br $fog_lp
       end
     end
 
@@ -5733,6 +4634,13 @@
         local.set $m_active
         local.get $m_active
         if
+          ;; Monster type at offset +4 (0=creep,1=zombie,2=skeleton)
+          ;; Palette base = (m_type + 10) * 16 → base 10,11,12
+          local.get $m_addr
+          i32.const 4
+          i32.add
+          i32.load
+          local.set $m_type
           local.get $m_addr
           i32.const 8
           i32.add
@@ -6289,22 +5197,22 @@
               i32.gt_s
               if  i32.const 15  local.set $shade  end
 
-              ;; Color = base for block type + shade
+              ;; Color = (type+1)*16 + shade
               local.get $hit_type
+              i32.const 1
+              i32.add
               i32.const 16
               i32.mul
-              i32.const 8
-              i32.sub
               local.get $shade
               i32.add
               local.set $color
 
-              ;; Water shimmer
+              ;; Water shimmer: use base 6 (water) shades 8..11
               local.get $hit_type
               i32.const 5
               i32.eq
               if
-                i32.const 152
+                i32.const 104  ;; base 6 * 16 + 8
                 local.get $tex_u
                 local.get $tex_v
                 i32.add
@@ -6318,12 +5226,12 @@
                 local.set $color
               end
 
-              ;; Distance fog blend
+              ;; Distance fog blend: use sky base (1*16=16) shades
               local.get $dist
               f64.const 18.0
               f64.gt
               if
-                i32.const 136
+                i32.const 16  ;; base 1 (sky) shade 0
                 local.get $dist
                 f64.const 18.0
                 f64.sub
@@ -6333,9 +5241,9 @@
                 i32.add
                 local.set $color
                 local.get $color
-                i32.const 151
+                i32.const 31  ;; max sky shade = 1*16+15
                 i32.gt_s
-                if  i32.const 151  local.set $color  end
+                if  i32.const 31  local.set $color  end
               end
 
               local.get $fb_addr
@@ -6391,241 +5299,29 @@
                   i32.const 300
                   i32.ge_s
                   if
+                    ;; Sun core: base 15 (yellow) shade 15 = 255
                     local.get $fb_addr
-                    i32.const 209
+                    i32.const 255
                     i32.store8
                   else
+                    ;; Sun glow: map shade_full (0..320) to yellow shades
+                    ;; base 15 = indices 240..255
+                    ;; shade = shade_full * 15 / 320 + a few
                     local.get $shade_full
-                    i32.const 280
-                    i32.ge_s
-                    if
-                      local.get $shade_full
-                      i32.const 280
-                      i32.sub
-                      i32.const 15
-                      i32.mul
-                      i32.const 4
-                      i32.shr_u
-                      local.set $shade_frac
-                      local.get $px_col
-                      local.get $px_row
-                      local.get $shade_frac
-                      call $dither_test
-                      if
-                        local.get $fb_addr
-                        i32.const 210
-                        i32.store8
-                      else
-                        local.get $fb_addr
-                        i32.const 214
-                        i32.store8
-                      end
-                    else
-                      local.get $shade_full
-                      i32.const 240
-                      i32.ge_s
-                      if
-                        local.get $shade_full
-                        i32.const 240
-                        i32.sub
-                        i32.const 15
-                        i32.mul
-                        i32.const 5
-                        i32.shr_u
-                        local.set $shade_frac
-                        local.get $px_col
-                        local.get $px_row
-                        local.get $shade_frac
-                        call $dither_test
-                        if
-                          local.get $fb_addr
-                          i32.const 214
-                          i32.store8
-                        else
-                          local.get $fb_addr
-                          i32.const 215
-                          i32.store8
-                        end
-                      else
-                        local.get $shade_full
-                        i32.const 200
-                        i32.ge_s
-                        if
-                          local.get $shade_full
-                          i32.const 200
-                          i32.sub
-                          i32.const 15
-                          i32.mul
-                          i32.const 5
-                          i32.shr_u
-                          local.set $shade_frac
-                          local.get $px_col
-                          local.get $px_row
-                          local.get $shade_frac
-                          call $dither_test
-                          if
-                            local.get $fb_addr
-                            i32.const 215
-                            i32.store8
-                          else
-                            local.get $fb_addr
-                            i32.const 216
-                            i32.store8
-                          end
-                        else
-                          local.get $shade_full
-                          i32.const 160
-                          i32.ge_s
-                          if
-                            local.get $shade_full
-                            i32.const 160
-                            i32.sub
-                            i32.const 15
-                            i32.mul
-                            i32.const 5
-                            i32.shr_u
-                            local.set $shade_frac
-                            local.get $px_col
-                            local.get $px_row
-                            local.get $shade_frac
-                            call $dither_test
-                            if
-                              local.get $fb_addr
-                              i32.const 216
-                              i32.store8
-                            else
-                              local.get $fb_addr
-                              i32.const 217
-                              i32.store8
-                            end
-                          else
-                            local.get $shade_full
-                            i32.const 120
-                            i32.ge_s
-                            if
-                              local.get $shade_full
-                              i32.const 120
-                              i32.sub
-                              i32.const 15
-                              i32.mul
-                              i32.const 5
-                              i32.shr_u
-                              local.set $shade_frac
-                              local.get $px_col
-                              local.get $px_row
-                              local.get $shade_frac
-                              call $dither_test
-                              if
-                                local.get $fb_addr
-                                i32.const 217
-                                i32.store8
-                              else
-                                local.get $fb_addr
-                                i32.const 218
-                                i32.store8
-                              end
-                            else
-                              local.get $shade_full
-                              i32.const 80
-                              i32.ge_s
-                              if
-                                local.get $shade_full
-                                i32.const 80
-                                i32.sub
-                                i32.const 15
-                                i32.mul
-                                i32.const 5
-                                i32.shr_u
-                                local.set $shade_frac
-                                local.get $px_col
-                                local.get $px_row
-                                local.get $shade_frac
-                                call $dither_test
-                                if
-                                  local.get $fb_addr
-                                  i32.const 218
-                                  i32.store8
-                                else
-                                  local.get $fb_addr
-                                  i32.const 219
-                                  i32.store8
-                                end
-                              else
-                                local.get $shade_full
-                                i32.const 40
-                                i32.ge_s
-                                if
-                                  local.get $shade_full
-                                  i32.const 40
-                                  i32.sub
-                                  i32.const 15
-                                  i32.mul
-                                  i32.const 5
-                                  i32.shr_u
-                                  local.set $shade_frac
-                                  local.get $px_col
-                                  local.get $px_row
-                                  local.get $shade_frac
-                                  call $dither_test
-                                  if
-                                    local.get $fb_addr
-                                    i32.const 219
-                                    i32.store8
-                                  else
-                                    local.get $fb_addr
-                                    i32.const 220
-                                    i32.store8
-                                  end
-                                else
-                                  ;; Outermost ring
-                                  local.get $shade_full
-                                  i32.const 15
-                                  i32.mul
-                                  i32.const 5
-                                  i32.shr_u
-                                  local.set $shade_frac
-                                  local.get $px_col
-                                  local.get $px_row
-                                  local.get $shade_frac
-                                  call $dither_test
-                                  if
-                                    local.get $fb_addr
-                                    i32.const 220
-                                    i32.store8
-                                  else
-                                    ;; Fall through to normal sky color
-                                    i32.const 111
-                                    local.get $ray_dz
-                                    f64.const 128.0
-                                    f64.mul
-                                    i32.trunc_f64_s
-                                    i32.sub
-                                    local.set $shade_full
-                                    local.get $shade_full
-                                    i32.const 0
-                                    i32.lt_s
-                                    if  i32.const 0  local.set $shade_full  end
-                                    local.get $shade_full
-                                    i32.const 111
-                                    i32.gt_s
-                                    if  i32.const 111  local.set $shade_full  end
-                                    local.get $shade_full
-                                    i32.const 4
-                                    i32.shr_u
-                                    i32.const 1
-                                    i32.add
-                                    local.set $sky_idx
-                                    local.get $fb_addr
-                                    local.get $sky_idx
-                                    i32.store8
-                                  end
-                                end
-                              end
-                            end
-                          end
-                        end
-                      end
-                    end
+                    i32.const 15
+                    i32.mul
+                    i32.const 320
+                    i32.div_u
+                    local.set $shade_frac
+                    local.get $shade_frac
+                    i32.const 15
+                    i32.gt_u
+                    if  i32.const 15  local.set $shade_frac  end
+                    local.get $fb_addr
+                    i32.const 240  ;; base 15 * 16
+                    local.get $shade_frac
+                    i32.add
+                    i32.store8
                   end
                 else
                   local.get $cel_active
@@ -6637,24 +5333,27 @@
                   f64.gt
                   i32.and
                   if
-                    ;; Moon hit
+                    ;; Moon hit: base 13 (white) shades
                     local.get $cel_dot
                     f64.const 0.998
                     f64.gt
                     if
+                      ;; Moon core: base 13 shade 13 = 221
                       local.get $fb_addr
-                      i32.const 211
+                      i32.const 221
                       i32.store8
                     else
+                      ;; Moon edge: base 13 shade 10 = 218
                       local.get $fb_addr
-                      i32.const 212
+                      i32.const 218
                       i32.store8
                     end
                   else
-                    ;; Normal sky gradient with dithering
-                    i32.const 111
+                    ;; Normal sky gradient: base 1 (sky) = indices 16..31
+                    ;; Map ray_dz to shade: higher = brighter
+                    i32.const 240
                     local.get $ray_dz
-                    f64.const 128.0
+                    f64.const 200.0
                     f64.mul
                     i32.trunc_f64_s
                     i32.sub
@@ -6664,42 +5363,31 @@
                     i32.lt_s
                     if  i32.const 0  local.set $shade_full  end
                     local.get $shade_full
-                    i32.const 111
+                    i32.const 240
                     i32.gt_s
-                    if  i32.const 111  local.set $shade_full  end
-                    local.get $shade_full
-                    i32.const 4
-                    i32.shr_u
-                    i32.const 1
-                    i32.add
-                    local.set $sky_idx
+                    if  i32.const 240  local.set $shade_full  end
+                    ;; Map 0..240 to shade 0..15
                     local.get $shade_full
                     i32.const 15
-                    i32.and
-                    local.set $shade_frac
-                    local.get $px_col
-                    local.get $px_row
-                    local.get $shade_frac
-                    call $dither_test
+                    i32.mul
+                    i32.const 240
+                    i32.div_u
+                    local.set $sky_idx
                     local.get $sky_idx
-                    i32.const 7
-                    i32.lt_s
-                    i32.and
-                    if
-                      local.get $sky_idx
-                      i32.const 1
-                      i32.add
-                      local.set $sky_idx
-                    end
+                    i32.const 15
+                    i32.gt_s
+                    if  i32.const 15  local.set $sky_idx  end
                     local.get $fb_addr
+                    i32.const 16  ;; base 1 * 16
                     local.get $sky_idx
+                    i32.add
                     i32.store8
                   end
                 end
               else
-                ;; Below horizon fog
+                ;; Below horizon fog: base 1 (sky) shade 8 = 24
                 local.get $fb_addr
-                i32.const 143
+                i32.const 24
                 i32.store8
               end
             end
@@ -6720,38 +5408,38 @@
       end
     end
 
-    ;; ---- Crosshair ----
+    ;; ---- Crosshair ---- (base 13 shade 15 = 223 = white bright)
     i32.const 160
     i32.const 98
-    i32.const 204
+    i32.const 223
     call $put_pixel
     i32.const 160
     i32.const 99
-    i32.const 204
+    i32.const 223
     call $put_pixel
     i32.const 160
     i32.const 101
-    i32.const 204
+    i32.const 223
     call $put_pixel
     i32.const 160
     i32.const 102
-    i32.const 204
+    i32.const 223
     call $put_pixel
     i32.const 158
     i32.const 100
-    i32.const 204
+    i32.const 223
     call $put_pixel
     i32.const 159
     i32.const 100
-    i32.const 204
+    i32.const 223
     call $put_pixel
     i32.const 161
     i32.const 100
-    i32.const 204
+    i32.const 223
     call $put_pixel
     i32.const 162
     i32.const 100
-    i32.const 204
+    i32.const 223
     call $put_pixel
 
     ;; ---- HUD ----
@@ -6763,24 +5451,24 @@
       i32.const 48
       i32.const 275
       i32.const 2
-      i32.const 247
+      i32.const 223  ;; base 13 shade 15 (white bright)
       call $draw_char
       local.get $game_hour
       i32.const 280
       i32.const 2
-      i32.const 247
+      i32.const 223
       call $draw_num
     else
       local.get $game_hour
       i32.const 275
       i32.const 2
-      i32.const 247
+      i32.const 223
       call $draw_num
     end
     i32.const 0x190E0
     i32.const 285
     i32.const 2
-    i32.const 247
+    i32.const 223
     call $draw_str
     local.get $game_min
     i32.const 10
@@ -6789,18 +5477,18 @@
       i32.const 48
       i32.const 290
       i32.const 2
-      i32.const 247
+      i32.const 223
       call $draw_char
       local.get $game_min
       i32.const 295
       i32.const 2
-      i32.const 247
+      i32.const 223
       call $draw_num
     else
       local.get $game_min
       i32.const 290
       i32.const 2
-      i32.const 247
+      i32.const 223
       call $draw_num
     end
     ;; Day/Night indicator
@@ -6811,37 +5499,37 @@
       i32.const 42
       i32.const 305
       i32.const 2
-      i32.const 205
+      i32.const 255  ;; base 15 shade 15 (yellow bright)
       call $draw_char
     else
       i32.const 111
       i32.const 305
       i32.const 2
-      i32.const 245
+      i32.const 221  ;; base 13 shade 13 (white dim)
       call $draw_char
     end
 
     i32.const 0x190C0
     i32.const 2
     i32.const 2
-    i32.const 247
+    i32.const 223
     call $draw_str
     i32.const 0x10390
     i32.load
     i32.const 32
     i32.const 2
-    i32.const 247
+    i32.const 223
     call $draw_num
     i32.const 0x190D0
     i32.const 57
     i32.const 2
-    i32.const 245
+    i32.const 221
     call $draw_str
     i32.const 0x10394
     i32.load
     i32.const 62
     i32.const 2
-    i32.const 245
+    i32.const 221
     call $draw_num
 
     ;; ---- Gods angry message ----
@@ -6861,22 +5549,22 @@
       i32.const 70
       i32.const 210
       i32.const 50
-      i32.const 206
+      i32.const 226  ;; base 14 shade 2 (dark red bg)
       call $fill_rect
       i32.const 0x19050
       i32.const 80
       i32.const 78
-      i32.const 207
+      i32.const 236  ;; base 14 shade 12 (red text)
       call $draw_str
       i32.const 0x19070
       i32.const 72
       i32.const 90
-      i32.const 207
+      i32.const 236
       call $draw_str
       i32.const 0x19090
       i32.const 72
       i32.const 102
-      i32.const 207
+      i32.const 236
       call $draw_str
       local.get $msg_timer
       i32.const 31
@@ -6900,17 +5588,17 @@
       i32.const 0x19000
       i32.const 105
       i32.const 30
-      i32.const 208
+      i32.const 175  ;; base 10 shade 15 (green bright)
       call $draw_str
       i32.const 0x19010
       i32.const 70
       i32.const 180
-      i32.const 245
+      i32.const 221  ;; base 13 shade 13 (white dim)
       call $draw_str
       i32.const 0x19030
       i32.const 60
       i32.const 190
-      i32.const 245
+      i32.const 221
       call $draw_str
     end
 

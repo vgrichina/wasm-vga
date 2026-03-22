@@ -239,30 +239,38 @@ function toggleMute() {
   if (btn) btn.textContent = isMuted ? 'OFF' : 'SND';
 }
 
-// default VGA palette (simplified — 6-bit VGA scaled to 8-bit)
+// default VGA palette: 16 base colors × 16 light levels = 256 colors
+// index = base * 16 + light (light 0=darkest, 15=brightest)
 function defaultPalette() {
   const pal = new Uint8Array(768);
-  // first 16: CGA-ish
-  const cga = [
-    0,0,0, 0,0,170, 0,170,0, 0,170,170,
-    170,0,0, 170,0,170, 170,85,0, 170,170,170,
-    85,85,85, 85,85,255, 85,255,85, 85,255,255,
-    255,85,85, 255,85,255, 255,255,85, 255,255,255
+  // 16 base colors at full brightness [R, G, B]
+  const bases = [
+    [  0,   0,   0], // 0: black/void
+    [100, 160, 240], // 1: sky blue
+    [ 80, 200,  50], // 2: grass green
+    [160, 120,  60], // 3: dirt brown
+    [160, 160, 170], // 4: stone gray
+    [240, 220, 140], // 5: sand yellow
+    [ 50, 120, 220], // 6: water blue
+    [140,  95,  50], // 7: wood brown
+    [ 60, 160,  50], // 8: leaves green
+    [100, 100, 110], // 9: coal dark gray
+    [ 40, 180,  30], // 10: creeper green
+    [120, 140,  60], // 11: zombie brown-green
+    [200, 195, 180], // 12: skeleton bone
+    [255, 255, 255], // 13: white (HUD, crosshair)
+    [255,  60,  60], // 14: red (damage, health)
+    [255, 240, 100], // 15: yellow/gold (sun)
   ];
-  for (let i = 0; i < 48; i++) pal[i] = cga[i];
-  // 16-231: 6x6x6 color cube
-  let idx = 48;
-  for (let r = 0; r < 6; r++)
-    for (let g = 0; g < 6; g++)
-      for (let b = 0; b < 6; b++) {
-        pal[idx++] = r * 51;
-        pal[idx++] = g * 51;
-        pal[idx++] = b * 51;
-      }
-  // 232-255: grayscale ramp
-  for (let i = 0; i < 24; i++) {
-    const v = 8 + i * 10;
-    pal[idx++] = v; pal[idx++] = v; pal[idx++] = v;
+  for (let base = 0; base < 16; base++) {
+    const [r, g, b] = bases[base];
+    for (let light = 0; light < 16; light++) {
+      const t = light / 15; // 0..1
+      const idx = (base * 16 + light) * 3;
+      pal[idx]     = Math.round(r * t);
+      pal[idx + 1] = Math.round(g * t);
+      pal[idx + 2] = Math.round(b * t);
+    }
   }
   return pal;
 }
