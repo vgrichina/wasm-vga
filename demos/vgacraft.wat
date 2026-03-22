@@ -1905,6 +1905,9 @@
     (call $draw_str (i32.const 0x190D0) (i32.const 57) (i32.const 2) (i32.const 245))
     (call $draw_num (i32.load (i32.const 0x10394)) (i32.const 62) (i32.const 2) (i32.const 245))
 
+    ;; ---- Monster sprite palette base is now 156 + type*16 ----
+    ;; (updated from 128 + type*16)
+
     ;; ---- Gods angry message ----
     (local.set $msg_timer (i32.load (i32.const 0x1039C)))
     (if (i32.gt_s (local.get $msg_timer) (i32.const 0))
