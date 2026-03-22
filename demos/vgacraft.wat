@@ -647,13 +647,19 @@
     (call $set_pal (i32.const 206) (i32.const 20) (i32.const 15) (i32.const 15))
     (call $set_pal (i32.const 207) (i32.const 255) (i32.const 50) (i32.const 50))
     (call $set_pal (i32.const 208) (i32.const 50) (i32.const 255) (i32.const 100))
-    ;; Sun/moon palette entries
-    (call $set_pal (i32.const 209) (i32.const 255) (i32.const 250) (i32.const 200))  ;; sun bright
-    (call $set_pal (i32.const 210) (i32.const 255) (i32.const 235) (i32.const 140))  ;; sun core
+    ;; Sun/moon palette entries — expanded gradient for beautiful dithered sun
+    (call $set_pal (i32.const 209) (i32.const 255) (i32.const 252) (i32.const 240))  ;; sun white-hot core
+    (call $set_pal (i32.const 210) (i32.const 255) (i32.const 245) (i32.const 200))  ;; sun warm white
     (call $set_pal (i32.const 211) (i32.const 200) (i32.const 210) (i32.const 235))  ;; moon bright
     (call $set_pal (i32.const 212) (i32.const 170) (i32.const 180) (i32.const 210))  ;; moon dim
     (call $set_pal (i32.const 213) (i32.const 255) (i32.const 140) (i32.const 50))   ;; sunset orange
-    (call $set_pal (i32.const 214) (i32.const 255) (i32.const 180) (i32.const 90))   ;; sunset glow
+    (call $set_pal (i32.const 214) (i32.const 255) (i32.const 235) (i32.const 160))  ;; sun golden
+    (call $set_pal (i32.const 215) (i32.const 255) (i32.const 215) (i32.const 120))  ;; sun amber
+    (call $set_pal (i32.const 216) (i32.const 255) (i32.const 200) (i32.const 100))  ;; sun deep amber
+    (call $set_pal (i32.const 217) (i32.const 250) (i32.const 185) (i32.const 95))   ;; sun peach
+    (call $set_pal (i32.const 218) (i32.const 240) (i32.const 175) (i32.const 110))  ;; sun warm haze
+    (call $set_pal (i32.const 219) (i32.const 220) (i32.const 190) (i32.const 150))  ;; sun haze->sky
+    (call $set_pal (i32.const 220) (i32.const 190) (i32.const 200) (i32.const 210))  ;; sun sky blend
 
     ;; Initialize player position
     (f64.store (i32.const 0x10344) (f64.const 32.5))
@@ -2048,31 +2054,106 @@
                       (local.get $cel_active)
                       (i32.and
                         (local.get $cel_is_sun)
-                        (f64.gt (local.get $cel_dot) (f64.const 0.990))))
+                        (f64.gt (local.get $cel_dot) (f64.const 0.980))))
                   (then
-                    ;; Sun hit! Core (dot > 0.997) or glow (dot > 0.990)
-                    (if (f64.gt (local.get $cel_dot) (f64.const 0.997))
-                      (then (i32.store8 (local.get $fb_addr) (i32.const 210)))  ;; sun core
-                      (else
-                        ;; Dither between sun glow and sky for soft edge
-                        (if (f64.gt (local.get $cel_dot) (f64.const 0.994))
-                          (then (i32.store8 (local.get $fb_addr) (i32.const 209)))  ;; sun bright
-                          (else
-                            ;; Outer glow — dither sun glow with sky
-                            (if (i32.and (local.get $px_col) (i32.const 1))
-                              (then (i32.store8 (local.get $fb_addr) (i32.const 214)))  ;; sunset glow
-                              (else
-                                ;; Fall through to normal sky
-                                (local.set $shade_full (i32.sub (i32.const 111)
-                                  (i32.trunc_f64_s (f64.mul (local.get $ray_dz) (f64.const 128.0)))))
-                                (if (i32.lt_s (local.get $shade_full) (i32.const 0))
-                                  (then (local.set $shade_full (i32.const 0))))
-                                (if (i32.gt_s (local.get $shade_full) (i32.const 111))
-                                  (then (local.set $shade_full (i32.const 111))))
-                                (local.set $sky_idx (i32.add
-                                  (i32.shr_u (local.get $shade_full) (i32.const 4))
-                                  (i32.const 1)))
-                                (i32.store8 (local.get $fb_addr) (local.get $sky_idx)))))))))
+                    ;; Beautiful sun with 8 concentric rings + Bayer dithering
+                    ;; Map dot product to a sun intensity: 0.980..1.000 → 0..320
+                    ;; shade_full = (dot - 0.980) * 16000 → 0..320
+                    (local.set $shade_full (i32.trunc_f64_s (f64.mul
+                      (f64.sub (local.get $cel_dot) (f64.const 0.980))
+                      (f64.const 16000.0))))
+                    (if (i32.gt_s (local.get $shade_full) (i32.const 320))
+                      (then (local.set $shade_full (i32.const 320))))
+
+                    ;; Ring zones (from outer to inner):
+                    ;; 0-39:   sky blend (220) ↔ sky — dithered transition to sky
+                    ;; 40-79:  warm haze (219) ↔ sky blend (220)
+                    ;; 80-119: sun haze (218) ↔ warm haze (219)
+                    ;; 120-159: peach (217) ↔ haze (218)
+                    ;; 160-199: deep amber (216) ↔ peach (217)
+                    ;; 200-239: amber (215) ↔ deep amber (216)
+                    ;; 240-279: golden (214) ↔ amber (215)
+                    ;; 280-299: warm white (210) ↔ golden (214)
+                    ;; 300-320: white-hot core (209)
+
+                    (if (i32.ge_s (local.get $shade_full) (i32.const 300))
+                      (then
+                        ;; White-hot core
+                        (i32.store8 (local.get $fb_addr) (i32.const 209)))
+                    (else (if (i32.ge_s (local.get $shade_full) (i32.const 280))
+                      (then
+                        ;; Warm white ↔ golden — dither
+                        (local.set $shade_frac (i32.shr_u (i32.mul
+                          (i32.sub (local.get $shade_full) (i32.const 280)) (i32.const 15)) (i32.const 4)))
+                        (if (call $dither_test (local.get $px_col) (local.get $px_row) (local.get $shade_frac))
+                          (then (i32.store8 (local.get $fb_addr) (i32.const 210)))
+                          (else (i32.store8 (local.get $fb_addr) (i32.const 214)))))
+                    (else (if (i32.ge_s (local.get $shade_full) (i32.const 240))
+                      (then
+                        ;; Golden ↔ amber — dither
+                        (local.set $shade_frac (i32.shr_u (i32.mul
+                          (i32.sub (local.get $shade_full) (i32.const 240)) (i32.const 15)) (i32.const 5)))
+                        (if (call $dither_test (local.get $px_col) (local.get $px_row) (local.get $shade_frac))
+                          (then (i32.store8 (local.get $fb_addr) (i32.const 214)))
+                          (else (i32.store8 (local.get $fb_addr) (i32.const 215)))))
+                    (else (if (i32.ge_s (local.get $shade_full) (i32.const 200))
+                      (then
+                        ;; Amber ↔ deep amber — dither
+                        (local.set $shade_frac (i32.shr_u (i32.mul
+                          (i32.sub (local.get $shade_full) (i32.const 200)) (i32.const 15)) (i32.const 5)))
+                        (if (call $dither_test (local.get $px_col) (local.get $px_row) (local.get $shade_frac))
+                          (then (i32.store8 (local.get $fb_addr) (i32.const 215)))
+                          (else (i32.store8 (local.get $fb_addr) (i32.const 216)))))
+                    (else (if (i32.ge_s (local.get $shade_full) (i32.const 160))
+                      (then
+                        ;; Deep amber ↔ peach — dither
+                        (local.set $shade_frac (i32.shr_u (i32.mul
+                          (i32.sub (local.get $shade_full) (i32.const 160)) (i32.const 15)) (i32.const 5)))
+                        (if (call $dither_test (local.get $px_col) (local.get $px_row) (local.get $shade_frac))
+                          (then (i32.store8 (local.get $fb_addr) (i32.const 216)))
+                          (else (i32.store8 (local.get $fb_addr) (i32.const 217)))))
+                    (else (if (i32.ge_s (local.get $shade_full) (i32.const 120))
+                      (then
+                        ;; Peach ↔ warm haze — dither
+                        (local.set $shade_frac (i32.shr_u (i32.mul
+                          (i32.sub (local.get $shade_full) (i32.const 120)) (i32.const 15)) (i32.const 5)))
+                        (if (call $dither_test (local.get $px_col) (local.get $px_row) (local.get $shade_frac))
+                          (then (i32.store8 (local.get $fb_addr) (i32.const 217)))
+                          (else (i32.store8 (local.get $fb_addr) (i32.const 218)))))
+                    (else (if (i32.ge_s (local.get $shade_full) (i32.const 80))
+                      (then
+                        ;; Warm haze ↔ haze-sky — dither
+                        (local.set $shade_frac (i32.shr_u (i32.mul
+                          (i32.sub (local.get $shade_full) (i32.const 80)) (i32.const 15)) (i32.const 5)))
+                        (if (call $dither_test (local.get $px_col) (local.get $px_row) (local.get $shade_frac))
+                          (then (i32.store8 (local.get $fb_addr) (i32.const 218)))
+                          (else (i32.store8 (local.get $fb_addr) (i32.const 219)))))
+                    (else (if (i32.ge_s (local.get $shade_full) (i32.const 40))
+                      (then
+                        ;; Haze-sky ↔ sky blend — dither
+                        (local.set $shade_frac (i32.shr_u (i32.mul
+                          (i32.sub (local.get $shade_full) (i32.const 40)) (i32.const 15)) (i32.const 5)))
+                        (if (call $dither_test (local.get $px_col) (local.get $px_row) (local.get $shade_frac))
+                          (then (i32.store8 (local.get $fb_addr) (i32.const 219)))
+                          (else (i32.store8 (local.get $fb_addr) (i32.const 220)))))
+                    (else
+                      ;; Outermost ring: sky blend ↔ actual sky — dithered fade
+                      (local.set $shade_frac (i32.shr_u (i32.mul
+                        (local.get $shade_full) (i32.const 15)) (i32.const 5)))
+                      (if (call $dither_test (local.get $px_col) (local.get $px_row) (local.get $shade_frac))
+                        (then (i32.store8 (local.get $fb_addr) (i32.const 220)))
+                        (else
+                          ;; Fall through to normal sky color
+                          (local.set $shade_full (i32.sub (i32.const 111)
+                            (i32.trunc_f64_s (f64.mul (local.get $ray_dz) (f64.const 128.0)))))
+                          (if (i32.lt_s (local.get $shade_full) (i32.const 0))
+                            (then (local.set $shade_full (i32.const 0))))
+                          (if (i32.gt_s (local.get $shade_full) (i32.const 111))
+                            (then (local.set $shade_full (i32.const 111))))
+                          (local.set $sky_idx (i32.add
+                            (i32.shr_u (local.get $shade_full) (i32.const 4))
+                            (i32.const 1)))
+                          (i32.store8 (local.get $fb_addr) (local.get $sky_idx))))))))))))))))))
 
                 (else (if (i32.and
                       (local.get $cel_active)
