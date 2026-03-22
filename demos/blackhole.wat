@@ -17,6 +17,9 @@
   ;;   0x10368  autopilot (i32) — 1=auto
   ;;   0x1036C  sound_timer (i32) — frames until next ambient sound
   ;;   0x10370  drone_timer (i32) — frames until next drone
+  ;;   0x10400  star_table (255 × 16 bytes = 4080 bytes)
+  ;;            each: f32 dir_x, f32 dir_y, f32 dir_z, u8 palette_base, u8 max_offset, 2 pad
+  ;;   0x20000  cubemap (6×128×128) — each byte = star_id (0=empty, 1-255=star)
 
   ;; ---- sin_approx (3-step range reduction, from raycaster) ----
   (func $sin_a (param $x f64) (result f64)
@@ -53,6 +56,41 @@
     (local.set $s (i32.xor (local.get $s) (i32.shl (local.get $s) (i32.const 5))))
     (i32.store (i32.const 0x10340) (local.get $s))
     (local.get $s)
+  )
+
+  ;; ---- Compute unit direction from cubemap face+u+v, store as 3×f32 at addr ----
+  (func $star_dir (param $face i32) (param $su i32) (param $sv i32) (param $addr i32)
+    (local $sc f64) (local $tc f64)
+    (local $dx f64) (local $dy f64) (local $dz f64) (local $len f64)
+    ;; sc = su/63.5 - 1, tc = sv/63.5 - 1
+    (local.set $sc (f64.sub (f64.div (f64.convert_i32_u (local.get $su)) (f64.const 63.5)) (f64.const 1.0)))
+    (local.set $tc (f64.sub (f64.div (f64.convert_i32_u (local.get $sv)) (f64.const 63.5)) (f64.const 1.0)))
+    ;; Face 0 (+X): (1, -tc, -sc)
+    (if (i32.eq (local.get $face) (i32.const 0))
+      (then (local.set $dx (f64.const 1.0)) (local.set $dy (f64.neg (local.get $tc))) (local.set $dz (f64.neg (local.get $sc)))))
+    ;; Face 1 (-X): (-1, -tc, sc)
+    (if (i32.eq (local.get $face) (i32.const 1))
+      (then (local.set $dx (f64.const -1.0)) (local.set $dy (f64.neg (local.get $tc))) (local.set $dz (local.get $sc))))
+    ;; Face 2 (+Y): (sc, 1, tc)
+    (if (i32.eq (local.get $face) (i32.const 2))
+      (then (local.set $dx (local.get $sc)) (local.set $dy (f64.const 1.0)) (local.set $dz (local.get $tc))))
+    ;; Face 3 (-Y): (sc, -1, -tc)
+    (if (i32.eq (local.get $face) (i32.const 3))
+      (then (local.set $dx (local.get $sc)) (local.set $dy (f64.const -1.0)) (local.set $dz (f64.neg (local.get $tc)))))
+    ;; Face 4 (+Z): (sc, -tc, 1)
+    (if (i32.eq (local.get $face) (i32.const 4))
+      (then (local.set $dx (local.get $sc)) (local.set $dy (f64.neg (local.get $tc))) (local.set $dz (f64.const 1.0))))
+    ;; Face 5 (-Z): (-sc, -tc, -1)
+    (if (i32.eq (local.get $face) (i32.const 5))
+      (then (local.set $dx (f64.neg (local.get $sc))) (local.set $dy (f64.neg (local.get $tc))) (local.set $dz (f64.const -1.0))))
+    ;; Normalize and store as f32
+    (local.set $len (f64.sqrt (f64.add (f64.add
+      (f64.mul (local.get $dx) (local.get $dx))
+      (f64.mul (local.get $dy) (local.get $dy)))
+      (f64.mul (local.get $dz) (local.get $dz)))))
+    (f32.store (local.get $addr) (f32.demote_f64 (f64.div (local.get $dx) (local.get $len))))
+    (f32.store (i32.add (local.get $addr) (i32.const 4)) (f32.demote_f64 (f64.div (local.get $dy) (local.get $len))))
+    (f32.store (i32.add (local.get $addr) (i32.const 8)) (f32.demote_f64 (f64.div (local.get $dz) (local.get $len))))
   )
 
   ;; ---- Init ----
@@ -233,10 +271,11 @@
     ;; Init PRNG
     (i32.store (i32.const 0x10340) (i32.const 987654321))
 
-    ;; === Generate cube map starfield at 0x20000 ===
-    ;; 6 faces × 128×128 = 98304 bytes (0x18000), each byte = palette index
+    ;; === Generate star table at 0x10400 and cubemap index at 0x20000 ===
+    ;; Star table: 255 entries × 16 bytes (f32 dir_x/y/z + u8 base + u8 max_offset)
+    ;; Cubemap: 6×128×128, each byte = star_id (0=empty, 1-255=star)
 
-    ;; Clear cube map to 0 (black) — use i32.store for speed (4 bytes at a time)
+    ;; Clear cubemap to 0
     (local.set $i (i32.const 0))
     (block $cdone (loop $clp
       (br_if $cdone (i32.ge_u (local.get $i) (i32.const 98304)))
@@ -245,10 +284,10 @@
       (br $clp)
     ))
 
-    ;; Scatter 2000 random stars across all faces
-    (local.set $i (i32.const 0))
+    ;; Generate 200 random stars (IDs 1-200)
+    (local.set $i (i32.const 1))
     (block $sdone (loop $slp
-      (br_if $sdone (i32.ge_u (local.get $i) (i32.const 2000)))
+      (br_if $sdone (i32.gt_u (local.get $i) (i32.const 200)))
 
       ;; Pick random face (0-5)
       (local.set $rnd (call $rand))
@@ -259,63 +298,126 @@
       (local.set $su (i32.and (local.get $rnd) (i32.const 127)))
       (local.set $sv (i32.and (i32.shr_u (local.get $rnd) (i32.const 8)) (i32.const 127)))
 
+      ;; Compute and store direction in star table
+      (local.set $addr (i32.add (i32.const 0x10400) (i32.shl (local.get $i) (i32.const 4))))
+      (call $star_dir (local.get $face) (local.get $su) (local.get $sv) (local.get $addr))
+
       ;; Brightness (4-7) and color family
       (local.set $rnd (call $rand))
       (local.set $bright (i32.add (i32.const 4) (i32.and (local.get $rnd) (i32.const 3))))
-
-      ;; Color: 75% white, 12% warm, 8% blue, 5% red
       (local.set $family (i32.and (i32.shr_u (local.get $rnd) (i32.const 4)) (i32.const 15)))
+
+      ;; Store palette_base and max_offset
+      ;; 75% white (base=8, offset=bright), 12% warm, 8% blue, 5% red
       (if (i32.le_u (local.get $family) (i32.const 11))
-        (then (local.set $pal (i32.add (i32.const 8) (local.get $bright)))))
+        (then
+          (i32.store8 (i32.add (local.get $addr) (i32.const 12)) (i32.const 8))
+          (i32.store8 (i32.add (local.get $addr) (i32.const 13)) (local.get $bright))))
       (if (i32.and (i32.ge_u (local.get $family) (i32.const 12))
                    (i32.le_u (local.get $family) (i32.const 13)))
-        (then (local.set $pal (i32.add (i32.const 16)
-          (i32.div_u (i32.mul (local.get $bright) (i32.const 5)) (i32.const 7))))))
+        (then
+          (i32.store8 (i32.add (local.get $addr) (i32.const 12)) (i32.const 16))
+          (i32.store8 (i32.add (local.get $addr) (i32.const 13))
+            (i32.div_u (i32.mul (local.get $bright) (i32.const 5)) (i32.const 7)))))
       (if (i32.eq (local.get $family) (i32.const 14))
-        (then (local.set $pal (i32.add (i32.const 22)
-          (i32.div_u (i32.mul (local.get $bright) (i32.const 5)) (i32.const 7))))))
+        (then
+          (i32.store8 (i32.add (local.get $addr) (i32.const 12)) (i32.const 22))
+          (i32.store8 (i32.add (local.get $addr) (i32.const 13))
+            (i32.div_u (i32.mul (local.get $bright) (i32.const 5)) (i32.const 7)))))
       (if (i32.eq (local.get $family) (i32.const 15))
-        (then (local.set $pal (i32.add (i32.const 28)
-          (i32.div_u (i32.mul (local.get $bright) (i32.const 3)) (i32.const 7))))))
+        (then
+          (i32.store8 (i32.add (local.get $addr) (i32.const 12)) (i32.const 28))
+          (i32.store8 (i32.add (local.get $addr) (i32.const 13))
+            (i32.div_u (i32.mul (local.get $bright) (i32.const 3)) (i32.const 7)))))
 
-      ;; Write single star pixel
-      (i32.store8 (i32.add (i32.const 0x20000)
-        (i32.add (i32.mul (local.get $face) (i32.const 16384))
-          (i32.add (i32.shl (local.get $sv) (i32.const 7)) (local.get $su))))
-        (local.get $pal))
+      ;; Write star_id to cubemap in 5×5 block (reuse $r/$g/$b/$pal as temps)
+      (local.set $r (i32.const -2))
+      (block $bydone (loop $bylp
+        (br_if $bydone (i32.gt_s (local.get $r) (i32.const 2)))
+        (local.set $g (i32.const -2))
+        (block $bxdone (loop $bxlp
+          (br_if $bxdone (i32.gt_s (local.get $g) (i32.const 2)))
+          (local.set $b (i32.add (local.get $su) (local.get $g)))
+          (local.set $pal (i32.add (local.get $sv) (local.get $r)))
+          (if (i32.and (i32.and
+                (i32.ge_s (local.get $b) (i32.const 0))
+                (i32.le_s (local.get $b) (i32.const 127)))
+              (i32.and
+                (i32.ge_s (local.get $pal) (i32.const 0))
+                (i32.le_s (local.get $pal) (i32.const 127))))
+            (then
+              (i32.store8 (i32.add (i32.const 0x20000)
+                (i32.add (i32.shl (local.get $face) (i32.const 14))
+                  (i32.add (i32.shl (local.get $pal) (i32.const 7)) (local.get $b))))
+                (local.get $i))))
+          (local.set $g (i32.add (local.get $g) (i32.const 1)))
+          (br $bxlp)
+        ))
+        (local.set $r (i32.add (local.get $r) (i32.const 1)))
+        (br $bylp)
+      ))
 
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $slp)
     ))
 
-    ;; Scatter ~500 Milky Way stars on faces 0,1,4,5 near v≈44 (y≈0.3)
-    (local.set $i (i32.const 0))
+    ;; Generate 55 Milky Way stars (IDs 201-255)
+    (local.set $i (i32.const 201))
     (block $mdone (loop $mlp
-      (br_if $mdone (i32.ge_u (local.get $i) (i32.const 500)))
+      (br_if $mdone (i32.gt_u (local.get $i) (i32.const 255)))
 
       (local.set $rnd (call $rand))
-      ;; Pick face from {0,1,4,5}
       (local.set $face (i32.and (local.get $rnd) (i32.const 3)))
       (if (i32.ge_u (local.get $face) (i32.const 2))
         (then (local.set $face (i32.add (local.get $face) (i32.const 2)))))
 
-      ;; u = random 0-127, v = 34-54 (Milky Way band at 128 resolution)
       (local.set $rnd (call $rand))
       (local.set $su (i32.and (local.get $rnd) (i32.const 127)))
       (local.set $sv (i32.add (i32.const 34)
         (i32.rem_u (i32.and (i32.shr_u (local.get $rnd) (i32.const 8)) (i32.const 0x7FFF)) (i32.const 21))))
 
-      ;; 70% nebula glow (4-7), 30% bright star
+      ;; Store direction
+      (local.set $addr (i32.add (i32.const 0x10400) (i32.shl (local.get $i) (i32.const 4))))
+      (call $star_dir (local.get $face) (local.get $su) (local.get $sv) (local.get $addr))
+
+      ;; 70% nebula glow (base=4, offset=0-3), 30% bright star (base=8, offset=4-7)
       (local.set $rnd (call $rand))
       (if (i32.lt_u (i32.and (local.get $rnd) (i32.const 9)) (i32.const 7))
-        (then (local.set $pal (i32.add (i32.const 4) (i32.and (local.get $rnd) (i32.const 3)))))
-        (else (local.set $pal (i32.add (i32.const 12)
-          (i32.and (i32.shr_u (local.get $rnd) (i32.const 4)) (i32.const 3))))))
+        (then
+          (i32.store8 (i32.add (local.get $addr) (i32.const 12)) (i32.const 4))
+          (i32.store8 (i32.add (local.get $addr) (i32.const 13))
+            (i32.and (local.get $rnd) (i32.const 3))))
+        (else
+          (i32.store8 (i32.add (local.get $addr) (i32.const 12)) (i32.const 8))
+          (i32.store8 (i32.add (local.get $addr) (i32.const 13))
+            (i32.add (i32.const 4) (i32.and (i32.shr_u (local.get $rnd) (i32.const 4)) (i32.const 3))))))
 
-      (i32.store8 (i32.add (i32.const 0x20000)
-        (i32.add (i32.mul (local.get $face) (i32.const 16384))
-          (i32.add (i32.shl (local.get $sv) (i32.const 7)) (local.get $su))))
-        (local.get $pal))
+      ;; Write 5×5 block to cubemap
+      (local.set $r (i32.const -2))
+      (block $by2done (loop $by2lp
+        (br_if $by2done (i32.gt_s (local.get $r) (i32.const 2)))
+        (local.set $g (i32.const -2))
+        (block $bx2done (loop $bx2lp
+          (br_if $bx2done (i32.gt_s (local.get $g) (i32.const 2)))
+          (local.set $b (i32.add (local.get $su) (local.get $g)))
+          (local.set $pal (i32.add (local.get $sv) (local.get $r)))
+          (if (i32.and (i32.and
+                (i32.ge_s (local.get $b) (i32.const 0))
+                (i32.le_s (local.get $b) (i32.const 127)))
+              (i32.and
+                (i32.ge_s (local.get $pal) (i32.const 0))
+                (i32.le_s (local.get $pal) (i32.const 127))))
+            (then
+              (i32.store8 (i32.add (i32.const 0x20000)
+                (i32.add (i32.shl (local.get $face) (i32.const 14))
+                  (i32.add (i32.shl (local.get $pal) (i32.const 7)) (local.get $b))))
+                (local.get $i))))
+          (local.set $g (i32.add (local.get $g) (i32.const 1)))
+          (br $bx2lp)
+        ))
+        (local.set $r (i32.add (local.get $r) (i32.const 1)))
+        (br $by2lp)
+      ))
 
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $mlp)
@@ -789,12 +891,37 @@
               (if (i32.gt_s (local.get $star_bright) (i32.const 127))
                 (then (local.set $star_bright (i32.const 127))))
 
-              ;; Read palette index from cube map (128×128 faces, 16384 bytes each)
-              (local.set $color (i32.load8_u
+              ;; Read star_id from cubemap
+              (local.set $idx (i32.load8_u
                 (i32.add (i32.const 0x20000)
                   (i32.add (i32.shl (local.get $ix) (i32.const 14))
                     (i32.add (i32.shl (local.get $star_bright) (i32.const 7))
                       (local.get $star_base))))))
+
+              (if (local.get $idx)
+                (then
+                  ;; Look up star direction from table
+                  (local.set $star_base (i32.add (i32.const 0x10400) (i32.shl (local.get $idx) (i32.const 4))))
+                  ;; d² = |vel - star_dir|² (both unit vectors)
+                  (local.set $fx (f64.sub (local.get $vel_x) (f64.promote_f32 (f32.load (local.get $star_base)))))
+                  (local.set $fy (f64.sub (local.get $vel_y) (f64.promote_f32 (f32.load (i32.add (local.get $star_base) (i32.const 4))))))
+                  (local.set $fz (f64.sub (local.get $vel_z) (f64.promote_f32 (f32.load (i32.add (local.get $star_base) (i32.const 8))))))
+                  (local.set $d2 (f64.add (f64.add
+                    (f64.mul (local.get $fx) (local.get $fx))
+                    (f64.mul (local.get $fy) (local.get $fy)))
+                    (f64.mul (local.get $fz) (local.get $fz))))
+
+                  ;; Smooth falloff: brightness = max(0, 1 - d² * 2500)
+                  ;; ~2 texel diameter stars, fades well within ±2 block
+                  (local.set $brightness (f64.sub (f64.const 1.0)
+                    (f64.mul (local.get $d2) (f64.const 2500.0))))
+                  (if (f64.gt (local.get $brightness) (f64.const 0.0))
+                    (then
+                      ;; palette_idx = base + trunc(brightness * max_offset)
+                      (local.set $color (i32.add
+                        (i32.load8_u (i32.add (local.get $star_base) (i32.const 12)))
+                        (i32.trunc_f64_s (f64.mul (local.get $brightness)
+                          (f64.convert_i32_u (i32.load8_u (i32.add (local.get $star_base) (i32.const 13))))))))))))
 
               (br $ray_done)))
 
