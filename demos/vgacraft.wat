@@ -4178,6 +4178,296 @@
   )
 
   ;; ============================================================
+  ;; RGB24 to RGBL with ordered dithering
+  ;; Takes pixel coords (px,py) and 24-bit RGB (r,g,b each 0-255)
+  ;; Returns RGBL palette index = (R<<6)|(G<<4)|(B<<2)|L
+  ;; ============================================================
+  (func $rgb_to_rgbl_dither (param $px i32) (param $py i32) (param $r i32) (param $g i32) (param $b i32) (result i32)
+    (local $bx i32) (local $by i32) (local $idx i32) (local $threshold i32)
+    (local $max_c i32) (local $best_l i32) (local $bright i32)
+    (local $ri i32) (local $gi i32) (local $bi i32)
+    (local $rf i32) (local $gf i32) (local $bf i32)
+    (local $scaled i32)
+    ;; Compute Bayer threshold (0-15)
+    local.get $px
+    i32.const 3
+    i32.and
+    local.set $bx
+    local.get $py
+    i32.const 3
+    i32.and
+    local.set $by
+    local.get $by
+    i32.const 4
+    i32.mul
+    local.get $bx
+    i32.add
+    local.set $idx
+    ;; Bayer 4x4 matrix lookup
+    i32.const 0
+    local.set $threshold
+    local.get $idx
+    i32.const 0
+    i32.eq
+    if  i32.const 0  local.set $threshold  end
+    local.get $idx
+    i32.const 1
+    i32.eq
+    if  i32.const 8  local.set $threshold  end
+    local.get $idx
+    i32.const 2
+    i32.eq
+    if  i32.const 2  local.set $threshold  end
+    local.get $idx
+    i32.const 3
+    i32.eq
+    if  i32.const 10  local.set $threshold  end
+    local.get $idx
+    i32.const 4
+    i32.eq
+    if  i32.const 12  local.set $threshold  end
+    local.get $idx
+    i32.const 5
+    i32.eq
+    if  i32.const 4  local.set $threshold  end
+    local.get $idx
+    i32.const 6
+    i32.eq
+    if  i32.const 14  local.set $threshold  end
+    local.get $idx
+    i32.const 7
+    i32.eq
+    if  i32.const 6  local.set $threshold  end
+    local.get $idx
+    i32.const 8
+    i32.eq
+    if  i32.const 3  local.set $threshold  end
+    local.get $idx
+    i32.const 9
+    i32.eq
+    if  i32.const 11  local.set $threshold  end
+    local.get $idx
+    i32.const 10
+    i32.eq
+    if  i32.const 1  local.set $threshold  end
+    local.get $idx
+    i32.const 11
+    i32.eq
+    if  i32.const 9  local.set $threshold  end
+    local.get $idx
+    i32.const 12
+    i32.eq
+    if  i32.const 15  local.set $threshold  end
+    local.get $idx
+    i32.const 13
+    i32.eq
+    if  i32.const 7  local.set $threshold  end
+    local.get $idx
+    i32.const 14
+    i32.eq
+    if  i32.const 13  local.set $threshold  end
+    local.get $idx
+    i32.const 15
+    i32.eq
+    if  i32.const 5  local.set $threshold  end
+
+    ;; Clamp inputs to 0-255
+    local.get $r
+    i32.const 0
+    i32.lt_s
+    if  i32.const 0  local.set $r  end
+    local.get $r
+    i32.const 255
+    i32.gt_s
+    if  i32.const 255  local.set $r  end
+    local.get $g
+    i32.const 0
+    i32.lt_s
+    if  i32.const 0  local.set $g  end
+    local.get $g
+    i32.const 255
+    i32.gt_s
+    if  i32.const 255  local.set $g  end
+    local.get $b
+    i32.const 0
+    i32.lt_s
+    if  i32.const 0  local.set $b  end
+    local.get $b
+    i32.const 255
+    i32.gt_s
+    if  i32.const 255  local.set $b  end
+
+    ;; Find max channel
+    local.get $r
+    local.set $max_c
+    local.get $g
+    local.get $max_c
+    i32.gt_s
+    if  local.get $g  local.set $max_c  end
+    local.get $b
+    local.get $max_c
+    i32.gt_s
+    if  local.get $b  local.set $max_c  end
+
+    ;; Choose brightness level L based on max channel
+    ;; Brightness thresholds: L0=33, L1=102, L2=179, L3=255
+    ;; Choose L such that max_c fits within chan[3]*bright[L]/255 = bright[L]
+    ;; L0 handles max_c 0..33, L1 handles 0..102, L2 handles 0..179, L3 handles 0..255
+    ;; Pick smallest L where bright[L] >= max_c (so channels have room)
+    ;; But also dither between L levels for smoother gradients
+    i32.const 3
+    local.set $best_l
+    local.get $max_c
+    i32.const 180
+    i32.lt_s
+    if  i32.const 2  local.set $best_l  end
+    local.get $max_c
+    i32.const 103
+    i32.lt_s
+    if  i32.const 1  local.set $best_l  end
+    local.get $max_c
+    i32.const 34
+    i32.lt_s
+    if  i32.const 0  local.set $best_l  end
+
+    ;; Get brightness value for chosen L
+    ;; bright[0]=33, bright[1]=102, bright[2]=179, bright[3]=255
+    i32.const 0x19604
+    local.get $best_l
+    i32.add
+    i32.load8_u
+    local.set $bright
+
+    ;; Avoid division by zero
+    local.get $bright
+    i32.const 1
+    i32.lt_s
+    if  i32.const 1  local.set $bright  end
+
+    ;; Scale each channel: mapped = ch * 3 * 255 / (bright * 85)
+    ;; This maps to 0..765 range, then we quantize to 0..3 with dithering
+    ;; Simplified: mapped = ch * 3 / bright (approximately)
+    ;; More precisely: we want idx such that idx * 85 * bright / 255 ≈ ch
+    ;; So idx_full = ch * 255 / (85 * bright) * 16 for 4-bit precision
+    ;; idx_int = idx_full >> 4, idx_frac = idx_full & 15
+
+    ;; Red: scaled = r * 48 / bright (maps 0-255 to 0-48, where 0,16,32,48 = levels 0-3)
+    local.get $r
+    i32.const 48
+    i32.mul
+    local.get $bright
+    i32.div_u
+    local.set $scaled
+    local.get $scaled
+    i32.const 48
+    i32.gt_s
+    if  i32.const 48  local.set $scaled  end
+    local.get $scaled
+    i32.const 4
+    i32.shr_u
+    local.set $ri
+    local.get $scaled
+    i32.const 15
+    i32.and
+    local.set $rf
+    ;; Dither: if fractional > threshold, bump up
+    local.get $rf
+    local.get $threshold
+    i32.gt_u
+    if
+      local.get $ri
+      i32.const 1
+      i32.add
+      local.set $ri
+    end
+    local.get $ri
+    i32.const 3
+    i32.gt_s
+    if  i32.const 3  local.set $ri  end
+
+    ;; Green
+    local.get $g
+    i32.const 48
+    i32.mul
+    local.get $bright
+    i32.div_u
+    local.set $scaled
+    local.get $scaled
+    i32.const 48
+    i32.gt_s
+    if  i32.const 48  local.set $scaled  end
+    local.get $scaled
+    i32.const 4
+    i32.shr_u
+    local.set $gi
+    local.get $scaled
+    i32.const 15
+    i32.and
+    local.set $gf
+    local.get $gf
+    local.get $threshold
+    i32.gt_u
+    if
+      local.get $gi
+      i32.const 1
+      i32.add
+      local.set $gi
+    end
+    local.get $gi
+    i32.const 3
+    i32.gt_s
+    if  i32.const 3  local.set $gi  end
+
+    ;; Blue
+    local.get $b
+    i32.const 48
+    i32.mul
+    local.get $bright
+    i32.div_u
+    local.set $scaled
+    local.get $scaled
+    i32.const 48
+    i32.gt_s
+    if  i32.const 48  local.set $scaled  end
+    local.get $scaled
+    i32.const 4
+    i32.shr_u
+    local.set $bi
+    local.get $scaled
+    i32.const 15
+    i32.and
+    local.set $bf
+    local.get $bf
+    local.get $threshold
+    i32.gt_u
+    if
+      local.get $bi
+      i32.const 1
+      i32.add
+      local.set $bi
+    end
+    local.get $bi
+    i32.const 3
+    i32.gt_s
+    if  i32.const 3  local.set $bi  end
+
+    ;; Compose RGBL index
+    local.get $ri
+    i32.const 6
+    i32.shl
+    local.get $gi
+    i32.const 4
+    i32.shl
+    i32.or
+    local.get $bi
+    i32.const 2
+    i32.shl
+    i32.or
+    local.get $best_l
+    i32.or
+  )
+
+  ;; ============================================================
   ;; ORDERED DITHERING — 4x4 Bayer matrix
   ;; ============================================================
   (func $dither_test (param $px i32) (param $py i32) (param $frac i32) (result i32)
@@ -5534,75 +5824,81 @@
                 f64.gt
                 i32.and
                 if
-                  ;; Sun rendering: blend from sky color to bright yellow
-                  ;; cel_dot goes 0.980 → 1.0 (edge to center)
-                  ;; Map to t = 0..320
+                  ;; Sun rendering with dithered 24-bit RGB
+                  ;; cel_dot 0.980→1.0, map to t = 0..255
                   local.get $cel_dot
                   f64.const 0.980
                   f64.sub
-                  f64.const 16000.0
+                  f64.const 12750.0
                   f64.mul
                   i32.trunc_f64_s
                   local.set $shade_full
                   local.get $shade_full
-                  i32.const 320
+                  i32.const 255
                   i32.gt_s
-                  if  i32.const 320  local.set $shade_full  end
-
+                  if  i32.const 255  local.set $shade_full  end
                   local.get $shade_full
-                  i32.const 280
-                  i32.ge_s
-                  if
-                    ;; Sun core: bright yellow-white R=3,G=3,B=3,L=3 = 0xFF
-                    local.get $fb_addr
-                    i32.const 0xFF
-                    i32.store8
-                  else
-                    local.get $shade_full
-                    i32.const 200
-                    i32.ge_s
-                    if
-                      ;; Inner sun: bright yellow R=3,G=3,B=1,L=3 = 0xF7
-                      local.get $fb_addr
-                      i32.const 0xF7
-                      i32.store8
-                    else
-                      local.get $shade_full
-                      i32.const 140
-                      i32.ge_s
-                      if
-                        ;; Mid glow: warm yellow R=3,G=3,B=0,L=3 = 0xF3
-                        local.get $fb_addr
-                        i32.const 0xF3
-                        i32.store8
-                      else
-                        local.get $shade_full
-                        i32.const 90
-                        i32.ge_s
-                        if
-                          ;; Outer glow: warm R=3,G=2,B=1,L=3 = 0xD7
-                          local.get $fb_addr
-                          i32.const 0xD7
-                          i32.store8
-                        else
-                          local.get $shade_full
-                          i32.const 50
-                          i32.ge_s
-                          if
-                            ;; Far glow: blending to sky R=2,G=2,B=2,L=3 = 0xAB
-                            local.get $fb_addr
-                            i32.const 0xAB
-                            i32.store8
-                          else
-                            ;; Edge glow: almost sky R=1,G=2,B=3,L=3 = 0x5F (sky bright)
-                            local.get $fb_addr
-                            i32.const 0x5F
-                            i32.store8
-                          end
-                        end
-                      end
-                    end
-                  end
+                  i32.const 0
+                  i32.lt_s
+                  if  i32.const 0  local.set $shade_full  end
+
+                  ;; Blend from sky color to sun color (warm yellow-white)
+                  ;; Sky RGB: (sky_r, sky_g, sky_b) scaled by bright[3]/day_bright
+                  ;; Actually compute sky at full brightness for blending base
+                  ;; sky base at day: R=85*day_bright/255, G=170*day_bright/255, B=day_bright
+                  ;; Sun center: R=255, G=240, B=200
+                  ;; Blend: color = sky*(255-t)/255 + sun*t/255
+                  ;; Red
+                  local.get $fb_addr
+                  local.get $px_col
+                  local.get $px_row
+                  ;; R = sky_r_full*(255-t)/255 + 255*t/255
+                  ;; sky_r_full = 85*day_bright/255
+                  i32.const 85
+                  local.get $day_bright
+                  i32.mul
+                  i32.const 255
+                  i32.div_u
+                  i32.const 255
+                  local.get $shade_full
+                  i32.sub
+                  i32.mul
+                  i32.const 255
+                  local.get $shade_full
+                  i32.mul
+                  i32.add
+                  i32.const 255
+                  i32.div_u
+                  ;; G = sky_g_full*(255-t)/255 + 240*t/255
+                  i32.const 170
+                  local.get $day_bright
+                  i32.mul
+                  i32.const 255
+                  i32.div_u
+                  i32.const 255
+                  local.get $shade_full
+                  i32.sub
+                  i32.mul
+                  i32.const 240
+                  local.get $shade_full
+                  i32.mul
+                  i32.add
+                  i32.const 255
+                  i32.div_u
+                  ;; B = day_bright*(255-t)/255 + 200*t/255
+                  local.get $day_bright
+                  i32.const 255
+                  local.get $shade_full
+                  i32.sub
+                  i32.mul
+                  i32.const 200
+                  local.get $shade_full
+                  i32.mul
+                  i32.add
+                  i32.const 255
+                  i32.div_u
+                  call $rgb_to_rgbl_dither
+                  i32.store8
                 else
                   local.get $cel_active
                   local.get $cel_is_sun
@@ -5613,12 +5909,12 @@
                   f64.gt
                   i32.and
                   if
-                    ;; Moon hit: base 13 (white) shades with dithering
-                    ;; Map cel_dot from 0.992..1.0 to shade range
+                    ;; Moon rendering with dithered 24-bit RGB (dim moonlight)
+                    ;; Map cel_dot from 0.992..1.0 to t = 0..255
                     local.get $cel_dot
                     f64.const 0.992
                     f64.sub
-                    f64.const 125000.0  ;; scale 0..0.008 to 0..1000
+                    f64.const 31875.0  ;; 255/0.008
                     f64.mul
                     i32.trunc_f64_s
                     local.set $shade_full
@@ -5627,58 +5923,213 @@
                     i32.lt_s
                     if  i32.const 0  local.set $shade_full  end
                     local.get $shade_full
-                    i32.const 1000
+                    i32.const 255
                     i32.gt_s
-                    if  i32.const 1000  local.set $shade_full  end
-                    ;; Moon: white (R=3,G=3,B=3) with brightness from distance
-                    ;; Map 0..1000 to brightness 1..3
-                    local.get $shade_full
-                    i32.const 3
-                    i32.mul
-                    i32.const 1000
-                    i32.div_u
-                    local.set $shade
-                    local.get $shade
-                    i32.const 3
-                    i32.gt_s
-                    if  i32.const 3  local.set $shade  end
-                    local.get $shade
-                    i32.const 1
-                    i32.lt_s
-                    if  i32.const 1  local.set $shade  end
+                    if  i32.const 255  local.set $shade_full  end
+
+                    ;; Moon: dim cool white, max brightness ~100 (not very bright)
+                    ;; Blend from night sky (very dark blue) to moon surface
+                    ;; Night sky: R≈2, G≈4, B≈10
+                    ;; Moon center: R=90, G=95, B=100 (dim cool white)
                     local.get $fb_addr
-                    i32.const 0xFC  ;; white base R=3,G=3,B=3
-                    local.get $shade
-                    i32.or
+                    local.get $px_col
+                    local.get $px_row
+                    ;; R = 2*(255-t)/255 + 90*t/255
+                    i32.const 2
+                    i32.const 255
+                    local.get $shade_full
+                    i32.sub
+                    i32.mul
+                    i32.const 90
+                    local.get $shade_full
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    ;; G = 4*(255-t)/255 + 95*t/255
+                    i32.const 4
+                    i32.const 255
+                    local.get $shade_full
+                    i32.sub
+                    i32.mul
+                    i32.const 95
+                    local.get $shade_full
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    ;; B = 10*(255-t)/255 + 100*t/255
+                    i32.const 10
+                    i32.const 255
+                    local.get $shade_full
+                    i32.sub
+                    i32.mul
+                    i32.const 100
+                    local.get $shade_full
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    call $rgb_to_rgbl_dither
                     i32.store8
                   else
-                    ;; Sky gradient: sky base 0x5C, brightness 0-3 based on ray_dz
-                    ;; ray_dz high = looking up = brighter sky
-                    ;; Map ray_dz (0..1) to brightness 0..3
+                    ;; Sky gradient with dithered 24-bit RGB
+                    ;; ray_dz (0..1) controls gradient from horizon to zenith
+                    ;; Sky color: blend from horizon (lighter/hazier) to zenith (deeper blue)
+                    ;; Horizon: R=140, G=180, B=220 (hazy)  Zenith: R=30, G=80, B=200 (deep)
+                    ;; Scale by day_bright/255
+                    ;; Also at night: very dark blue R≈2, G≈4, B≈10
                     local.get $ray_dz
-                    f64.const 4.0
+                    f64.const 0.0
+                    f64.lt
+                    if
+                      f64.const 0.0
+                      local.set $ray_dz
+                    end
+                    local.get $ray_dz
+                    f64.const 1.0
+                    f64.gt
+                    if
+                      f64.const 1.0
+                      local.set $ray_dz
+                    end
+                    ;; t = ray_dz * 255 (zenith blend)
+                    local.get $ray_dz
+                    f64.const 255.0
                     f64.mul
                     i32.trunc_f64_s
                     local.set $sky_idx
                     local.get $sky_idx
-                    i32.const 0
-                    i32.lt_s
-                    if  i32.const 0  local.set $sky_idx  end
-                    local.get $sky_idx
-                    i32.const 3
+                    i32.const 255
                     i32.gt_s
-                    if  i32.const 3  local.set $sky_idx  end
+                    if  i32.const 255  local.set $sky_idx  end
+
+                    ;; Day sky RGB (before brightness scaling):
+                    ;; R = (140*(255-t) + 30*t) / 255
+                    ;; G = (180*(255-t) + 80*t) / 255
+                    ;; B = (220*(255-t) + 200*t) / 255
+                    ;; Then multiply by day_bright/255 and add night base
+
                     local.get $fb_addr
-                    i32.const 0x5C  ;; sky base
+                    local.get $px_col
+                    local.get $px_row
+                    ;; R: day_r * day_bright/255 + night_r * (255-day_bright)/255
+                    ;; day_r = (140*(255-sky_idx) + 30*sky_idx) / 255
+                    i32.const 140
+                    i32.const 255
                     local.get $sky_idx
-                    i32.or
+                    i32.sub
+                    i32.mul
+                    i32.const 30
+                    local.get $sky_idx
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    local.get $day_bright
+                    i32.mul
+                    ;; night_r = 2
+                    i32.const 2
+                    i32.const 255
+                    local.get $day_bright
+                    i32.sub
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    ;; G
+                    i32.const 180
+                    i32.const 255
+                    local.get $sky_idx
+                    i32.sub
+                    i32.mul
+                    i32.const 80
+                    local.get $sky_idx
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    local.get $day_bright
+                    i32.mul
+                    i32.const 4
+                    i32.const 255
+                    local.get $day_bright
+                    i32.sub
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    ;; B
+                    i32.const 220
+                    i32.const 255
+                    local.get $sky_idx
+                    i32.sub
+                    i32.mul
+                    i32.const 200
+                    local.get $sky_idx
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    local.get $day_bright
+                    i32.mul
+                    i32.const 10
+                    i32.const 255
+                    local.get $day_bright
+                    i32.sub
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    call $rgb_to_rgbl_dither
                     i32.store8
                   end
                 end
               else
-                ;; Below horizon fog: sky base dim = 0x5D (brightness 1)
+                ;; Below horizon fog: dithered sky at horizon level
+                ;; Use horizon sky color (ray_dz≈0 equivalent)
+                ;; day: R=140*day_bright/255, G=180*day_bright/255, B=220*day_bright/255
+                ;; plus night base
                 local.get $fb_addr
-                i32.const 0x5D
+                local.get $px_col
+                local.get $px_row
+                ;; R
+                i32.const 140
+                local.get $day_bright
+                i32.mul
+                i32.const 2
+                i32.const 255
+                local.get $day_bright
+                i32.sub
+                i32.mul
+                i32.add
+                i32.const 255
+                i32.div_u
+                ;; G
+                i32.const 180
+                local.get $day_bright
+                i32.mul
+                i32.const 4
+                i32.const 255
+                local.get $day_bright
+                i32.sub
+                i32.mul
+                i32.add
+                i32.const 255
+                i32.div_u
+                ;; B
+                i32.const 220
+                local.get $day_bright
+                i32.mul
+                i32.const 10
+                i32.const 255
+                local.get $day_bright
+                i32.sub
+                i32.mul
+                i32.add
+                i32.const 255
+                i32.div_u
+                call $rgb_to_rgbl_dither
                 i32.store8
               end
             end
