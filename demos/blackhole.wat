@@ -301,10 +301,10 @@
       ;; Compute direction, then scale to 3D position at random distance
       (local.set $addr (i32.add (i32.const 0x10400) (i32.shl (local.get $i) (i32.const 4))))
       (call $star_dir (local.get $face) (local.get $su) (local.get $sv) (local.get $addr))
-      ;; Random radius 80-300
+      ;; Random radius 80-800
       (local.set $rnd (call $rand))
       (local.set $t (f64.add (f64.const 80.0)
-        (f64.mul (f64.convert_i32_u (i32.and (local.get $rnd) (i32.const 255))) (f64.const 0.86))))
+        (f64.mul (f64.convert_i32_u (i32.and (local.get $rnd) (i32.const 511))) (f64.const 1.41))))
       (f32.store (local.get $addr)
         (f32.demote_f64 (f64.mul (f64.promote_f32 (f32.load (local.get $addr))) (local.get $t))))
       (f32.store (i32.add (local.get $addr) (i32.const 4))
@@ -473,6 +473,8 @@
     (local $star_x f64) (local $star_y f64) (local $star_z f64)
     (local $star_id i32) (local $star_addr i32)
     (local $cu i32) (local $cv i32)
+    (local $uf f64) (local $vf f64) (local $face_base i32)
+    (local $best_d2 f64) (local $best_id i32)
 
     ;; Read frame counter
     (local.set $frame_count (i32.load (i32.const 0x00)))
@@ -1067,67 +1069,144 @@
                           (local.set $fy (f64.neg (local.get $vel_y)))))))))
 
               ;; ix=face, fx=sc, fy=tc, d2=ma
-              ;; u = ((sc/ma + 1) * 0.5) * 127
-              (local.set $star_base (i32.trunc_f64_s
-                (f64.mul (f64.mul (f64.add
-                  (f64.div (local.get $fx) (local.get $d2))
-                  (f64.const 1.0)) (f64.const 0.5)) (f64.const 127.0))))
-              (local.set $star_bright (i32.trunc_f64_s
-                (f64.mul (f64.mul (f64.add
-                  (f64.div (local.get $fy) (local.get $d2))
-                  (f64.const 1.0)) (f64.const 0.5)) (f64.const 127.0))))
-              ;; Clamp u,v to [0, 127]
-              (if (i32.lt_s (local.get $star_base) (i32.const 0))
-                (then (local.set $star_base (i32.const 0))))
-              (if (i32.gt_s (local.get $star_base) (i32.const 127))
-                (then (local.set $star_base (i32.const 127))))
-              (if (i32.lt_s (local.get $star_bright) (i32.const 0))
-                (then (local.set $star_bright (i32.const 0))))
-              (if (i32.gt_s (local.get $star_bright) (i32.const 127))
-                (then (local.set $star_bright (i32.const 127))))
+              ;; Compute float u,v for 2×2 bilinear lookup
+              (local.set $uf (f64.mul (f64.mul (f64.add
+                (f64.div (local.get $fx) (local.get $d2))
+                (f64.const 1.0)) (f64.const 0.5)) (f64.const 127.0)))
+              (local.set $vf (f64.mul (f64.mul (f64.add
+                (f64.div (local.get $fy) (local.get $d2))
+                (f64.const 1.0)) (f64.const 0.5)) (f64.const 127.0)))
+              ;; Floor to get base texel
+              (local.set $cu (i32.trunc_f64_s (f64.floor (local.get $uf))))
+              (local.set $cv (i32.trunc_f64_s (f64.floor (local.get $vf))))
+              ;; Clamp to [0, 126] so +1 stays in bounds
+              (if (i32.lt_s (local.get $cu) (i32.const 0)) (then (local.set $cu (i32.const 0))))
+              (if (i32.gt_s (local.get $cu) (i32.const 126)) (then (local.set $cu (i32.const 126))))
+              (if (i32.lt_s (local.get $cv) (i32.const 0)) (then (local.set $cv (i32.const 0))))
+              (if (i32.gt_s (local.get $cv) (i32.const 126)) (then (local.set $cv (i32.const 126))))
 
-              ;; Read star_id from cubemap
-              (local.set $idx (i32.load8_u
-                (i32.add (i32.const 0x20000)
-                  (i32.add (i32.shl (local.get $ix) (i32.const 14))
-                    (i32.add (i32.shl (local.get $star_bright) (i32.const 7))
-                      (local.get $star_base))))))
+              ;; Face base address in cubemap
+              (local.set $face_base (i32.add (i32.const 0x20000) (i32.shl (local.get $ix) (i32.const 14))))
 
+              ;; 2×2 bilinear: check 4 texels, evaluate each unique star, keep best
+              (local.set $best_d2 (f64.const 999.0))
+              (local.set $best_id (i32.const 0))
+
+              ;; Macro: for each texel, load star_id; if non-zero and unique, compute d²
+              ;; and keep if closer than current best. Inlined 4 times for each corner.
+
+              ;; --- Texel (cu, cv) ---
+              (local.set $idx (i32.load8_u (i32.add (local.get $face_base)
+                (i32.add (i32.shl (local.get $cv) (i32.const 7)) (local.get $cu)))))
               (if (local.get $idx)
                 (then
-                  ;; Look up star position from table
-                  (local.set $star_base (i32.add (i32.const 0x10400) (i32.shl (local.get $idx) (i32.const 4))))
-                  (local.set $star_x (f64.promote_f32 (f32.load (local.get $star_base))))
-                  (local.set $star_y (f64.promote_f32 (f32.load (i32.add (local.get $star_base) (i32.const 4)))))
-                  (local.set $star_z (f64.promote_f32 (f32.load (i32.add (local.get $star_base) (i32.const 8)))))
-
-                  ;; Distance and normalized direction
+                  (local.set $star_addr (i32.add (i32.const 0x10400) (i32.shl (local.get $idx) (i32.const 4))))
+                  (local.set $star_x (f64.promote_f32 (f32.load (local.get $star_addr))))
+                  (local.set $star_y (f64.promote_f32 (f32.load (i32.add (local.get $star_addr) (i32.const 4)))))
+                  (local.set $star_z (f64.promote_f32 (f32.load (i32.add (local.get $star_addr) (i32.const 8)))))
                   (local.set $disk_r2 (f64.add (f64.add
                     (f64.mul (local.get $star_x) (local.get $star_x))
                     (f64.mul (local.get $star_y) (local.get $star_y)))
                     (f64.mul (local.get $star_z) (local.get $star_z))))
                   (local.set $disk_r (f64.sqrt (local.get $disk_r2)))
-                  ;; dir = pos / dist
                   (local.set $fx (f64.sub (local.get $vel_x) (f64.div (local.get $star_x) (local.get $disk_r))))
                   (local.set $fy (f64.sub (local.get $vel_y) (f64.div (local.get $star_y) (local.get $disk_r))))
                   (local.set $fz (f64.sub (local.get $vel_z) (f64.div (local.get $star_z) (local.get $disk_r))))
-                  ;; d² = |vel - dir|²
                   (local.set $d2 (f64.add (f64.add
                     (f64.mul (local.get $fx) (local.get $fx))
                     (f64.mul (local.get $fy) (local.get $fy)))
                     (f64.mul (local.get $fz) (local.get $fz))))
+                  (if (f64.lt (local.get $d2) (local.get $best_d2))
+                    (then (local.set $best_d2 (local.get $d2)) (local.set $best_id (local.get $idx)) (local.set $vf (local.get $disk_r2))))))
 
-                  ;; Distance-scaled falloff: closer stars appear bigger
-                  ;; factor = 0.25 * dist² → at dist=100 factor=2500, dist=50 factor=625
+              ;; --- Texel (cu+1, cv) ---
+              (local.set $idx (i32.load8_u (i32.add (local.get $face_base)
+                (i32.add (i32.shl (local.get $cv) (i32.const 7))
+                  (i32.add (local.get $cu) (i32.const 1))))))
+              (if (i32.and (local.get $idx) (i32.ne (local.get $idx) (local.get $best_id)))
+                (then
+                  (local.set $star_addr (i32.add (i32.const 0x10400) (i32.shl (local.get $idx) (i32.const 4))))
+                  (local.set $star_x (f64.promote_f32 (f32.load (local.get $star_addr))))
+                  (local.set $star_y (f64.promote_f32 (f32.load (i32.add (local.get $star_addr) (i32.const 4)))))
+                  (local.set $star_z (f64.promote_f32 (f32.load (i32.add (local.get $star_addr) (i32.const 8)))))
+                  (local.set $disk_r2 (f64.add (f64.add
+                    (f64.mul (local.get $star_x) (local.get $star_x))
+                    (f64.mul (local.get $star_y) (local.get $star_y)))
+                    (f64.mul (local.get $star_z) (local.get $star_z))))
+                  (local.set $disk_r (f64.sqrt (local.get $disk_r2)))
+                  (local.set $fx (f64.sub (local.get $vel_x) (f64.div (local.get $star_x) (local.get $disk_r))))
+                  (local.set $fy (f64.sub (local.get $vel_y) (f64.div (local.get $star_y) (local.get $disk_r))))
+                  (local.set $fz (f64.sub (local.get $vel_z) (f64.div (local.get $star_z) (local.get $disk_r))))
+                  (local.set $d2 (f64.add (f64.add
+                    (f64.mul (local.get $fx) (local.get $fx))
+                    (f64.mul (local.get $fy) (local.get $fy)))
+                    (f64.mul (local.get $fz) (local.get $fz))))
+                  (if (f64.lt (local.get $d2) (local.get $best_d2))
+                    (then (local.set $best_d2 (local.get $d2)) (local.set $best_id (local.get $idx)) (local.set $vf (local.get $disk_r2))))))
+
+              ;; --- Texel (cu, cv+1) ---
+              (local.set $idx (i32.load8_u (i32.add (local.get $face_base)
+                (i32.add (i32.shl (i32.add (local.get $cv) (i32.const 1)) (i32.const 7))
+                  (local.get $cu)))))
+              (if (i32.and (local.get $idx) (i32.ne (local.get $idx) (local.get $best_id)))
+                (then
+                  (local.set $star_addr (i32.add (i32.const 0x10400) (i32.shl (local.get $idx) (i32.const 4))))
+                  (local.set $star_x (f64.promote_f32 (f32.load (local.get $star_addr))))
+                  (local.set $star_y (f64.promote_f32 (f32.load (i32.add (local.get $star_addr) (i32.const 4)))))
+                  (local.set $star_z (f64.promote_f32 (f32.load (i32.add (local.get $star_addr) (i32.const 8)))))
+                  (local.set $disk_r2 (f64.add (f64.add
+                    (f64.mul (local.get $star_x) (local.get $star_x))
+                    (f64.mul (local.get $star_y) (local.get $star_y)))
+                    (f64.mul (local.get $star_z) (local.get $star_z))))
+                  (local.set $disk_r (f64.sqrt (local.get $disk_r2)))
+                  (local.set $fx (f64.sub (local.get $vel_x) (f64.div (local.get $star_x) (local.get $disk_r))))
+                  (local.set $fy (f64.sub (local.get $vel_y) (f64.div (local.get $star_y) (local.get $disk_r))))
+                  (local.set $fz (f64.sub (local.get $vel_z) (f64.div (local.get $star_z) (local.get $disk_r))))
+                  (local.set $d2 (f64.add (f64.add
+                    (f64.mul (local.get $fx) (local.get $fx))
+                    (f64.mul (local.get $fy) (local.get $fy)))
+                    (f64.mul (local.get $fz) (local.get $fz))))
+                  (if (f64.lt (local.get $d2) (local.get $best_d2))
+                    (then (local.set $best_d2 (local.get $d2)) (local.set $best_id (local.get $idx)) (local.set $vf (local.get $disk_r2))))))
+
+              ;; --- Texel (cu+1, cv+1) ---
+              (local.set $idx (i32.load8_u (i32.add (local.get $face_base)
+                (i32.add (i32.shl (i32.add (local.get $cv) (i32.const 1)) (i32.const 7))
+                  (i32.add (local.get $cu) (i32.const 1))))))
+              (if (i32.and (local.get $idx) (i32.ne (local.get $idx) (local.get $best_id)))
+                (then
+                  (local.set $star_addr (i32.add (i32.const 0x10400) (i32.shl (local.get $idx) (i32.const 4))))
+                  (local.set $star_x (f64.promote_f32 (f32.load (local.get $star_addr))))
+                  (local.set $star_y (f64.promote_f32 (f32.load (i32.add (local.get $star_addr) (i32.const 4)))))
+                  (local.set $star_z (f64.promote_f32 (f32.load (i32.add (local.get $star_addr) (i32.const 8)))))
+                  (local.set $disk_r2 (f64.add (f64.add
+                    (f64.mul (local.get $star_x) (local.get $star_x))
+                    (f64.mul (local.get $star_y) (local.get $star_y)))
+                    (f64.mul (local.get $star_z) (local.get $star_z))))
+                  (local.set $disk_r (f64.sqrt (local.get $disk_r2)))
+                  (local.set $fx (f64.sub (local.get $vel_x) (f64.div (local.get $star_x) (local.get $disk_r))))
+                  (local.set $fy (f64.sub (local.get $vel_y) (f64.div (local.get $star_y) (local.get $disk_r))))
+                  (local.set $fz (f64.sub (local.get $vel_z) (f64.div (local.get $star_z) (local.get $disk_r))))
+                  (local.set $d2 (f64.add (f64.add
+                    (f64.mul (local.get $fx) (local.get $fx))
+                    (f64.mul (local.get $fy) (local.get $fy)))
+                    (f64.mul (local.get $fz) (local.get $fz))))
+                  (if (f64.lt (local.get $d2) (local.get $best_d2))
+                    (then (local.set $best_d2 (local.get $d2)) (local.set $best_id (local.get $idx)) (local.set $vf (local.get $disk_r2))))))
+
+              ;; Render the best star found ($vf = dist² saved during best update)
+              (if (local.get $best_id)
+                (then
+                  (local.set $star_addr (i32.add (i32.const 0x10400) (i32.shl (local.get $best_id) (i32.const 4))))
+                  ;; brightness = 1 - best_d² * 0.25 * dist²
                   (local.set $brightness (f64.sub (f64.const 1.0)
-                    (f64.mul (local.get $d2) (f64.mul (f64.const 0.25) (local.get $disk_r2)))))
+                    (f64.mul (local.get $best_d2) (f64.mul (f64.const 0.25) (local.get $vf)))))
                   (if (f64.gt (local.get $brightness) (f64.const 0.0))
                     (then
-                      ;; palette_idx = base + trunc(brightness * max_offset)
                       (local.set $color (i32.add
-                        (i32.load8_u (i32.add (local.get $star_base) (i32.const 12)))
+                        (i32.load8_u (i32.add (local.get $star_addr) (i32.const 12)))
                         (i32.trunc_f64_s (f64.mul (local.get $brightness)
-                          (f64.convert_i32_u (i32.load8_u (i32.add (local.get $star_base) (i32.const 13))))))))))))
+                          (f64.convert_i32_u (i32.load8_u (i32.add (local.get $star_addr) (i32.const 13))))))))))))
 
               (br $ray_done)))
 
