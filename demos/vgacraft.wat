@@ -1051,9 +1051,12 @@
   ;; Returns: block_type in result, face via global
   ;; Amanatides & Woo grid traversal in 3D
   ;; ============================================================
-  ;; Global to communicate hit face and distance back
+  ;; Global to communicate hit face, distance, and voxel coords back
   (global $g_hit_face (mut i32) (i32.const 0))
   (global $g_hit_dist (mut f64) (f64.const 0.0))
+  (global $g_hit_vx (mut i32) (i32.const 0))
+  (global $g_hit_vy (mut i32) (i32.const 0))
+  (global $g_hit_vz (mut i32) (i32.const 0))
 
   (func $cast_ray (param $ox f64) (param $oy f64) (param $oz f64)
                    (param $dx f64) (param $dy f64) (param $dz f64)
@@ -1142,6 +1145,9 @@
           (then
             (global.set $g_hit_face (i32.const 0))
             (global.set $g_hit_dist (f64.const 0.0))
+            (global.set $g_hit_vx (local.get $vx))
+            (global.set $g_hit_vy (local.get $vy))
+            (global.set $g_hit_vz (local.get $vz))
             (return (local.get $block))))))
 
     ;; Main traversal loop — max 48 steps, view distance ~24 blocks
@@ -1201,6 +1207,9 @@
         (then
           (global.set $g_hit_face (local.get $face))
           (global.set $g_hit_dist (local.get $t_cur))
+          (global.set $g_hit_vx (local.get $vx))
+          (global.set $g_hit_vy (local.get $vy))
+          (global.set $g_hit_vz (local.get $vz))
           (return (local.get $block))))
 
       (local.set $steps (i32.add (local.get $steps) (i32.const 1)))
@@ -1209,6 +1218,181 @@
     ;; No hit
     (global.set $g_hit_face (i32.const 0))
     (global.set $g_hit_dist (f64.const 999.0))
+    (global.set $g_hit_vx (i32.const 0))
+    (global.set $g_hit_vy (i32.const 0))
+    (global.set $g_hit_vz (i32.const 0))
+    (i32.const 0)
+  )
+
+  ;; ============================================================
+  ;; PROCEDURAL TEXTURES — compute per-pixel shade adjustment
+  ;; Uses hit voxel coords + fractional UV on face
+  ;; Returns shade adjustment (-2 to +2)
+  ;; ============================================================
+  (func $texture_offset (param $type i32) (param $face i32)
+        (param $vx i32) (param $vy i32) (param $vz i32)
+        (param $fu i32) (param $fv i32) (result i32)
+    (local $h i32) (local $h2 i32) (local $h3 i32)
+    (local $result i32)
+    ;; Base hash combining voxel + UV
+    (local.set $h (i32.and (call $hash3d
+      (i32.add (local.get $vx) (i32.mul (local.get $fu) (i32.const 37)))
+      (i32.add (local.get $vy) (i32.mul (local.get $fv) (i32.const 53)))
+      (local.get $vz)) (i32.const 255)))
+    ;; Per-block-position hash for variation
+    (local.set $h2 (i32.and (call $hash3d (local.get $vx) (local.get $vy) (local.get $vz)) (i32.const 255)))
+
+    ;; Grass (type 1)
+    (if (i32.eq (local.get $type) (i32.const 1))
+      (then
+        (if (i32.eq (local.get $face) (i32.const 0))
+          (then
+            ;; Top face: grass blades pattern - vertical streaks
+            (local.set $h3 (i32.and (call $hash3d
+              (local.get $fu)
+              (i32.add (local.get $vx) (i32.mul (local.get $vy) (i32.const 17)))
+              (i32.const 0)) (i32.const 15)))
+            (if (i32.lt_u (local.get $h3) (i32.const 3))
+              (then (return (i32.const -1))))
+            (if (i32.gt_u (local.get $h3) (i32.const 12))
+              (then (return (i32.const 1))))
+            ;; Occasional flower/dark patch
+            (if (i32.and (i32.lt_u (local.get $h) (i32.const 12)) (i32.lt_u (local.get $h2) (i32.const 40)))
+              (then (return (i32.const 2))))
+            (return (i32.const 0)))
+          (else
+            ;; Side face: dirt showing through with grass line at top
+            (if (i32.eq (local.get $fv) (i32.const 0))
+              (then (return (i32.const 1))))
+            (if (i32.lt_u (local.get $h) (i32.const 60))
+              (then (return (i32.const -1))))
+            (return (i32.const 0))))))
+
+    ;; Dirt (type 2)
+    (if (i32.eq (local.get $type) (i32.const 2))
+      (then
+        ;; Specks and pebbles
+        (if (i32.lt_u (local.get $h) (i32.const 30))
+          (then (return (i32.const -1))))
+        (if (i32.gt_u (local.get $h) (i32.const 230))
+          (then (return (i32.const 1))))
+        ;; Occasional root/dark streak
+        (local.set $h3 (i32.and (call $hash3d
+          (i32.add (local.get $fu) (i32.mul (local.get $vx) (i32.const 7)))
+          (local.get $fv) (local.get $vz)) (i32.const 31)))
+        (if (i32.eqz (local.get $h3))
+          (then (return (i32.const -2))))
+        (return (i32.const 0))))
+
+    ;; Stone (type 3)
+    (if (i32.eq (local.get $type) (i32.const 3))
+      (then
+        ;; Cracks and mineral veins
+        (local.set $h3 (i32.and (call $hash3d
+          (i32.add (local.get $fu) (i32.mul (local.get $vx) (i32.const 13)))
+          (i32.add (local.get $fv) (i32.mul (local.get $vy) (i32.const 19)))
+          (local.get $vz)) (i32.const 63)))
+        (if (i32.lt_u (local.get $h3) (i32.const 3))
+          (then (return (i32.const -2))))
+        (if (i32.lt_u (local.get $h) (i32.const 40))
+          (then (return (i32.const -1))))
+        (if (i32.gt_u (local.get $h) (i32.const 220))
+          (then (return (i32.const 1))))
+        (return (i32.const 0))))
+
+    ;; Sand (type 4)
+    (if (i32.eq (local.get $type) (i32.const 4))
+      (then
+        ;; Granular - lots of tiny variation
+        (local.set $result (i32.sub (i32.and (local.get $h) (i32.const 3)) (i32.const 1)))
+        (return (local.get $result))))
+
+    ;; Wood (type 6)
+    (if (i32.eq (local.get $type) (i32.const 6))
+      (then
+        (if (i32.eq (local.get $face) (i32.const 0))
+          (then
+            ;; Top/bottom: ring pattern using distance from center
+            (local.set $h3 (i32.and
+              (i32.add
+                (i32.mul (i32.sub (local.get $fu) (i32.const 4)) (i32.sub (local.get $fu) (i32.const 4)))
+                (i32.mul (i32.sub (local.get $fv) (i32.const 4)) (i32.sub (local.get $fv) (i32.const 4))))
+              (i32.const 3)))
+            (return (i32.sub (local.get $h3) (i32.const 1))))
+          (else
+            ;; Side: vertical grain lines
+            (local.set $h3 (i32.and (call $hash3d
+              (local.get $fu)
+              (i32.add (local.get $vx) (local.get $vy))
+              (i32.const 6)) (i32.const 7)))
+            (if (i32.lt_u (local.get $h3) (i32.const 2))
+              (then (return (i32.const -1))))
+            (return (i32.const 0))))))
+
+    ;; Leaves (type 7)
+    (if (i32.eq (local.get $type) (i32.const 7))
+      (then
+        ;; Leafy holes and variation
+        (if (i32.lt_u (local.get $h) (i32.const 25))
+          (then (return (i32.const -2))))
+        (if (i32.gt_u (local.get $h) (i32.const 200))
+          (then (return (i32.const 1))))
+        (return (i32.const 0))))
+
+    ;; Coal (type 8)
+    (if (i32.eq (local.get $type) (i32.const 8))
+      (then
+        ;; Dark veins in stone
+        (local.set $h3 (i32.and (call $hash3d
+          (i32.add (local.get $fu) (i32.mul (local.get $vx) (i32.const 11)))
+          (i32.add (local.get $fv) (i32.mul (local.get $vy) (i32.const 23)))
+          (i32.mul (local.get $vz) (i32.const 7))) (i32.const 15)))
+        (if (i32.lt_u (local.get $h3) (i32.const 4))
+          (then (return (i32.const -2))))
+        (if (i32.gt_u (local.get $h) (i32.const 200))
+          (then (return (i32.const 1))))
+        (return (i32.const 0))))
+
+    ;; Default: no texture offset
+    (i32.const 0)
+  )
+
+  ;; ============================================================
+  ;; ORDERED DITHERING — 4x4 Bayer matrix
+  ;; Returns 0 or 1 based on pixel position and fractional shade
+  ;; frac_shade: 0-7 (sub-step within shade), threshold against Bayer
+  ;; ============================================================
+  (func $dither_test (param $px i32) (param $py i32) (param $frac i32) (result i32)
+    (local $bx i32) (local $by i32) (local $threshold i32) (local $idx i32)
+    ;; 4x4 Bayer matrix (thresholds 0-15, scaled)
+    ;; [ 0  8  2 10]
+    ;; [12  4 14  6]
+    ;; [ 3 11  1  9]
+    ;; [15  7 13  5]
+    (local.set $bx (i32.and (local.get $px) (i32.const 3)))
+    (local.set $by (i32.and (local.get $py) (i32.const 3)))
+    (local.set $idx (i32.add (i32.mul (local.get $by) (i32.const 4)) (local.get $bx)))
+    ;; Look up from inline table using nested ifs (WAT doesn't have data tables easily for this)
+    (local.set $threshold (i32.const 0))
+    (if (i32.eq (local.get $idx) (i32.const 0)) (then (local.set $threshold (i32.const 0))))
+    (if (i32.eq (local.get $idx) (i32.const 1)) (then (local.set $threshold (i32.const 8))))
+    (if (i32.eq (local.get $idx) (i32.const 2)) (then (local.set $threshold (i32.const 2))))
+    (if (i32.eq (local.get $idx) (i32.const 3)) (then (local.set $threshold (i32.const 10))))
+    (if (i32.eq (local.get $idx) (i32.const 4)) (then (local.set $threshold (i32.const 12))))
+    (if (i32.eq (local.get $idx) (i32.const 5)) (then (local.set $threshold (i32.const 4))))
+    (if (i32.eq (local.get $idx) (i32.const 6)) (then (local.set $threshold (i32.const 14))))
+    (if (i32.eq (local.get $idx) (i32.const 7)) (then (local.set $threshold (i32.const 6))))
+    (if (i32.eq (local.get $idx) (i32.const 8)) (then (local.set $threshold (i32.const 3))))
+    (if (i32.eq (local.get $idx) (i32.const 9)) (then (local.set $threshold (i32.const 11))))
+    (if (i32.eq (local.get $idx) (i32.const 10)) (then (local.set $threshold (i32.const 1))))
+    (if (i32.eq (local.get $idx) (i32.const 11)) (then (local.set $threshold (i32.const 9))))
+    (if (i32.eq (local.get $idx) (i32.const 12)) (then (local.set $threshold (i32.const 15))))
+    (if (i32.eq (local.get $idx) (i32.const 13)) (then (local.set $threshold (i32.const 7))))
+    (if (i32.eq (local.get $idx) (i32.const 14)) (then (local.set $threshold (i32.const 13))))
+    (if (i32.eq (local.get $idx) (i32.const 15)) (then (local.set $threshold (i32.const 5))))
+    ;; frac is 0-15, compare with threshold
+    (if (i32.gt_s (local.get $frac) (local.get $threshold))
+      (then (return (i32.const 1))))
     (i32.const 0)
   )
 
@@ -1241,6 +1425,13 @@
     (local $fb_addr i32)
     (local $sky_idx i32)
     (local $len f64)
+    ;; Texture/dither locals
+    (local $hit_vx i32) (local $hit_vy i32) (local $hit_vz i32)
+    (local $hit_px f64) (local $hit_py f64) (local $hit_pz f64)
+    (local $tex_u i32) (local $tex_v i32)
+    (local $tex_off i32)
+    (local $shade_full i32) (local $shade_frac i32)
+    (local $dither_bump i32)
     ;; Monster locals
     (local $i i32) (local $m_addr i32) (local $m_active i32)
     (local $m_type i32) (local $m_wx f64) (local $m_wy f64)
@@ -1464,29 +1655,122 @@
 
         (local.set $face (global.get $g_hit_face))
         (local.set $dist (global.get $g_hit_dist))
+        (local.set $hit_vx (global.get $g_hit_vx))
+        (local.set $hit_vy (global.get $g_hit_vy))
+        (local.set $hit_vz (global.get $g_hit_vz))
 
         (local.set $fb_addr (i32.add (i32.const 0x0340)
           (i32.add (i32.mul (local.get $px_row) (i32.const 320)) (local.get $px_col))))
 
         (if (i32.ne (local.get $hit_type) (i32.const 0))
           (then
-            ;; Distance shade
-            (local.set $shade (i32.sub (i32.const 7)
-              (i32.trunc_f64_s (f64.div (local.get $dist) (f64.const 4.0)))))
-            (if (i32.lt_s (local.get $shade) (i32.const 1))
-              (then (local.set $shade (i32.const 1))))
+            ;; Compute hit point for texture UV
+            (local.set $hit_px (f64.add (local.get $px)
+              (f64.mul (local.get $ray_dx) (local.get $dist))))
+            (local.set $hit_py (f64.add (local.get $py)
+              (f64.mul (local.get $ray_dy) (local.get $dist))))
+            (local.set $hit_pz (f64.add (f64.add (local.get $pz) (local.get $bob))
+              (f64.mul (local.get $ray_dz) (local.get $dist))))
+
+            ;; Compute texture UV (0-7) based on face
+            ;; face 0=top: u=frac(x)*8, v=frac(y)*8
+            ;; face 1=side-bright: u=frac(y)*8, v=(1-frac(z))*8
+            ;; face 2=side-dim: u=frac(x)*8, v=(1-frac(z))*8
+            ;; face 3=bottom: u=frac(x)*8, v=frac(y)*8
+            (if (i32.or (i32.eq (local.get $face) (i32.const 0))
+                        (i32.eq (local.get $face) (i32.const 3)))
+              (then
+                ;; Top/bottom face
+                (local.set $tex_u (i32.and
+                  (i32.trunc_f64_s (f64.mul
+                    (f64.sub (local.get $hit_px) (f64.floor (local.get $hit_px)))
+                    (f64.const 8.0)))
+                  (i32.const 7)))
+                (local.set $tex_v (i32.and
+                  (i32.trunc_f64_s (f64.mul
+                    (f64.sub (local.get $hit_py) (f64.floor (local.get $hit_py)))
+                    (f64.const 8.0)))
+                  (i32.const 7)))))
+            (if (i32.eq (local.get $face) (i32.const 1))
+              (then
+                ;; Side bright face (±Y hit)
+                (local.set $tex_u (i32.and
+                  (i32.trunc_f64_s (f64.mul
+                    (f64.sub (local.get $hit_px) (f64.floor (local.get $hit_px)))
+                    (f64.const 8.0)))
+                  (i32.const 7)))
+                (local.set $tex_v (i32.and
+                  (i32.trunc_f64_s (f64.mul
+                    (f64.sub (f64.const 1.0) (f64.sub (local.get $hit_pz) (f64.floor (local.get $hit_pz))))
+                    (f64.const 8.0)))
+                  (i32.const 7)))))
+            (if (i32.eq (local.get $face) (i32.const 2))
+              (then
+                ;; Side dim face (±X hit)
+                (local.set $tex_u (i32.and
+                  (i32.trunc_f64_s (f64.mul
+                    (f64.sub (local.get $hit_py) (f64.floor (local.get $hit_py)))
+                    (f64.const 8.0)))
+                  (i32.const 7)))
+                (local.set $tex_v (i32.and
+                  (i32.trunc_f64_s (f64.mul
+                    (f64.sub (f64.const 1.0) (f64.sub (local.get $hit_pz) (f64.floor (local.get $hit_pz))))
+                    (f64.const 8.0)))
+                  (i32.const 7)))))
+
+            ;; Distance-based shade with higher precision for dithering
+            ;; shade_full = 112 - dist * 4.0  (range 0..112, 16 sub-steps per shade level)
+            (local.set $shade_full (i32.sub (i32.const 112)
+              (i32.trunc_f64_s (f64.mul (local.get $dist) (f64.const 4.67)))))
+            (if (i32.lt_s (local.get $shade_full) (i32.const 16))
+              (then (local.set $shade_full (i32.const 16))))
+            (if (i32.gt_s (local.get $shade_full) (i32.const 112))
+              (then (local.set $shade_full (i32.const 112))))
+
+            ;; Apply face lighting offset (in 16th-steps)
+            (if (i32.eq (local.get $face) (i32.const 0))
+              (then (local.set $shade_full (i32.add (local.get $shade_full) (i32.const 24)))))
+            (if (i32.eq (local.get $face) (i32.const 2))
+              (then (local.set $shade_full (i32.sub (local.get $shade_full) (i32.const 12)))))
+            (if (i32.eq (local.get $face) (i32.const 3))
+              (then (local.set $shade_full (i32.sub (local.get $shade_full) (i32.const 24)))))
+
+            ;; Apply texture offset
+            (local.set $tex_off (call $texture_offset
+              (local.get $hit_type) (local.get $face)
+              (local.get $hit_vx) (local.get $hit_vy) (local.get $hit_vz)
+              (local.get $tex_u) (local.get $tex_v)))
+            (local.set $shade_full (i32.add (local.get $shade_full)
+              (i32.mul (local.get $tex_off) (i32.const 10))))
+
+            ;; Clamp
+            (if (i32.lt_s (local.get $shade_full) (i32.const 0))
+              (then (local.set $shade_full (i32.const 0))))
+            (if (i32.gt_s (local.get $shade_full) (i32.const 127))
+              (then (local.set $shade_full (i32.const 127))))
+
+            ;; Extract integer shade (0-7) and fractional part (0-15)
+            (local.set $shade (i32.shr_u (local.get $shade_full) (i32.const 4)))
+            (local.set $shade_frac (local.get $shade_full))
+            ;; Use Bayer dither to decide if we bump up
+            (local.set $dither_bump (call $dither_test
+              (local.get $px_col) (local.get $px_row) (local.get $shade_frac)))
+            (local.set $shade (i32.add (local.get $shade) (local.get $dither_bump)))
+            ;; Clamp final shade
+            (if (i32.lt_s (local.get $shade) (i32.const 0))
+              (then (local.set $shade (i32.const 0))))
             (if (i32.gt_s (local.get $shade) (i32.const 7))
               (then (local.set $shade (i32.const 7))))
 
-            (local.set $color (call $block_color (local.get $hit_type) (local.get $face) (local.get $shade)))
+            (local.set $color (i32.add (i32.add (i32.const 8) (i32.mul (local.get $hit_type) (i32.const 8))) (local.get $shade)))
 
-            ;; Water shimmer
+            ;; Water shimmer with texture
             (if (i32.eq (local.get $hit_type) (i32.const 5))
               (then
                 (local.set $color (i32.add (i32.const 104)
                   (i32.and
-                    (i32.add (local.get $px_col)
-                      (i32.add (local.get $px_row)
+                    (i32.add (local.get $tex_u)
+                      (i32.add (local.get $tex_v)
                         (i32.shr_u (local.get $tick) (i32.const 4))))
                     (i32.const 3))))))
 
