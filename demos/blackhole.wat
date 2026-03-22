@@ -60,61 +60,146 @@
     (local $i i32) (local $addr i32)
     (local $t f64) (local $r i32) (local $g i32) (local $b i32)
 
-    ;; Palette 0: black (event horizon + deep space)
-    ;; Already zero from memory init
+    ;; Palette 0-31: space & stars (32 entries)
+    ;; 0: black, 1-7: nebula, 8-15: white stars, 16-21: warm, 22-27: blue, 28-31: red
 
-    ;; Palette 1-3: dark space tints
-    (i32.store8 (i32.const 0x43) (i32.const 1))
-    (i32.store8 (i32.const 0x44) (i32.const 1))
-    (i32.store8 (i32.const 0x45) (i32.const 4))
+    ;; Palette 32-159: accretion disk gradient (128 colors)
+
+    ;; Palette 0-31 via data segment at palette base 0x0040
+    ;; 0: black
+    ;; 1-3: nebula dark tints
+    ;; 4-7: nebula glow (Milky Way)
+    ;; 8-15: white stars (8 brightness levels)
+    ;; 16-21: warm/yellow stars (6 levels)
+    ;; 22-27: blue/cyan stars (6 levels)
+    ;; 28-31: red/orange stars (4 levels)
+
+    ;; idx 0: black
+    (i32.store8 (i32.const 0x40) (i32.const 0))
+    (i32.store8 (i32.const 0x41) (i32.const 0))
+    (i32.store8 (i32.const 0x42) (i32.const 0))
+    ;; idx 1: dark purple
+    (i32.store8 (i32.const 0x43) (i32.const 4))
+    (i32.store8 (i32.const 0x44) (i32.const 2))
+    (i32.store8 (i32.const 0x45) (i32.const 8))
+    ;; idx 2: dark navy
     (i32.store8 (i32.const 0x46) (i32.const 2))
-    (i32.store8 (i32.const 0x47) (i32.const 2))
-    (i32.store8 (i32.const 0x48) (i32.const 7))
-    (i32.store8 (i32.const 0x49) (i32.const 3))
-    (i32.store8 (i32.const 0x4A) (i32.const 3))
-    (i32.store8 (i32.const 0x4B) (i32.const 10))
+    (i32.store8 (i32.const 0x47) (i32.const 4))
+    (i32.store8 (i32.const 0x48) (i32.const 10))
+    ;; idx 3: dark teal
+    (i32.store8 (i32.const 0x49) (i32.const 2))
+    (i32.store8 (i32.const 0x4A) (i32.const 8))
+    (i32.store8 (i32.const 0x4B) (i32.const 8))
+    ;; idx 4: purple glow (milky way)
+    (i32.store8 (i32.const 0x4C) (i32.const 12))
+    (i32.store8 (i32.const 0x4D) (i32.const 6))
+    (i32.store8 (i32.const 0x4E) (i32.const 20))
+    ;; idx 5: blue glow
+    (i32.store8 (i32.const 0x4F) (i32.const 8))
+    (i32.store8 (i32.const 0x50) (i32.const 12))
+    (i32.store8 (i32.const 0x51) (i32.const 25))
+    ;; idx 6: teal glow
+    (i32.store8 (i32.const 0x52) (i32.const 6))
+    (i32.store8 (i32.const 0x53) (i32.const 18))
+    (i32.store8 (i32.const 0x54) (i32.const 18))
+    ;; idx 7: warm glow
+    (i32.store8 (i32.const 0x55) (i32.const 15))
+    (i32.store8 (i32.const 0x56) (i32.const 10))
+    (i32.store8 (i32.const 0x57) (i32.const 10))
 
-    ;; Palette 4-7: star brightness levels (white)
-    (i32.store8 (i32.const 0x4C) (i32.const 50))
-    (i32.store8 (i32.const 0x4D) (i32.const 50))
-    (i32.store8 (i32.const 0x4E) (i32.const 60))
-    (i32.store8 (i32.const 0x4F) (i32.const 120))
-    (i32.store8 (i32.const 0x50) (i32.const 115))
-    (i32.store8 (i32.const 0x51) (i32.const 140))
-    (i32.store8 (i32.const 0x52) (i32.const 200))
-    (i32.store8 (i32.const 0x53) (i32.const 195))
-    (i32.store8 (i32.const 0x54) (i32.const 220))
-    (i32.store8 (i32.const 0x55) (i32.const 255))
-    (i32.store8 (i32.const 0x56) (i32.const 250))
-    (i32.store8 (i32.const 0x57) (i32.const 255))
+    ;; idx 8-15: white stars (8 brightness levels)
+    (i32.store8 (i32.const 0x58) (i32.const 20))   ;; 8
+    (i32.store8 (i32.const 0x59) (i32.const 20))
+    (i32.store8 (i32.const 0x5A) (i32.const 25))
+    (i32.store8 (i32.const 0x5B) (i32.const 45))   ;; 9
+    (i32.store8 (i32.const 0x5C) (i32.const 45))
+    (i32.store8 (i32.const 0x5D) (i32.const 55))
+    (i32.store8 (i32.const 0x5E) (i32.const 75))   ;; 10
+    (i32.store8 (i32.const 0x5F) (i32.const 75))
+    (i32.store8 (i32.const 0x60) (i32.const 90))
+    (i32.store8 (i32.const 0x61) (i32.const 110))  ;; 11
+    (i32.store8 (i32.const 0x62) (i32.const 108))
+    (i32.store8 (i32.const 0x63) (i32.const 125))
+    (i32.store8 (i32.const 0x64) (i32.const 150))  ;; 12
+    (i32.store8 (i32.const 0x65) (i32.const 148))
+    (i32.store8 (i32.const 0x66) (i32.const 165))
+    (i32.store8 (i32.const 0x67) (i32.const 195))  ;; 13
+    (i32.store8 (i32.const 0x68) (i32.const 192))
+    (i32.store8 (i32.const 0x69) (i32.const 210))
+    (i32.store8 (i32.const 0x6A) (i32.const 230))  ;; 14
+    (i32.store8 (i32.const 0x6B) (i32.const 228))
+    (i32.store8 (i32.const 0x6C) (i32.const 240))
+    (i32.store8 (i32.const 0x6D) (i32.const 255))  ;; 15
+    (i32.store8 (i32.const 0x6E) (i32.const 252))
+    (i32.store8 (i32.const 0x6F) (i32.const 255))
 
-    ;; Palette 8-11: colored stars (warm, blue, cyan)
-    (i32.store8 (i32.const 0x58) (i32.const 80))
-    (i32.store8 (i32.const 0x59) (i32.const 50))
-    (i32.store8 (i32.const 0x5A) (i32.const 30))
-    (i32.store8 (i32.const 0x5B) (i32.const 160))
-    (i32.store8 (i32.const 0x5C) (i32.const 120))
-    (i32.store8 (i32.const 0x5D) (i32.const 60))
-    (i32.store8 (i32.const 0x5E) (i32.const 140))
-    (i32.store8 (i32.const 0x5F) (i32.const 160))
-    (i32.store8 (i32.const 0x60) (i32.const 255))
-    (i32.store8 (i32.const 0x61) (i32.const 100))
-    (i32.store8 (i32.const 0x62) (i32.const 180))
-    (i32.store8 (i32.const 0x63) (i32.const 255))
+    ;; idx 16-21: warm/yellow stars (6 levels)
+    (i32.store8 (i32.const 0x70) (i32.const 30))   ;; 16
+    (i32.store8 (i32.const 0x71) (i32.const 20))
+    (i32.store8 (i32.const 0x72) (i32.const 8))
+    (i32.store8 (i32.const 0x73) (i32.const 70))   ;; 17
+    (i32.store8 (i32.const 0x74) (i32.const 45))
+    (i32.store8 (i32.const 0x75) (i32.const 15))
+    (i32.store8 (i32.const 0x76) (i32.const 130))  ;; 18
+    (i32.store8 (i32.const 0x77) (i32.const 85))
+    (i32.store8 (i32.const 0x78) (i32.const 25))
+    (i32.store8 (i32.const 0x79) (i32.const 190))  ;; 19
+    (i32.store8 (i32.const 0x7A) (i32.const 140))
+    (i32.store8 (i32.const 0x7B) (i32.const 45))
+    (i32.store8 (i32.const 0x7C) (i32.const 240))  ;; 20
+    (i32.store8 (i32.const 0x7D) (i32.const 200))
+    (i32.store8 (i32.const 0x7E) (i32.const 80))
+    (i32.store8 (i32.const 0x7F) (i32.const 255))  ;; 21
+    (i32.store8 (i32.const 0x80) (i32.const 240))
+    (i32.store8 (i32.const 0x81) (i32.const 160))
 
-    ;; Palette 16-143: accretion disk gradient (128 colors: outer cool → inner hot)
+    ;; idx 22-27: blue/cyan stars (6 levels)
+    (i32.store8 (i32.const 0x82) (i32.const 10))   ;; 22
+    (i32.store8 (i32.const 0x83) (i32.const 15))
+    (i32.store8 (i32.const 0x84) (i32.const 40))
+    (i32.store8 (i32.const 0x85) (i32.const 25))   ;; 23
+    (i32.store8 (i32.const 0x86) (i32.const 40))
+    (i32.store8 (i32.const 0x87) (i32.const 90))
+    (i32.store8 (i32.const 0x88) (i32.const 55))   ;; 24
+    (i32.store8 (i32.const 0x89) (i32.const 80))
+    (i32.store8 (i32.const 0x8A) (i32.const 160))
+    (i32.store8 (i32.const 0x8B) (i32.const 100))  ;; 25
+    (i32.store8 (i32.const 0x8C) (i32.const 140))
+    (i32.store8 (i32.const 0x8D) (i32.const 220))
+    (i32.store8 (i32.const 0x8E) (i32.const 160))  ;; 26
+    (i32.store8 (i32.const 0x8F) (i32.const 200))
+    (i32.store8 (i32.const 0x90) (i32.const 250))
+    (i32.store8 (i32.const 0x91) (i32.const 210))  ;; 27
+    (i32.store8 (i32.const 0x92) (i32.const 235))
+    (i32.store8 (i32.const 0x93) (i32.const 255))
+
+    ;; idx 28-31: red/orange stars (4 levels)
+    (i32.store8 (i32.const 0x94) (i32.const 40))   ;; 28
+    (i32.store8 (i32.const 0x95) (i32.const 10))
+    (i32.store8 (i32.const 0x96) (i32.const 5))
+    (i32.store8 (i32.const 0x97) (i32.const 100))  ;; 29
+    (i32.store8 (i32.const 0x98) (i32.const 30))
+    (i32.store8 (i32.const 0x99) (i32.const 15))
+    (i32.store8 (i32.const 0x9A) (i32.const 180))  ;; 30
+    (i32.store8 (i32.const 0x9B) (i32.const 60))
+    (i32.store8 (i32.const 0x9C) (i32.const 25))
+    (i32.store8 (i32.const 0x9D) (i32.const 240))  ;; 31
+    (i32.store8 (i32.const 0x9E) (i32.const 110))
+    (i32.store8 (i32.const 0x9F) (i32.const 50))
+
+    ;; Palette 32-159: accretion disk gradient (128 colors: outer cool → inner hot)
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (i32.const 128)))
-      (local.set $addr (i32.add (i32.const 0x0070) (i32.mul (local.get $i) (i32.const 3))))
-      ;; R = min(255, i*5 + 30) — saturates at i≈45
+      (local.set $addr (i32.add (i32.const 0x00A0) (i32.mul (local.get $i) (i32.const 3))))
+      ;; R = min(255, i*5 + 30)
       (local.set $r (i32.add (i32.mul (local.get $i) (i32.const 5)) (i32.const 30)))
       (if (i32.gt_s (local.get $r) (i32.const 255)) (then (local.set $r (i32.const 255))))
-      ;; G = min(255, max(0, (i-12)*4)) — warm orange from i=12
+      ;; G = min(255, max(0, (i-12)*4))
       (local.set $g (i32.mul (i32.sub (local.get $i) (i32.const 12)) (i32.const 4)))
       (if (i32.lt_s (local.get $g) (i32.const 0)) (then (local.set $g (i32.const 0))))
       (if (i32.gt_s (local.get $g) (i32.const 255)) (then (local.set $g (i32.const 255))))
-      ;; B = min(255, max(0, (i-40)*4)) — late blue for white inner
+      ;; B = min(255, max(0, (i-40)*4))
       (local.set $b (i32.mul (i32.sub (local.get $i) (i32.const 40)) (i32.const 4)))
       (if (i32.lt_s (local.get $b) (i32.const 0)) (then (local.set $b (i32.const 0))))
       (if (i32.gt_s (local.get $b) (i32.const 255)) (then (local.set $b (i32.const 255))))
@@ -123,22 +208,6 @@
       (i32.store8 (i32.add (local.get $addr) (i32.const 2)) (local.get $b))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)
-    ))
-
-    ;; Palette 80-95: photon ring glow (warm white → blue-white)
-    (local.set $i (i32.const 0))
-    (block $done2 (loop $lp2
-      (br_if $done2 (i32.ge_u (local.get $i) (i32.const 16)))
-      (local.set $addr (i32.add (i32.const 0x01F4) (i32.mul (local.get $i) (i32.const 3))))
-      (local.set $t (f64.div (f64.convert_i32_u (local.get $i)) (f64.const 15.0)))
-      (local.set $r (i32.trunc_f64_s (f64.sub (f64.const 255.0) (f64.mul (local.get $t) (f64.const 60.0)))))
-      (local.set $g (i32.trunc_f64_s (f64.sub (f64.const 240.0) (f64.mul (local.get $t) (f64.const 30.0)))))
-      (local.set $b (i32.const 255))
-      (i32.store8 (local.get $addr) (local.get $r))
-      (i32.store8 (i32.add (local.get $addr) (i32.const 1)) (local.get $g))
-      (i32.store8 (i32.add (local.get $addr) (i32.const 2)) (local.get $b))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $lp2)
     ))
 
     ;; Init camera state
@@ -184,6 +253,8 @@
     (local $color i32) (local $step i32) (local $idx i32)
     (local $hash i32) (local $ix i32) (local $iy i32) (local $iz i32)
     (local $spiral f64) (local $pattern f64)
+    (local $fx f64) (local $fy f64) (local $fz f64) (local $d2 f64)
+    (local $star_base i32) (local $star_bright i32)
     (local $keys i32) (local $mouse_x i32) (local $mouse_y i32)
     (local $prev_mx i32) (local $prev_my i32)
     (local $has_input i32) (local $sound_timer i32) (local $rnd i32)
@@ -546,19 +617,19 @@
                           (f64.const 16.0))
                         (f64.const 0.5))
                       (f64.const 4.0))))
-                  (local.set $idx (i32.add (i32.const 16)
+                  (local.set $idx (i32.add (i32.const 32)
                     (i32.trunc_f64_s (local.get $spiral))))
-                  (if (i32.lt_s (local.get $idx) (i32.const 16))
-                    (then (local.set $idx (i32.const 16))))
-                  (if (i32.gt_s (local.get $idx) (i32.const 143))
-                    (then (local.set $idx (i32.const 143))))
+                  (if (i32.lt_s (local.get $idx) (i32.const 32))
+                    (then (local.set $idx (i32.const 32))))
+                  (if (i32.gt_s (local.get $idx) (i32.const 159))
+                    (then (local.set $idx (i32.const 159))))
 
                   (local.set $color (local.get $idx))
                   (br $ray_done)))))
 
           ;; --- Early escape: r > 15 and heading outward (pos·vel > 0) ---
           (if (i32.and
-                (f64.gt (local.get $r) (f64.const 15.0))
+                (f64.gt (local.get $r) (f64.const 30.0))
                 (f64.gt
                   (f64.add (f64.add
                     (f64.mul (local.get $pos_x) (local.get $vel_x))
@@ -566,10 +637,22 @@
                     (f64.mul (local.get $pos_z) (local.get $vel_z)))
                   (f64.const 0.0)))
             (then
-              ;; Procedural starfield
-              (local.set $ix (i32.trunc_f64_s (f64.mul (local.get $vel_x) (f64.const 400.0))))
-              (local.set $iy (i32.trunc_f64_s (f64.mul (local.get $vel_y) (f64.const 400.0))))
-              (local.set $iz (i32.trunc_f64_s (f64.mul (local.get $vel_z) (f64.const 400.0))))
+              ;; === Procedural starfield with soft profiles ===
+
+              ;; Hash cell coordinates (400³ grid)
+              (local.set $fx (f64.mul (local.get $vel_x) (f64.const 60.0)))
+              (local.set $fy (f64.mul (local.get $vel_y) (f64.const 60.0)))
+              (local.set $fz (f64.mul (local.get $vel_z) (f64.const 60.0)))
+              (local.set $ix (i32.trunc_f64_s (f64.floor (local.get $fx))))
+              (local.set $iy (i32.trunc_f64_s (f64.floor (local.get $fy))))
+              (local.set $iz (i32.trunc_f64_s (f64.floor (local.get $fz))))
+
+              ;; Fractional position within cell (0 to 1)
+              (local.set $fx (f64.sub (local.get $fx) (f64.convert_i32_s (local.get $ix))))
+              (local.set $fy (f64.sub (local.get $fy) (f64.convert_i32_s (local.get $iy))))
+              (local.set $fz (f64.sub (local.get $fz) (f64.convert_i32_s (local.get $iz))))
+
+              ;; Hash the cell
               (local.set $hash (i32.add
                 (i32.mul (local.get $ix) (i32.const 374761393))
                 (i32.add
@@ -580,12 +663,69 @@
               (local.set $hash (i32.mul (local.get $hash) (i32.const 1274126177)))
               (local.set $hash (i32.xor (local.get $hash)
                 (i32.shr_u (local.get $hash) (i32.const 16))))
-              (if (i32.lt_u (i32.and (local.get $hash) (i32.const 0xFFF)) (i32.const 5))
+
+              ;; Jittered star position within cell (from hash bits)
+              ;; jitter = hash_bits / 256.0 → [0, ~1)
+              (local.set $fx (f64.sub (local.get $fx)
+                (f64.div (f64.convert_i32_u (i32.and (local.get $hash) (i32.const 255)))
+                         (f64.const 256.0))))
+              (local.set $fy (f64.sub (local.get $fy)
+                (f64.div (f64.convert_i32_u (i32.and (i32.shr_u (local.get $hash) (i32.const 8)) (i32.const 255)))
+                         (f64.const 256.0))))
+              (local.set $fz (f64.sub (local.get $fz)
+                (f64.div (f64.convert_i32_u (i32.and (i32.shr_u (local.get $hash) (i32.const 16)) (i32.const 255)))
+                         (f64.const 256.0))))
+              (local.set $d2 (f64.add (f64.add
+                (f64.mul (local.get $fx) (local.get $fx))
+                (f64.mul (local.get $fy) (local.get $fy)))
+                (f64.mul (local.get $fz) (local.get $fz))))
+
+              ;; Is this cell a star? (~1% of cells, but filtered by radius)
+              (if (i32.and
+                    (i32.lt_u (i32.and (local.get $hash) (i32.const 0xFF)) (i32.const 8))
+                    (f64.lt (local.get $d2) (f64.const 0.12)))
                 (then
-                  (local.set $color (i32.add (i32.const 4)
-                    (i32.and (i32.shr_u (local.get $hash) (i32.const 8)) (i32.const 7)))))
+                  ;; Star! Compute brightness from distance to center (0=edge, 7=center)
+                  (local.set $star_bright (i32.sub (i32.const 7)
+                    (i32.trunc_f64_s (f64.mul (local.get $d2) (f64.const 58.0)))))
+                  (if (i32.lt_s (local.get $star_bright) (i32.const 0))
+                    (then (local.set $star_bright (i32.const 0))))
+
+                  ;; Pick color family: ~75% white, ~12% warm, ~8% blue, ~5% red
+                  ;; Use hash bits 14-17 (0-15): 0-11=white, 12-13=warm, 14=blue, 15=red
+                  (local.set $idx (i32.and (i32.shr_u (local.get $hash) (i32.const 14)) (i32.const 15)))
+                  (if (i32.le_u (local.get $idx) (i32.const 11))
+                    (then
+                      ;; White star: base 8, 8 levels
+                      (local.set $color (i32.add (i32.const 8) (local.get $star_bright)))))
+                  (if (i32.and (i32.ge_u (local.get $idx) (i32.const 12))
+                               (i32.le_u (local.get $idx) (i32.const 13)))
+                    (then
+                      ;; Warm star: base 16, 6 levels
+                      (local.set $color (i32.add (i32.const 16)
+                        (i32.div_u (i32.mul (local.get $star_bright) (i32.const 5)) (i32.const 7))))))
+                  (if (i32.eq (local.get $idx) (i32.const 14))
+                    (then
+                      ;; Blue star: base 22, 6 levels
+                      (local.set $color (i32.add (i32.const 22)
+                        (i32.div_u (i32.mul (local.get $star_bright) (i32.const 5)) (i32.const 7))))))
+                  (if (i32.eq (local.get $idx) (i32.const 15))
+                    (then
+                      ;; Red star: base 28, 4 levels
+                      (local.set $color (i32.add (i32.const 28)
+                        (i32.div_u (i32.mul (local.get $star_bright) (i32.const 3)) (i32.const 7)))))))
                 (else
-                  (local.set $color (i32.and (i32.shr_u (local.get $hash) (i32.const 12)) (i32.const 1)))))
+                  ;; No star — mostly pure black
+                  (local.set $color (i32.const 0))
+                  ;; Subtle Milky Way band near vel_y ≈ 0.3 (~10% of pixels in band)
+                  (local.set $d2 (f64.sub (local.get $vel_y) (f64.const 0.3)))
+                  (if (i32.and
+                        (f64.lt (f64.mul (local.get $d2) (local.get $d2)) (f64.const 0.012))
+                        (i32.lt_u (i32.and (local.get $hash) (i32.const 7)) (i32.const 1)))
+                    (then
+                      (local.set $color (i32.add (i32.const 4)
+                        (i32.and (i32.shr_u (local.get $hash) (i32.const 4)) (i32.const 3))))))))
+
               (br $ray_done)))
 
           (local.set $step (i32.add (local.get $step) (i32.const 1)))
