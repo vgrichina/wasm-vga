@@ -1433,6 +1433,11 @@
     (local $column_top i32) (local $block_scr_top i32) (local $block_scr_bot i32)
     (local $drawn_to i32)
     (local $tex_off i32)
+    (local $above_type i32) (local $below_type i32)
+    (local $cur_face i32)
+    (local $bot_drawn_to i32) (local $bot_scr_top i32) (local $bot_scr_bot i32)
+    (local $bot_color i32) (local $bot_sp_color i32) (local $bot_tex_off i32)
+    (local $column_bot i32)
     ;; DDA locals
     (local $map_x i32) (local $map_y i32)
     (local $step_x i32) (local $step_y i32)
@@ -1724,11 +1729,20 @@
             ;; Get the highest solid block at this XY
             (local.set $column_top (call $get_column_top (local.get $map_x) (local.get $map_y)))
 
+            ;; Compute bottom of scan range (go deeper than before for floating structures)
+            (local.set $column_bot (i32.sub (local.get $column_top) (i32.const 8)))
+            (if (i32.lt_s (local.get $column_bot) (i32.const 0))
+              (then (local.set $column_bot (i32.const 0))))
+
             ;; Draw blocks from top down in this column
+            ;; Also track bottom-drawn-to for rendering bottom faces of floating blocks
             (local.set $sample_z (local.get $column_top))
+            (local.set $bot_drawn_to (i32.const 0))
             (block $blk_done (loop $blk_lp
-              (br_if $blk_done (i32.lt_s (local.get $sample_z) (i32.const 0)))
-              (br_if $blk_done (i32.le_s (local.get $drawn_to) (i32.const 2)))
+              (br_if $blk_done (i32.lt_s (local.get $sample_z) (local.get $column_bot)))
+              (br_if $blk_done (i32.and
+                (i32.le_s (local.get $drawn_to) (i32.const 2))
+                (i32.ge_s (local.get $bot_drawn_to) (i32.const 198))))
 
               (local.set $hit_type (call $get_block (local.get $map_x) (local.get $map_y) (local.get $sample_z)))
               (if (i32.ne (local.get $hit_type) (i32.const 0))
@@ -1751,20 +1765,32 @@
                         (f64.const 200.0))
                       (local.get $perp_dist)))))
 
+                  ;; Determine face: check if block above is air → top face
+                  ;; Check if block above is air for top face assignment
+                  (local.set $above_type (call $get_block (local.get $map_x) (local.get $map_y) (i32.add (local.get $sample_z) (i32.const 1))))
+                  ;; Check if block below is air for bottom face
+                  (local.set $below_type (call $get_block (local.get $map_x) (local.get $map_y) (i32.sub (local.get $sample_z) (i32.const 1))))
+
+                  ;; Decide face for coloring: top face if air above, else wall face
+                  (if (i32.eqz (local.get $above_type))
+                    (then (local.set $cur_face (i32.const 0)))  ;; top face
+                    (else (local.set $cur_face (local.get $hit_face))))  ;; wall face
+
+                  ;; === RENDER TOP PORTION (wall/top face — drawn top-down) ===
                   ;; Only draw if extends above what's already drawn
                   (if (i32.lt_s (local.get $block_scr_top) (local.get $drawn_to))
                     (then
-                      (if (i32.lt_s (local.get $block_scr_top) (i32.const 0))
-                        (then (local.set $block_scr_top (i32.const 0))))
-                      (if (i32.gt_s (local.get $block_scr_bot) (local.get $drawn_to))
-                        (then (local.set $block_scr_bot (local.get $drawn_to))))
-                      (if (i32.gt_s (local.get $block_scr_bot) (i32.const 200))
-                        (then (local.set $block_scr_bot (i32.const 200))))
+                      (local.set $bot_scr_top (local.get $block_scr_top))
+                      (local.set $bot_scr_bot (local.get $block_scr_bot))
+                      (if (i32.lt_s (local.get $bot_scr_top) (i32.const 0))
+                        (then (local.set $bot_scr_top (i32.const 0))))
+                      (if (i32.gt_s (local.get $bot_scr_bot) (local.get $drawn_to))
+                        (then (local.set $bot_scr_bot (local.get $drawn_to))))
+                      (if (i32.gt_s (local.get $bot_scr_bot) (i32.const 200))
+                        (then (local.set $bot_scr_bot (i32.const 200))))
 
-                      ;; Top block gets top face, others get wall face
-                      (if (i32.eq (local.get $sample_z) (local.get $column_top))
-                        (then (local.set $color (call $block_color (local.get $hit_type) (i32.const 0) (local.get $shade))))
-                        (else (local.set $color (call $block_color (local.get $hit_type) (local.get $hit_face) (local.get $shade)))))
+                      ;; Color based on face
+                      (local.set $color (call $block_color (local.get $hit_type) (local.get $cur_face) (local.get $shade)))
 
                       ;; Distance fog
                       (if (f64.gt (local.get $dist) (f64.const 22.0))
@@ -1775,9 +1801,9 @@
                             (then (local.set $color (i32.const 95))))))
 
                       ;; Draw pixels with texturing
-                      (local.set $row (local.get $block_scr_top))
+                      (local.set $row (local.get $bot_scr_top))
                       (block $stripe_done (loop $stripe_lp
-                        (br_if $stripe_done (i32.ge_s (local.get $row) (local.get $block_scr_bot)))
+                        (br_if $stripe_done (i32.ge_s (local.get $row) (local.get $bot_scr_bot)))
                         (if (i32.and (i32.ge_s (local.get $row) (i32.const 0))
                                      (i32.lt_s (local.get $row) (i32.const 200)))
                           (then
@@ -1787,8 +1813,8 @@
                               (i32.const 7)))
                             (local.set $tex_v (i32.and
                               (i32.div_u
-                                (i32.mul (i32.sub (local.get $row) (local.get $block_scr_top)) (i32.const 8))
-                                (i32.add (i32.const 1) (i32.sub (local.get $block_scr_bot) (local.get $block_scr_top))))
+                                (i32.mul (i32.sub (local.get $row) (local.get $bot_scr_top)) (i32.const 8))
+                                (i32.add (i32.const 1) (i32.sub (local.get $bot_scr_bot) (local.get $bot_scr_top))))
                               (i32.const 7)))
 
                             ;; Apply texture pattern
@@ -1797,8 +1823,7 @@
                                          (i32.lt_s (local.get $sp_color) (i32.const 80)))
                               (then
                                 (local.set $tex_off (call $block_texture (local.get $hit_type) (local.get $tex_u) (local.get $tex_v)
-                                  (if (result i32) (i32.eq (local.get $sample_z) (local.get $column_top))
-                                    (then (i32.const 0)) (else (local.get $hit_face)))))
+                                  (local.get $cur_face)))
                                 (local.set $sp_color (i32.add (local.get $sp_color) (local.get $tex_off)))
                                 ;; Clamp within block palette
                                 (if (i32.lt_s (local.get $sp_color)
@@ -1827,7 +1852,7 @@
                         (br $stripe_lp)))
 
                       ;; Update drawn_to
-                      (local.set $drawn_to (local.get $block_scr_top))
+                      (local.set $drawn_to (local.get $bot_scr_top))
 
                       ;; Store z distance for sprite occlusion
                       (if (f64.lt (local.get $perp_dist)
@@ -1835,10 +1860,86 @@
                         (then
                           (f64.store (i32.add (i32.const 0x103B0) (i32.mul (local.get $col) (i32.const 8))) (local.get $perp_dist))))
                     ))
+
+                  ;; === RENDER BOTTOM FACE of floating blocks ===
+                  ;; If block below is air, render the bottom face (visible from below)
+                  (if (i32.and (i32.eqz (local.get $below_type))
+                               (i32.gt_s (local.get $sample_z) (i32.const 0)))
+                    (then
+                      ;; Bottom face is drawn from block_scr_bot downward
+                      ;; Only render if block_scr_bot is within visible range and below bot_drawn_to
+                      (if (i32.and (i32.gt_s (local.get $block_scr_bot) (local.get $bot_drawn_to))
+                                   (i32.lt_s (local.get $block_scr_bot) (i32.const 200)))
+                        (then
+                          ;; Compute bottom face color (face=3 = bottom, darker)
+                          (local.set $bot_color (call $block_color (local.get $hit_type) (i32.const 3) (local.get $shade)))
+
+                          ;; Distance fog for bottom face
+                          (if (f64.gt (local.get $dist) (f64.const 22.0))
+                            (then
+                              (local.set $bot_color (i32.add (i32.const 80)
+                                (i32.trunc_f64_s (f64.mul (f64.sub (local.get $dist) (f64.const 22.0)) (f64.const 0.8)))))
+                              (if (i32.gt_s (local.get $bot_color) (i32.const 95))
+                                (then (local.set $bot_color (i32.const 95))))))
+
+                          ;; Find where bottom face ends: next solid block's top or screen bottom
+                          (local.set $bot_scr_top (local.get $block_scr_bot))
+                          (if (i32.lt_s (local.get $bot_scr_top) (local.get $bot_drawn_to))
+                            (then (local.set $bot_scr_top (local.get $bot_drawn_to))))
+                          (local.set $bot_scr_bot (i32.add (local.get $block_scr_bot)
+                            (i32.div_s (i32.sub (local.get $block_scr_bot) (local.get $block_scr_top)) (i32.const 3))))
+                          (if (i32.gt_s (local.get $bot_scr_bot) (i32.const 200))
+                            (then (local.set $bot_scr_bot (i32.const 200))))
+
+                          ;; Draw bottom face pixels
+                          (if (i32.gt_s (local.get $bot_scr_bot) (local.get $bot_scr_top))
+                            (then
+                              (local.set $row (local.get $bot_scr_top))
+                              (block $bstripe_done (loop $bstripe_lp
+                                (br_if $bstripe_done (i32.ge_s (local.get $row) (local.get $bot_scr_bot)))
+                                (if (i32.and (i32.ge_s (local.get $row) (i32.const 0))
+                                             (i32.lt_s (local.get $row) (i32.const 200)))
+                                  (then
+                                    (local.set $bot_sp_color (local.get $bot_color))
+                                    ;; Simple texture for bottom face
+                                    (if (i32.and (i32.ge_s (local.get $bot_sp_color) (i32.const 16))
+                                                 (i32.lt_s (local.get $bot_sp_color) (i32.const 80)))
+                                      (then
+                                        (local.set $tex_u (i32.and
+                                          (i32.trunc_f64_s (f64.mul (local.get $wall_x) (f64.const 8.0)))
+                                          (i32.const 7)))
+                                        (local.set $tex_v (i32.and
+                                          (i32.div_u
+                                            (i32.mul (i32.sub (local.get $row) (local.get $bot_scr_top)) (i32.const 8))
+                                            (i32.add (i32.const 1) (i32.sub (local.get $bot_scr_bot) (local.get $bot_scr_top))))
+                                          (i32.const 7)))
+                                        (local.set $bot_tex_off (call $block_texture (local.get $hit_type) (local.get $tex_u) (local.get $tex_v)
+                                          (i32.const 3)))
+                                        (local.set $bot_sp_color (i32.add (local.get $bot_sp_color) (local.get $bot_tex_off)))
+                                        (if (i32.lt_s (local.get $bot_sp_color)
+                                              (i32.add (i32.const 8) (i32.mul (local.get $hit_type) (i32.const 8))))
+                                          (then (local.set $bot_sp_color
+                                            (i32.add (i32.const 8) (i32.mul (local.get $hit_type) (i32.const 8))))))
+                                        (if (i32.gt_s (local.get $bot_sp_color)
+                                              (i32.add (i32.const 15) (i32.mul (local.get $hit_type) (i32.const 8))))
+                                          (then (local.set $bot_sp_color
+                                            (i32.add (i32.const 15) (i32.mul (local.get $hit_type) (i32.const 8))))))))
+
+                                    (i32.store8
+                                      (i32.add (i32.const 0x0340) (i32.add (i32.mul (local.get $row) (i32.const 320)) (local.get $col)))
+                                      (local.get $bot_sp_color))))
+                                (local.set $row (i32.add (local.get $row) (i32.const 1)))
+                                (br $bstripe_lp)))
+
+                              ;; Update bot_drawn_to so we don't double-draw
+                              (local.set $bot_drawn_to (local.get $bot_scr_bot))
+                            ))
+                        ))
+                    ))
                 ))
 
               (local.set $sample_z (i32.sub (local.get $sample_z) (i32.const 1)))
-              (br_if $blk_done (i32.lt_s (local.get $sample_z) (i32.sub (local.get $column_top) (i32.const 5))))
+              (br_if $blk_done (i32.lt_s (local.get $sample_z) (i32.sub (local.get $column_top) (i32.const 8))))
               (br $blk_lp)))
           ))
 
