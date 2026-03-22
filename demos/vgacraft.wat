@@ -603,7 +603,9 @@
     (f64.store (i32.const 0x10344) (f64.const 32.5))   ;; px - start further out for terrain variety
     (f64.store (i32.const 0x1034C) (f64.const 32.5))   ;; py
     (f64.store (i32.const 0x10354) (f64.const 0.5))    ;; angle - look slightly right
-    (f64.store (i32.const 0x1035C) (f64.const 16.0))   ;; pz (eye height - start high, gravity pulls down)
+    ;; Compute correct starting height: terrain height at (32,32) + 1.7 for eye level
+    (f64.store (i32.const 0x1035C)
+      (f64.add (f64.convert_i32_s (call $terrain_height (i32.const 32) (i32.const 32))) (f64.const 1.7)))
     (f64.store (i32.const 0x10364) (f64.const 0.0))    ;; vz
     (i32.store (i32.const 0x1036C) (i32.const 1))      ;; on_ground
     (f64.store (i32.const 0x10374) (f64.const 0.0))    ;; bob_phase
