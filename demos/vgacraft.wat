@@ -316,22 +316,23 @@
   ;; ---- Block color: returns palette index ----
   ;; face: 0=top, 1=side+X, 2=side-X, 3=side+Y, 4=side-Y, 5=bottom
   ;; We simplify to: 0=top(bright), 1=side-bright, 2=side-dim, 3=bottom(dark)
+  ;; Now uses 16 shades per block type for smoother lighting
   (func $block_color (param $type i32) (param $face i32) (param $shade i32) (result i32)
     (local $base i32)
-    (local.set $base (i32.add (i32.const 8) (i32.mul (local.get $type) (i32.const 8))))
-    ;; Top face gets +2 brightness
+    (local.set $base (i32.sub (i32.mul (local.get $type) (i32.const 16)) (i32.const 8)))
+    ;; Top face gets +4 brightness (was +2 with 8 shades)
     (if (i32.eq (local.get $face) (i32.const 0))
-      (then (local.set $shade (i32.add (local.get $shade) (i32.const 2)))))
-    ;; Dim side gets -1
+      (then (local.set $shade (i32.add (local.get $shade) (i32.const 4)))))
+    ;; Dim side gets -2
     (if (i32.eq (local.get $face) (i32.const 2))
-      (then (local.set $shade (i32.sub (local.get $shade) (i32.const 1)))))
-    ;; Bottom gets -2
-    (if (i32.eq (local.get $face) (i32.const 3))
       (then (local.set $shade (i32.sub (local.get $shade) (i32.const 2)))))
+    ;; Bottom gets -4
+    (if (i32.eq (local.get $face) (i32.const 3))
+      (then (local.set $shade (i32.sub (local.get $shade) (i32.const 4)))))
     (if (i32.lt_s (local.get $shade) (i32.const 0))
       (then (local.set $shade (i32.const 0))))
-    (if (i32.gt_s (local.get $shade) (i32.const 7))
-      (then (local.set $shade (i32.const 7))))
+    (if (i32.gt_s (local.get $shade) (i32.const 15))
+      (then (local.set $shade (i32.const 15))))
     (i32.add (local.get $base) (local.get $shade))
   )
 
@@ -416,131 +417,209 @@
     (call $set_pal (i32.const 6) (i32.const 120) (i32.const 170) (i32.const 230))
     (call $set_pal (i32.const 7) (i32.const 140) (i32.const 190) (i32.const 240))
 
-    ;; Block type 1: grass → palette 16..23
-    (call $set_pal (i32.const 16) (i32.const 30) (i32.const 70) (i32.const 15))
-    (call $set_pal (i32.const 17) (i32.const 38) (i32.const 90) (i32.const 18))
-    (call $set_pal (i32.const 18) (i32.const 45) (i32.const 110) (i32.const 22))
-    (call $set_pal (i32.const 19) (i32.const 55) (i32.const 135) (i32.const 28))
-    (call $set_pal (i32.const 20) (i32.const 65) (i32.const 155) (i32.const 35))
-    (call $set_pal (i32.const 21) (i32.const 80) (i32.const 175) (i32.const 42))
-    (call $set_pal (i32.const 22) (i32.const 95) (i32.const 195) (i32.const 50))
-    (call $set_pal (i32.const 23) (i32.const 110) (i32.const 210) (i32.const 60))
+    ;; ================================================================
+    ;; 16-shade block palettes for smooth lighting + dithering
+    ;; Each block type gets 16 entries: dark(0) → bright(15)
+    ;; Layout: type*16 - 8 + shade = palette index
+    ;; Type 1 (grass):  8-23
+    ;; Type 2 (dirt):   24-39
+    ;; Type 3 (stone):  40-55
+    ;; Type 4 (sand):   56-71
+    ;; Type 5 (water):  72-87
+    ;; Type 6 (wood):   88-103
+    ;; Type 7 (leaves): 104-119
+    ;; Type 8 (coal):   120-135
+    ;; ================================================================
 
-    ;; Block type 2: dirt → palette 24..31
-    (call $set_pal (i32.const 24) (i32.const 55) (i32.const 30) (i32.const 10))
-    (call $set_pal (i32.const 25) (i32.const 70) (i32.const 40) (i32.const 15))
-    (call $set_pal (i32.const 26) (i32.const 85) (i32.const 52) (i32.const 20))
-    (call $set_pal (i32.const 27) (i32.const 100) (i32.const 65) (i32.const 25))
-    (call $set_pal (i32.const 28) (i32.const 115) (i32.const 78) (i32.const 32))
-    (call $set_pal (i32.const 29) (i32.const 130) (i32.const 90) (i32.const 40))
-    (call $set_pal (i32.const 30) (i32.const 145) (i32.const 102) (i32.const 48))
-    (call $set_pal (i32.const 31) (i32.const 160) (i32.const 115) (i32.const 56))
+    ;; Block type 1: grass → palette 8..23 (16 shades)
+    (call $set_pal (i32.const 8)  (i32.const 12) (i32.const 30) (i32.const 5))
+    (call $set_pal (i32.const 9)  (i32.const 18) (i32.const 45) (i32.const 8))
+    (call $set_pal (i32.const 10) (i32.const 24) (i32.const 58) (i32.const 10))
+    (call $set_pal (i32.const 11) (i32.const 30) (i32.const 72) (i32.const 14))
+    (call $set_pal (i32.const 12) (i32.const 38) (i32.const 88) (i32.const 18))
+    (call $set_pal (i32.const 13) (i32.const 45) (i32.const 102) (i32.const 22))
+    (call $set_pal (i32.const 14) (i32.const 52) (i32.const 118) (i32.const 26))
+    (call $set_pal (i32.const 15) (i32.const 60) (i32.const 132) (i32.const 30))
+    (call $set_pal (i32.const 16) (i32.const 68) (i32.const 148) (i32.const 35))
+    (call $set_pal (i32.const 17) (i32.const 76) (i32.const 162) (i32.const 40))
+    (call $set_pal (i32.const 18) (i32.const 84) (i32.const 175) (i32.const 45))
+    (call $set_pal (i32.const 19) (i32.const 92) (i32.const 188) (i32.const 50))
+    (call $set_pal (i32.const 20) (i32.const 100) (i32.const 200) (i32.const 55))
+    (call $set_pal (i32.const 21) (i32.const 110) (i32.const 212) (i32.const 62))
+    (call $set_pal (i32.const 22) (i32.const 120) (i32.const 222) (i32.const 70))
+    (call $set_pal (i32.const 23) (i32.const 132) (i32.const 232) (i32.const 80))
 
-    ;; Block type 3: stone → palette 32..39
-    (call $set_pal (i32.const 32) (i32.const 55) (i32.const 55) (i32.const 60))
-    (call $set_pal (i32.const 33) (i32.const 70) (i32.const 70) (i32.const 75))
-    (call $set_pal (i32.const 34) (i32.const 85) (i32.const 85) (i32.const 90))
-    (call $set_pal (i32.const 35) (i32.const 100) (i32.const 100) (i32.const 108))
-    (call $set_pal (i32.const 36) (i32.const 118) (i32.const 118) (i32.const 125))
-    (call $set_pal (i32.const 37) (i32.const 135) (i32.const 135) (i32.const 142))
-    (call $set_pal (i32.const 38) (i32.const 152) (i32.const 152) (i32.const 160))
-    (call $set_pal (i32.const 39) (i32.const 170) (i32.const 170) (i32.const 178))
+    ;; Block type 2: dirt → palette 24..39 (16 shades)
+    (call $set_pal (i32.const 24) (i32.const 28) (i32.const 15) (i32.const 5))
+    (call $set_pal (i32.const 25) (i32.const 38) (i32.const 20) (i32.const 7))
+    (call $set_pal (i32.const 26) (i32.const 48) (i32.const 26) (i32.const 9))
+    (call $set_pal (i32.const 27) (i32.const 58) (i32.const 32) (i32.const 12))
+    (call $set_pal (i32.const 28) (i32.const 68) (i32.const 40) (i32.const 15))
+    (call $set_pal (i32.const 29) (i32.const 80) (i32.const 48) (i32.const 18))
+    (call $set_pal (i32.const 30) (i32.const 90) (i32.const 58) (i32.const 22))
+    (call $set_pal (i32.const 31) (i32.const 102) (i32.const 68) (i32.const 26))
+    (call $set_pal (i32.const 32) (i32.const 112) (i32.const 78) (i32.const 30))
+    (call $set_pal (i32.const 33) (i32.const 124) (i32.const 88) (i32.const 36))
+    (call $set_pal (i32.const 34) (i32.const 135) (i32.const 98) (i32.const 42))
+    (call $set_pal (i32.const 35) (i32.const 146) (i32.const 108) (i32.const 48))
+    (call $set_pal (i32.const 36) (i32.const 156) (i32.const 118) (i32.const 54))
+    (call $set_pal (i32.const 37) (i32.const 166) (i32.const 128) (i32.const 60))
+    (call $set_pal (i32.const 38) (i32.const 176) (i32.const 138) (i32.const 68))
+    (call $set_pal (i32.const 39) (i32.const 186) (i32.const 148) (i32.const 76))
 
-    ;; Block type 4: sand → palette 40..47
-    (call $set_pal (i32.const 40) (i32.const 140) (i32.const 120) (i32.const 60))
-    (call $set_pal (i32.const 41) (i32.const 160) (i32.const 138) (i32.const 70))
-    (call $set_pal (i32.const 42) (i32.const 178) (i32.const 155) (i32.const 82))
-    (call $set_pal (i32.const 43) (i32.const 195) (i32.const 172) (i32.const 95))
-    (call $set_pal (i32.const 44) (i32.const 210) (i32.const 188) (i32.const 108))
-    (call $set_pal (i32.const 45) (i32.const 222) (i32.const 202) (i32.const 122))
-    (call $set_pal (i32.const 46) (i32.const 232) (i32.const 214) (i32.const 138))
-    (call $set_pal (i32.const 47) (i32.const 240) (i32.const 225) (i32.const 155))
+    ;; Block type 3: stone → palette 40..55 (16 shades)
+    (call $set_pal (i32.const 40) (i32.const 30) (i32.const 30) (i32.const 34))
+    (call $set_pal (i32.const 41) (i32.const 40) (i32.const 40) (i32.const 44))
+    (call $set_pal (i32.const 42) (i32.const 50) (i32.const 50) (i32.const 55))
+    (call $set_pal (i32.const 43) (i32.const 60) (i32.const 60) (i32.const 66))
+    (call $set_pal (i32.const 44) (i32.const 70) (i32.const 70) (i32.const 77))
+    (call $set_pal (i32.const 45) (i32.const 80) (i32.const 80) (i32.const 88))
+    (call $set_pal (i32.const 46) (i32.const 90) (i32.const 90) (i32.const 98))
+    (call $set_pal (i32.const 47) (i32.const 100) (i32.const 100) (i32.const 108))
+    (call $set_pal (i32.const 48) (i32.const 110) (i32.const 110) (i32.const 118))
+    (call $set_pal (i32.const 49) (i32.const 120) (i32.const 120) (i32.const 128))
+    (call $set_pal (i32.const 50) (i32.const 130) (i32.const 130) (i32.const 138))
+    (call $set_pal (i32.const 51) (i32.const 140) (i32.const 140) (i32.const 148))
+    (call $set_pal (i32.const 52) (i32.const 150) (i32.const 150) (i32.const 158))
+    (call $set_pal (i32.const 53) (i32.const 160) (i32.const 160) (i32.const 168))
+    (call $set_pal (i32.const 54) (i32.const 172) (i32.const 172) (i32.const 180))
+    (call $set_pal (i32.const 55) (i32.const 185) (i32.const 185) (i32.const 192))
 
-    ;; Block type 5: water → palette 48..55
-    (call $set_pal (i32.const 48) (i32.const 15) (i32.const 35) (i32.const 100))
-    (call $set_pal (i32.const 49) (i32.const 20) (i32.const 48) (i32.const 120))
-    (call $set_pal (i32.const 50) (i32.const 28) (i32.const 62) (i32.const 140))
-    (call $set_pal (i32.const 51) (i32.const 35) (i32.const 78) (i32.const 160))
-    (call $set_pal (i32.const 52) (i32.const 45) (i32.const 95) (i32.const 180))
-    (call $set_pal (i32.const 53) (i32.const 55) (i32.const 110) (i32.const 195))
-    (call $set_pal (i32.const 54) (i32.const 68) (i32.const 128) (i32.const 210))
-    (call $set_pal (i32.const 55) (i32.const 80) (i32.const 145) (i32.const 225))
+    ;; Block type 4: sand → palette 56..71 (16 shades)
+    (call $set_pal (i32.const 56) (i32.const 90) (i32.const 75) (i32.const 35))
+    (call $set_pal (i32.const 57) (i32.const 105) (i32.const 88) (i32.const 42))
+    (call $set_pal (i32.const 58) (i32.const 118) (i32.const 100) (i32.const 48))
+    (call $set_pal (i32.const 59) (i32.const 132) (i32.const 112) (i32.const 55))
+    (call $set_pal (i32.const 60) (i32.const 145) (i32.const 124) (i32.const 62))
+    (call $set_pal (i32.const 61) (i32.const 158) (i32.const 136) (i32.const 70))
+    (call $set_pal (i32.const 62) (i32.const 170) (i32.const 148) (i32.const 78))
+    (call $set_pal (i32.const 63) (i32.const 182) (i32.const 158) (i32.const 86))
+    (call $set_pal (i32.const 64) (i32.const 194) (i32.const 170) (i32.const 95))
+    (call $set_pal (i32.const 65) (i32.const 205) (i32.const 180) (i32.const 104))
+    (call $set_pal (i32.const 66) (i32.const 214) (i32.const 190) (i32.const 112))
+    (call $set_pal (i32.const 67) (i32.const 222) (i32.const 200) (i32.const 122))
+    (call $set_pal (i32.const 68) (i32.const 230) (i32.const 210) (i32.const 132))
+    (call $set_pal (i32.const 69) (i32.const 236) (i32.const 218) (i32.const 142))
+    (call $set_pal (i32.const 70) (i32.const 242) (i32.const 226) (i32.const 152))
+    (call $set_pal (i32.const 71) (i32.const 248) (i32.const 234) (i32.const 165))
 
-    ;; Block type 6: wood → palette 56..63
-    (call $set_pal (i32.const 56) (i32.const 40) (i32.const 22) (i32.const 8))
-    (call $set_pal (i32.const 57) (i32.const 55) (i32.const 30) (i32.const 12))
-    (call $set_pal (i32.const 58) (i32.const 68) (i32.const 40) (i32.const 16))
-    (call $set_pal (i32.const 59) (i32.const 82) (i32.const 50) (i32.const 22))
-    (call $set_pal (i32.const 60) (i32.const 95) (i32.const 60) (i32.const 28))
-    (call $set_pal (i32.const 61) (i32.const 108) (i32.const 72) (i32.const 35))
-    (call $set_pal (i32.const 62) (i32.const 120) (i32.const 82) (i32.const 42))
-    (call $set_pal (i32.const 63) (i32.const 132) (i32.const 92) (i32.const 50))
+    ;; Block type 5: water → palette 72..87 (16 shades)
+    (call $set_pal (i32.const 72) (i32.const 5)  (i32.const 15) (i32.const 55))
+    (call $set_pal (i32.const 73) (i32.const 8)  (i32.const 22) (i32.const 70))
+    (call $set_pal (i32.const 74) (i32.const 12) (i32.const 30) (i32.const 85))
+    (call $set_pal (i32.const 75) (i32.const 16) (i32.const 40) (i32.const 100))
+    (call $set_pal (i32.const 76) (i32.const 22) (i32.const 50) (i32.const 118))
+    (call $set_pal (i32.const 77) (i32.const 28) (i32.const 62) (i32.const 135))
+    (call $set_pal (i32.const 78) (i32.const 35) (i32.const 75) (i32.const 152))
+    (call $set_pal (i32.const 79) (i32.const 42) (i32.const 88) (i32.const 168))
+    (call $set_pal (i32.const 80) (i32.const 50) (i32.const 100) (i32.const 182))
+    (call $set_pal (i32.const 81) (i32.const 58) (i32.const 112) (i32.const 195))
+    (call $set_pal (i32.const 82) (i32.const 66) (i32.const 125) (i32.const 206))
+    (call $set_pal (i32.const 83) (i32.const 75) (i32.const 138) (i32.const 216))
+    (call $set_pal (i32.const 84) (i32.const 85) (i32.const 150) (i32.const 224))
+    (call $set_pal (i32.const 85) (i32.const 95) (i32.const 162) (i32.const 232))
+    (call $set_pal (i32.const 86) (i32.const 108) (i32.const 175) (i32.const 238))
+    (call $set_pal (i32.const 87) (i32.const 120) (i32.const 188) (i32.const 245))
 
-    ;; Block type 7: leaves → palette 64..71
-    (call $set_pal (i32.const 64) (i32.const 15) (i32.const 50) (i32.const 8))
-    (call $set_pal (i32.const 65) (i32.const 22) (i32.const 68) (i32.const 12))
-    (call $set_pal (i32.const 66) (i32.const 30) (i32.const 88) (i32.const 18))
-    (call $set_pal (i32.const 67) (i32.const 40) (i32.const 108) (i32.const 25))
-    (call $set_pal (i32.const 68) (i32.const 50) (i32.const 128) (i32.const 32))
-    (call $set_pal (i32.const 69) (i32.const 62) (i32.const 148) (i32.const 40))
-    (call $set_pal (i32.const 70) (i32.const 75) (i32.const 168) (i32.const 50))
-    (call $set_pal (i32.const 71) (i32.const 90) (i32.const 185) (i32.const 60))
+    ;; Block type 6: wood → palette 88..103 (16 shades)
+    (call $set_pal (i32.const 88)  (i32.const 20) (i32.const 10) (i32.const 3))
+    (call $set_pal (i32.const 89)  (i32.const 28) (i32.const 15) (i32.const 5))
+    (call $set_pal (i32.const 90)  (i32.const 36) (i32.const 20) (i32.const 7))
+    (call $set_pal (i32.const 91)  (i32.const 45) (i32.const 25) (i32.const 10))
+    (call $set_pal (i32.const 92)  (i32.const 55) (i32.const 32) (i32.const 13))
+    (call $set_pal (i32.const 93)  (i32.const 64) (i32.const 38) (i32.const 16))
+    (call $set_pal (i32.const 94)  (i32.const 74) (i32.const 45) (i32.const 20))
+    (call $set_pal (i32.const 95)  (i32.const 84) (i32.const 52) (i32.const 24))
+    (call $set_pal (i32.const 96)  (i32.const 94) (i32.const 60) (i32.const 28))
+    (call $set_pal (i32.const 97)  (i32.const 104) (i32.const 68) (i32.const 33))
+    (call $set_pal (i32.const 98)  (i32.const 112) (i32.const 76) (i32.const 38))
+    (call $set_pal (i32.const 99)  (i32.const 122) (i32.const 84) (i32.const 43))
+    (call $set_pal (i32.const 100) (i32.const 130) (i32.const 92) (i32.const 48))
+    (call $set_pal (i32.const 101) (i32.const 140) (i32.const 100) (i32.const 54))
+    (call $set_pal (i32.const 102) (i32.const 148) (i32.const 108) (i32.const 60))
+    (call $set_pal (i32.const 103) (i32.const 158) (i32.const 118) (i32.const 68))
 
-    ;; Block type 8: coal ore → palette 72..79
-    (call $set_pal (i32.const 72) (i32.const 25) (i32.const 25) (i32.const 28))
-    (call $set_pal (i32.const 73) (i32.const 35) (i32.const 35) (i32.const 40))
-    (call $set_pal (i32.const 74) (i32.const 48) (i32.const 48) (i32.const 52))
-    (call $set_pal (i32.const 75) (i32.const 60) (i32.const 60) (i32.const 68))
-    (call $set_pal (i32.const 76) (i32.const 75) (i32.const 75) (i32.const 82))
-    (call $set_pal (i32.const 77) (i32.const 90) (i32.const 90) (i32.const 98))
-    (call $set_pal (i32.const 78) (i32.const 105) (i32.const 105) (i32.const 112))
-    (call $set_pal (i32.const 79) (i32.const 120) (i32.const 120) (i32.const 128))
+    ;; Block type 7: leaves → palette 104..119 (16 shades)
+    (call $set_pal (i32.const 104) (i32.const 5)  (i32.const 22) (i32.const 3))
+    (call $set_pal (i32.const 105) (i32.const 8)  (i32.const 32) (i32.const 5))
+    (call $set_pal (i32.const 106) (i32.const 12) (i32.const 42) (i32.const 7))
+    (call $set_pal (i32.const 107) (i32.const 18) (i32.const 55) (i32.const 10))
+    (call $set_pal (i32.const 108) (i32.const 24) (i32.const 68) (i32.const 14))
+    (call $set_pal (i32.const 109) (i32.const 30) (i32.const 82) (i32.const 18))
+    (call $set_pal (i32.const 110) (i32.const 38) (i32.const 98) (i32.const 24))
+    (call $set_pal (i32.const 111) (i32.const 46) (i32.const 112) (i32.const 30))
+    (call $set_pal (i32.const 112) (i32.const 55) (i32.const 128) (i32.const 36))
+    (call $set_pal (i32.const 113) (i32.const 64) (i32.const 142) (i32.const 42))
+    (call $set_pal (i32.const 114) (i32.const 72) (i32.const 156) (i32.const 48))
+    (call $set_pal (i32.const 115) (i32.const 82) (i32.const 170) (i32.const 55))
+    (call $set_pal (i32.const 116) (i32.const 90) (i32.const 182) (i32.const 62))
+    (call $set_pal (i32.const 117) (i32.const 100) (i32.const 195) (i32.const 70))
+    (call $set_pal (i32.const 118) (i32.const 112) (i32.const 206) (i32.const 78))
+    (call $set_pal (i32.const 119) (i32.const 125) (i32.const 218) (i32.const 88))
 
-    ;; Fog palette 80-95
+    ;; Block type 8: coal ore → palette 120..135 (16 shades)
+    (call $set_pal (i32.const 120) (i32.const 12) (i32.const 12) (i32.const 14))
+    (call $set_pal (i32.const 121) (i32.const 18) (i32.const 18) (i32.const 21))
+    (call $set_pal (i32.const 122) (i32.const 25) (i32.const 25) (i32.const 28))
+    (call $set_pal (i32.const 123) (i32.const 32) (i32.const 32) (i32.const 36))
+    (call $set_pal (i32.const 124) (i32.const 40) (i32.const 40) (i32.const 45))
+    (call $set_pal (i32.const 125) (i32.const 48) (i32.const 48) (i32.const 54))
+    (call $set_pal (i32.const 126) (i32.const 58) (i32.const 58) (i32.const 64))
+    (call $set_pal (i32.const 127) (i32.const 66) (i32.const 66) (i32.const 74))
+    (call $set_pal (i32.const 128) (i32.const 76) (i32.const 76) (i32.const 84))
+    (call $set_pal (i32.const 129) (i32.const 85) (i32.const 85) (i32.const 94))
+    (call $set_pal (i32.const 130) (i32.const 95) (i32.const 95) (i32.const 104))
+    (call $set_pal (i32.const 131) (i32.const 105) (i32.const 105) (i32.const 114))
+    (call $set_pal (i32.const 132) (i32.const 115) (i32.const 115) (i32.const 124))
+    (call $set_pal (i32.const 133) (i32.const 125) (i32.const 125) (i32.const 135))
+    (call $set_pal (i32.const 134) (i32.const 136) (i32.const 136) (i32.const 146))
+    (call $set_pal (i32.const 135) (i32.const 148) (i32.const 148) (i32.const 158))
+
+    ;; Fog palette 136-151 (16 shades)
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (i32.const 16)))
-      (call $set_pal (i32.add (i32.const 80) (local.get $i))
+      (call $set_pal (i32.add (i32.const 136) (local.get $i))
         (i32.add (i32.const 100) (i32.mul (local.get $i) (i32.const 4)))
         (i32.add (i32.const 130) (i32.mul (local.get $i) (i32.const 4)))
         (i32.add (i32.const 170) (i32.mul (local.get $i) (i32.const 3))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
 
-    ;; Water shimmer
-    (call $set_pal (i32.const 104) (i32.const 40) (i32.const 90) (i32.const 175))
-    (call $set_pal (i32.const 105) (i32.const 55) (i32.const 115) (i32.const 200))
-    (call $set_pal (i32.const 106) (i32.const 70) (i32.const 140) (i32.const 220))
-    (call $set_pal (i32.const 107) (i32.const 100) (i32.const 170) (i32.const 240))
+    ;; Water shimmer 152-155
+    (call $set_pal (i32.const 152) (i32.const 40) (i32.const 90) (i32.const 175))
+    (call $set_pal (i32.const 153) (i32.const 55) (i32.const 115) (i32.const 200))
+    (call $set_pal (i32.const 154) (i32.const 70) (i32.const 140) (i32.const 220))
+    (call $set_pal (i32.const 155) (i32.const 100) (i32.const 170) (i32.const 240))
 
     ;; Monster palettes
-    ;; 128-143: Creeper (green)
+    ;; 156-171: Creeper (green)
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (i32.const 16)))
-      (call $set_pal (i32.add (i32.const 128) (local.get $i))
+      (call $set_pal (i32.add (i32.const 156) (local.get $i))
         (i32.mul (local.get $i) (i32.const 4))
         (i32.add (i32.const 40) (i32.mul (local.get $i) (i32.const 12)))
         (i32.mul (local.get $i) (i32.const 2)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
 
-    ;; 144-159: Zombie (brownish)
+    ;; 172-187: Zombie (brownish)
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (i32.const 16)))
-      (call $set_pal (i32.add (i32.const 144) (local.get $i))
+      (call $set_pal (i32.add (i32.const 172) (local.get $i))
         (i32.add (i32.const 40) (i32.mul (local.get $i) (i32.const 8)))
         (i32.add (i32.const 50) (i32.mul (local.get $i) (i32.const 6)))
         (i32.add (i32.const 20) (i32.mul (local.get $i) (i32.const 3))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
 
-    ;; 160-175: Skeleton (bone white)
+    ;; 188-203: Skeleton (bone white)
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (i32.const 16)))
-      (call $set_pal (i32.add (i32.const 160) (local.get $i))
+      (call $set_pal (i32.add (i32.const 188) (local.get $i))
         (i32.add (i32.const 120) (i32.mul (local.get $i) (i32.const 8)))
         (i32.add (i32.const 115) (i32.mul (local.get $i) (i32.const 8)))
         (i32.add (i32.const 100) (i32.mul (local.get $i) (i32.const 8))))
@@ -562,12 +641,12 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
 
-    ;; Special colors
-    (call $set_pal (i32.const 176) (i32.const 255) (i32.const 255) (i32.const 255))
-    (call $set_pal (i32.const 177) (i32.const 255) (i32.const 255) (i32.const 100))
-    (call $set_pal (i32.const 178) (i32.const 20) (i32.const 15) (i32.const 15))
-    (call $set_pal (i32.const 179) (i32.const 255) (i32.const 50) (i32.const 50))
-    (call $set_pal (i32.const 180) (i32.const 50) (i32.const 255) (i32.const 100))
+    ;; Special colors (moved to 204+)
+    (call $set_pal (i32.const 204) (i32.const 255) (i32.const 255) (i32.const 255))
+    (call $set_pal (i32.const 205) (i32.const 255) (i32.const 255) (i32.const 100))
+    (call $set_pal (i32.const 206) (i32.const 20) (i32.const 15) (i32.const 15))
+    (call $set_pal (i32.const 207) (i32.const 255) (i32.const 50) (i32.const 50))
+    (call $set_pal (i32.const 208) (i32.const 50) (i32.const 255) (i32.const 100))
 
     ;; Initialize player position
     (f64.store (i32.const 0x10344) (f64.const 32.5))
@@ -1360,11 +1439,12 @@
   ;; ============================================================
   ;; ORDERED DITHERING — 4x4 Bayer matrix
   ;; Returns 0 or 1 based on pixel position and fractional shade
-  ;; frac_shade: 0-7 (sub-step within shade), threshold against Bayer
+  ;; frac_shade: 0-15 (sub-step within shade level), threshold against Bayer
+  ;; With 16 shade levels + 16 sub-steps = 256 effective luminance levels
   ;; ============================================================
   (func $dither_test (param $px i32) (param $py i32) (param $frac i32) (result i32)
     (local $bx i32) (local $by i32) (local $threshold i32) (local $idx i32)
-    ;; 4x4 Bayer matrix (thresholds 0-15, scaled)
+    ;; 4x4 Bayer matrix (thresholds 0-15)
     ;; [ 0  8  2 10]
     ;; [12  4 14  6]
     ;; [ 3 11  1  9]
@@ -1372,7 +1452,7 @@
     (local.set $bx (i32.and (local.get $px) (i32.const 3)))
     (local.set $by (i32.and (local.get $py) (i32.const 3)))
     (local.set $idx (i32.add (i32.mul (local.get $by) (i32.const 4)) (local.get $bx)))
-    ;; Look up from inline table using nested ifs (WAT doesn't have data tables easily for this)
+    ;; Look up from inline table using nested ifs
     (local.set $threshold (i32.const 0))
     (if (i32.eq (local.get $idx) (i32.const 0)) (then (local.set $threshold (i32.const 0))))
     (if (i32.eq (local.get $idx) (i32.const 1)) (then (local.set $threshold (i32.const 8))))
@@ -1390,8 +1470,8 @@
     (if (i32.eq (local.get $idx) (i32.const 13)) (then (local.set $threshold (i32.const 7))))
     (if (i32.eq (local.get $idx) (i32.const 14)) (then (local.set $threshold (i32.const 13))))
     (if (i32.eq (local.get $idx) (i32.const 15)) (then (local.set $threshold (i32.const 5))))
-    ;; frac is 0-15, compare with threshold
-    (if (i32.gt_s (local.get $frac) (local.get $threshold))
+    ;; frac is 0-15, compare with threshold to decide if we bump up
+    (if (i32.gt_u (local.get $frac) (local.get $threshold))
       (then (return (i32.const 1))))
     (i32.const 0)
   )
@@ -1719,68 +1799,71 @@
                   (i32.const 7)))))
 
             ;; Distance-based shade with higher precision for dithering
-            ;; shade_full = 112 - dist * 4.0  (range 0..112, 16 sub-steps per shade level)
-            (local.set $shade_full (i32.sub (i32.const 112)
-              (i32.trunc_f64_s (f64.mul (local.get $dist) (f64.const 4.67)))))
-            (if (i32.lt_s (local.get $shade_full) (i32.const 16))
-              (then (local.set $shade_full (i32.const 16))))
-            (if (i32.gt_s (local.get $shade_full) (i32.const 112))
-              (then (local.set $shade_full (i32.const 112))))
+            ;; shade_full = 240 - dist * 10.0  (range 0..255, 16 sub-steps per shade level)
+            ;; With 16 shade levels, we need shade_full in range 0..255
+            (local.set $shade_full (i32.sub (i32.const 240)
+              (i32.trunc_f64_s (f64.mul (local.get $dist) (f64.const 9.5)))))
+            (if (i32.lt_s (local.get $shade_full) (i32.const 0))
+              (then (local.set $shade_full (i32.const 0))))
+            (if (i32.gt_s (local.get $shade_full) (i32.const 255))
+              (then (local.set $shade_full (i32.const 255))))
 
-            ;; Apply face lighting offset (in 16th-steps)
+            ;; Apply face lighting offset (in sub-steps, 16 per shade level)
             (if (i32.eq (local.get $face) (i32.const 0))
-              (then (local.set $shade_full (i32.add (local.get $shade_full) (i32.const 24)))))
+              (then (local.set $shade_full (i32.add (local.get $shade_full) (i32.const 32)))))
             (if (i32.eq (local.get $face) (i32.const 2))
-              (then (local.set $shade_full (i32.sub (local.get $shade_full) (i32.const 12)))))
+              (then (local.set $shade_full (i32.sub (local.get $shade_full) (i32.const 16)))))
             (if (i32.eq (local.get $face) (i32.const 3))
-              (then (local.set $shade_full (i32.sub (local.get $shade_full) (i32.const 24)))))
+              (then (local.set $shade_full (i32.sub (local.get $shade_full) (i32.const 32)))))
 
-            ;; Apply texture offset
+            ;; Apply texture offset (scaled for 16-shade range)
             (local.set $tex_off (call $texture_offset
               (local.get $hit_type) (local.get $face)
               (local.get $hit_vx) (local.get $hit_vy) (local.get $hit_vz)
               (local.get $tex_u) (local.get $tex_v)))
             (local.set $shade_full (i32.add (local.get $shade_full)
-              (i32.mul (local.get $tex_off) (i32.const 10))))
+              (i32.mul (local.get $tex_off) (i32.const 12))))
 
-            ;; Clamp
+            ;; Clamp to 0..255
             (if (i32.lt_s (local.get $shade_full) (i32.const 0))
               (then (local.set $shade_full (i32.const 0))))
-            (if (i32.gt_s (local.get $shade_full) (i32.const 127))
-              (then (local.set $shade_full (i32.const 127))))
+            (if (i32.gt_s (local.get $shade_full) (i32.const 255))
+              (then (local.set $shade_full (i32.const 255))))
 
-            ;; Extract integer shade (0-7) and fractional part (0-15)
+            ;; Extract integer shade (0-15) and fractional part (0-15)
             (local.set $shade (i32.shr_u (local.get $shade_full) (i32.const 4)))
-            (local.set $shade_frac (local.get $shade_full))
-            ;; Use Bayer dither to decide if we bump up
+            (local.set $shade_frac (i32.and (local.get $shade_full) (i32.const 15)))
+            ;; Use Bayer dither on the fractional part to decide if we bump up
             (local.set $dither_bump (call $dither_test
               (local.get $px_col) (local.get $px_row) (local.get $shade_frac)))
             (local.set $shade (i32.add (local.get $shade) (local.get $dither_bump)))
-            ;; Clamp final shade
+            ;; Clamp final shade to 0-15
             (if (i32.lt_s (local.get $shade) (i32.const 0))
               (then (local.set $shade (i32.const 0))))
-            (if (i32.gt_s (local.get $shade) (i32.const 7))
-              (then (local.set $shade (i32.const 7))))
+            (if (i32.gt_s (local.get $shade) (i32.const 15))
+              (then (local.set $shade (i32.const 15))))
 
-            (local.set $color (i32.add (i32.add (i32.const 8) (i32.mul (local.get $hit_type) (i32.const 8))) (local.get $shade)))
+            ;; Color = base for block type + shade
+            ;; base = type * 16 - 8 (type 1 starts at 8, type 2 at 24, etc.)
+            (local.set $color (i32.add (i32.sub (i32.mul (local.get $hit_type) (i32.const 16)) (i32.const 8)) (local.get $shade)))
 
             ;; Water shimmer with texture
             (if (i32.eq (local.get $hit_type) (i32.const 5))
               (then
-                (local.set $color (i32.add (i32.const 104)
+                (local.set $color (i32.add (i32.const 152)
                   (i32.and
                     (i32.add (local.get $tex_u)
                       (i32.add (local.get $tex_v)
                         (i32.shr_u (local.get $tick) (i32.const 4))))
                     (i32.const 3))))))
 
-            ;; Distance fog blend
+            ;; Distance fog blend (fog at 136-151)
             (if (f64.gt (local.get $dist) (f64.const 18.0))
               (then
-                (local.set $color (i32.add (i32.const 80)
+                (local.set $color (i32.add (i32.const 136)
                   (i32.trunc_f64_s (f64.mul (f64.sub (local.get $dist) (f64.const 18.0)) (f64.const 2.0)))))
-                (if (i32.gt_s (local.get $color) (i32.const 95))
-                  (then (local.set $color (i32.const 95))))))
+                (if (i32.gt_s (local.get $color) (i32.const 151))
+                  (then (local.set $color (i32.const 151))))))
 
             (i32.store8 (local.get $fb_addr) (local.get $color)))
           (else
@@ -1797,8 +1880,8 @@
                   (then (local.set $sky_idx (i32.const 7))))
                 (i32.store8 (local.get $fb_addr) (local.get $sky_idx)))
               (else
-                ;; Below horizon fog
-                (i32.store8 (local.get $fb_addr) (i32.const 87))))))
+                ;; Below horizon fog (now at 136+7=143)
+                (i32.store8 (local.get $fb_addr) (i32.const 143))))))
 
         (local.set $px_col (i32.add (local.get $px_col) (i32.const 1)))
         (br $col_lp)))
@@ -1806,15 +1889,15 @@
       (local.set $px_row (i32.add (local.get $px_row) (i32.const 1)))
       (br $row_lp)))
 
-    ;; ---- Crosshair ----
-    (call $put_pixel (i32.const 160) (i32.const 98) (i32.const 176))
-    (call $put_pixel (i32.const 160) (i32.const 99) (i32.const 176))
-    (call $put_pixel (i32.const 160) (i32.const 101) (i32.const 176))
-    (call $put_pixel (i32.const 160) (i32.const 102) (i32.const 176))
-    (call $put_pixel (i32.const 158) (i32.const 100) (i32.const 176))
-    (call $put_pixel (i32.const 159) (i32.const 100) (i32.const 176))
-    (call $put_pixel (i32.const 161) (i32.const 100) (i32.const 176))
-    (call $put_pixel (i32.const 162) (i32.const 100) (i32.const 176))
+    ;; ---- Crosshair ---- (special white at 204)
+    (call $put_pixel (i32.const 160) (i32.const 98) (i32.const 204))
+    (call $put_pixel (i32.const 160) (i32.const 99) (i32.const 204))
+    (call $put_pixel (i32.const 160) (i32.const 101) (i32.const 204))
+    (call $put_pixel (i32.const 160) (i32.const 102) (i32.const 204))
+    (call $put_pixel (i32.const 158) (i32.const 100) (i32.const 204))
+    (call $put_pixel (i32.const 159) (i32.const 100) (i32.const 204))
+    (call $put_pixel (i32.const 161) (i32.const 100) (i32.const 204))
+    (call $put_pixel (i32.const 162) (i32.const 100) (i32.const 204))
 
     ;; ---- HUD ----
     (call $draw_str (i32.const 0x190C0) (i32.const 2) (i32.const 2) (i32.const 247))
@@ -1827,17 +1910,17 @@
     (if (i32.gt_s (local.get $msg_timer) (i32.const 0))
       (then
         (i32.store (i32.const 0x1039C) (i32.sub (local.get $msg_timer) (i32.const 1)))
-        (call $fill_rect (i32.const 55) (i32.const 70) (i32.const 210) (i32.const 50) (i32.const 178))
-        (call $draw_str (i32.const 0x19050) (i32.const 80) (i32.const 78) (i32.const 179))
-        (call $draw_str (i32.const 0x19070) (i32.const 72) (i32.const 90) (i32.const 179))
-        (call $draw_str (i32.const 0x19090) (i32.const 72) (i32.const 102) (i32.const 179))
+        (call $fill_rect (i32.const 55) (i32.const 70) (i32.const 210) (i32.const 50) (i32.const 206))
+        (call $draw_str (i32.const 0x19050) (i32.const 80) (i32.const 78) (i32.const 207))
+        (call $draw_str (i32.const 0x19070) (i32.const 72) (i32.const 90) (i32.const 207))
+        (call $draw_str (i32.const 0x19090) (i32.const 72) (i32.const 102) (i32.const 207))
         (if (i32.eq (i32.and (local.get $msg_timer) (i32.const 31)) (i32.const 0))
           (then (call $note (i32.const 2) (i32.const 80) (i32.const 200) (i32.const 180))))))
 
     ;; ---- Title (first 180 frames) ----
     (if (i32.lt_u (local.get $frame_ct) (i32.const 180))
       (then
-        (call $draw_str (i32.const 0x19000) (i32.const 105) (i32.const 30) (i32.const 180))
+        (call $draw_str (i32.const 0x19000) (i32.const 105) (i32.const 30) (i32.const 208))
         (call $draw_str (i32.const 0x19010) (i32.const 70) (i32.const 180) (i32.const 245))
         (call $draw_str (i32.const 0x19030) (i32.const 60) (i32.const 190) (i32.const 245))))
 
