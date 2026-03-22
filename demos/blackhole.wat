@@ -253,7 +253,7 @@
     ;; Init camera state
     (f64.store (i32.const 0x10344) (f64.const 0.0))    ;; orbit_angle
     (f64.store (i32.const 0x1034C) (f64.const 0.25))   ;; orbit_tilt (slightly above disk)
-    (f64.store (i32.const 0x10354) (f64.const 56.0))   ;; orbit_dist
+    (f64.store (i32.const 0x10354) (f64.const 28.0))   ;; orbit_dist
     (i32.store (i32.const 0x1035C) (i32.const 0))      ;; prev_mouse_x
     (i32.store (i32.const 0x10360) (i32.const 0))      ;; prev_mouse_y
     (i32.store (i32.const 0x10364) (i32.const 60))      ;; idle_counter (start high)
@@ -531,8 +531,8 @@
           (f64.mul (f64.const 0.15) (call $sin_a
             (f64.mul (f64.convert_i32_u (local.get $frame_count)) (f64.const 0.004))))))
         ;; Gentle distance oscillation
-        (local.set $orbit_dist (f64.add (f64.const 56.0)
-          (f64.mul (f64.const 12.0) (call $sin_a
+        (local.set $orbit_dist (f64.add (f64.const 28.0)
+          (f64.mul (f64.const 6.0) (call $sin_a
             (f64.mul (f64.convert_i32_u (local.get $frame_count)) (f64.const 0.002)))))))
       (else
         ;; === MANUAL CONTROL ===
