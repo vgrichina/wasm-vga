@@ -877,9 +877,9 @@
   ;; ---- RGB+Brightness palette helpers ----
   ;; Palette: index = (R<<6)|(G<<4)|(B<<2)|L  where R,G,B,L are 0-3
   ;; Block type to RGB base (without brightness bits):
-  ;;   0=void(0x00), 1=grass(0x0C), 2=dirt(0x90), 3=stone(0xA8),
-  ;;   4=sand(0xF4), 5=water(0x1C), 6=wood(0x50), 7=leaves(0x08)
-  ;; Helper: get base RGB index for a block type (0-7)
+  ;;   0=air(0x00), 1=grass(0x30), 2=dirt(0x90), 3=stone(0xA8),
+  ;;   4=sand(0xF4), 5=water(0x1C), 6=wood(0x50), 7=leaves(0x20), 8=coal(0x54)
+  ;; Helper: get base RGB index for a block type (0-8)
   (func $block_base (param $type i32) (result i32)
     ;; Table stored at 0x19500 (8 bytes)
     i32.const 0x19500
@@ -1266,41 +1266,47 @@
       end
     end
     ;; ================================================================
-    ;; Block type base color table at 0x19500 (8 bytes):
-    ;;   type 0 (grass):  R=0,G=3,B=0 → 0x0C
-    ;;   type 1 (dirt):   R=2,G=1,B=0 → 0x90
-    ;;   type 2 (stone):  R=2,G=2,B=2 → 0xA8
-    ;;   type 3 (sand):   R=3,G=3,B=1 → 0xF4
-    ;;   type 4 (water):  R=0,G=1,B=3 → 0x1C
-    ;;   type 5 (wood):   R=2,G=1,B=0 → 0x90
-    ;;   type 6 (leaves):R=0,G=2,B=0 → 0x08
-    ;;   type 7 (bedrock):R=1,G=1,B=1 → 0x54
+    ;; Block type base color table at 0x19500 (9 bytes):
+    ;; Indexed by block type from get_block (0=air, 1=grass, ..., 8=coal)
+    ;; RGBL encoding: index = (R<<6)|(G<<4)|(B<<2)|L, L=0 for base
+    ;;   type 0 (air):    0x00 (unused)
+    ;;   type 1 (grass):  R=0,G=3,B=0 → 0x30
+    ;;   type 2 (dirt):   R=2,G=1,B=0 → 0x90
+    ;;   type 3 (stone):  R=2,G=2,B=2 → 0xA8
+    ;;   type 4 (sand):   R=3,G=3,B=1 → 0xF4
+    ;;   type 5 (water):  R=0,G=1,B=3 → 0x1C
+    ;;   type 6 (wood):   R=1,G=1,B=0 → 0x50
+    ;;   type 7 (leaves): R=0,G=2,B=0 → 0x20
+    ;;   type 8 (coal):   R=1,G=1,B=1 → 0x54
     ;; ================================================================
 
     ;; Write block base color table
     i32.const 0x19500
-    i32.const 0x0C  ;; grass: green
+    i32.const 0x00  ;; air: unused
     i32.store8
     i32.const 0x19501
-    i32.const 0x90  ;; dirt: brown
+    i32.const 0x30  ;; grass: green (R=0,G=3,B=0)
     i32.store8
     i32.const 0x19502
-    i32.const 0xA8  ;; stone: gray
+    i32.const 0x90  ;; dirt: brown (R=2,G=1,B=0)
     i32.store8
     i32.const 0x19503
-    i32.const 0xF4  ;; sand: yellow
+    i32.const 0xA8  ;; stone: gray (R=2,G=2,B=2)
     i32.store8
     i32.const 0x19504
-    i32.const 0x1C  ;; water: blue
+    i32.const 0xF4  ;; sand: yellow (R=3,G=3,B=1)
     i32.store8
     i32.const 0x19505
-    i32.const 0x90  ;; wood: brown
+    i32.const 0x1C  ;; water: blue (R=0,G=1,B=3)
     i32.store8
     i32.const 0x19506
-    i32.const 0x08  ;; leaves: dark green
+    i32.const 0x50  ;; wood: brown (R=1,G=1,B=0)
     i32.store8
     i32.const 0x19507
-    i32.const 0x54  ;; bedrock: dark gray
+    i32.const 0x20  ;; leaves: dark green (R=0,G=2,B=0)
+    i32.store8
+    i32.const 0x19508
+    i32.const 0x54  ;; coal: dark gray (R=1,G=1,B=1)
     i32.store8
 
     ;; Initialize player position (palette set by harness)
@@ -1331,17 +1337,17 @@
     f64.const 0.0
     f64.store
 
-    ;; Write monster base color table at 0x19508 (3 bytes)
-    ;; creeper(type 0): dark green R=0,G=2,B=0 → 0x08
-    ;; zombie(type 1): olive R=1,G=2,B=0 → 0x48
+    ;; Write monster base color table at 0x19510 (3 bytes)
+    ;; creeper(type 0): dark green R=0,G=2,B=0 → 0x20
+    ;; zombie(type 1): olive R=1,G=2,B=0 → 0x60
     ;; skeleton(type 2): bone R=3,G=3,B=2 → 0xF8
-    i32.const 0x19508
-    i32.const 0x08
+    i32.const 0x19510
+    i32.const 0x20
     i32.store8
-    i32.const 0x19509
-    i32.const 0x48
+    i32.const 0x19511
+    i32.const 0x60
     i32.store8
-    i32.const 0x1950A
+    i32.const 0x19512
     i32.const 0xF8
     i32.store8
 
