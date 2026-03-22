@@ -253,7 +253,7 @@
     ;; Init camera state
     (f64.store (i32.const 0x10344) (f64.const 0.0))    ;; orbit_angle
     (f64.store (i32.const 0x1034C) (f64.const 0.25))   ;; orbit_tilt (slightly above disk)
-    (f64.store (i32.const 0x10354) (f64.const 28.0))   ;; orbit_dist
+    (f64.store (i32.const 0x10354) (f64.const 56.0))   ;; orbit_dist
     (i32.store (i32.const 0x1035C) (i32.const 0))      ;; prev_mouse_x
     (i32.store (i32.const 0x10360) (i32.const 0))      ;; prev_mouse_y
     (i32.store (i32.const 0x10364) (i32.const 60))      ;; idle_counter (start high)
@@ -298,9 +298,19 @@
       (local.set $su (i32.and (local.get $rnd) (i32.const 127)))
       (local.set $sv (i32.and (i32.shr_u (local.get $rnd) (i32.const 8)) (i32.const 127)))
 
-      ;; Compute and store direction in star table
+      ;; Compute direction, then scale to 3D position at random distance
       (local.set $addr (i32.add (i32.const 0x10400) (i32.shl (local.get $i) (i32.const 4))))
       (call $star_dir (local.get $face) (local.get $su) (local.get $sv) (local.get $addr))
+      ;; Random radius 80-300
+      (local.set $rnd (call $rand))
+      (local.set $t (f64.add (f64.const 80.0)
+        (f64.mul (f64.convert_i32_u (i32.and (local.get $rnd) (i32.const 255))) (f64.const 0.86))))
+      (f32.store (local.get $addr)
+        (f32.demote_f64 (f64.mul (f64.promote_f32 (f32.load (local.get $addr))) (local.get $t))))
+      (f32.store (i32.add (local.get $addr) (i32.const 4))
+        (f32.demote_f64 (f64.mul (f64.promote_f32 (f32.load (i32.add (local.get $addr) (i32.const 4)))) (local.get $t))))
+      (f32.store (i32.add (local.get $addr) (i32.const 8))
+        (f32.demote_f64 (f64.mul (f64.promote_f32 (f32.load (i32.add (local.get $addr) (i32.const 8)))) (local.get $t))))
 
       ;; Brightness (4-7) and color family
       (local.set $rnd (call $rand))
@@ -376,9 +386,18 @@
       (local.set $sv (i32.add (i32.const 34)
         (i32.rem_u (i32.and (i32.shr_u (local.get $rnd) (i32.const 8)) (i32.const 0x7FFF)) (i32.const 21))))
 
-      ;; Store direction
+      ;; Store direction, then scale to 3D position (milky way: far, 200-350)
       (local.set $addr (i32.add (i32.const 0x10400) (i32.shl (local.get $i) (i32.const 4))))
       (call $star_dir (local.get $face) (local.get $su) (local.get $sv) (local.get $addr))
+      (local.set $rnd (call $rand))
+      (local.set $t (f64.add (f64.const 200.0)
+        (f64.mul (f64.convert_i32_u (i32.and (local.get $rnd) (i32.const 255))) (f64.const 0.59))))
+      (f32.store (local.get $addr)
+        (f32.demote_f64 (f64.mul (f64.promote_f32 (f32.load (local.get $addr))) (local.get $t))))
+      (f32.store (i32.add (local.get $addr) (i32.const 4))
+        (f32.demote_f64 (f64.mul (f64.promote_f32 (f32.load (i32.add (local.get $addr) (i32.const 4)))) (local.get $t))))
+      (f32.store (i32.add (local.get $addr) (i32.const 8))
+        (f32.demote_f64 (f64.mul (f64.promote_f32 (f32.load (i32.add (local.get $addr) (i32.const 8)))) (local.get $t))))
 
       ;; 70% nebula glow (base=4, offset=0-3), 30% bright star (base=8, offset=4-7)
       (local.set $rnd (call $rand))
@@ -451,6 +470,9 @@
     (local $prev_mx i32) (local $prev_my i32)
     (local $has_input i32) (local $sound_timer i32) (local $rnd i32)
     (local $cos_tilt f64) (local $sin_tilt f64)
+    (local $star_x f64) (local $star_y f64) (local $star_z f64)
+    (local $star_id i32) (local $star_addr i32)
+    (local $cu i32) (local $cv i32)
 
     ;; Read frame counter
     (local.set $frame_count (i32.load (i32.const 0x00)))
@@ -507,8 +529,8 @@
           (f64.mul (f64.const 0.15) (call $sin_a
             (f64.mul (f64.convert_i32_u (local.get $frame_count)) (f64.const 0.004))))))
         ;; Gentle distance oscillation
-        (local.set $orbit_dist (f64.add (f64.const 28.0)
-          (f64.mul (f64.const 6.0) (call $sin_a
+        (local.set $orbit_dist (f64.add (f64.const 56.0)
+          (f64.mul (f64.const 12.0) (call $sin_a
             (f64.mul (f64.convert_i32_u (local.get $frame_count)) (f64.const 0.002)))))))
       (else
         ;; === MANUAL CONTROL ===
@@ -641,6 +663,179 @@
       (f64.mul (local.get $right_z) (local.get $fwd_x))
       (f64.mul (local.get $right_x) (local.get $fwd_z))))
     (local.set $up_z (f64.mul (local.get $right_x) (local.get $fwd_y)))
+
+    ;; === Animate stars: Keplerian orbit + inward spiral ===
+    ;; All 255 stars orbit around Y axis at speed ∝ 1/r
+    ;; Close stars orbit fast and spiral in; far stars barely move
+    (local.set $star_id (i32.const 1))
+    (block $rot_done (loop $rot_lp
+      (br_if $rot_done (i32.gt_u (local.get $star_id) (i32.const 255)))
+      (local.set $star_addr (i32.add (i32.const 0x10400) (i32.shl (local.get $star_id) (i32.const 4))))
+
+      ;; Load 3D position
+      (local.set $star_x (f64.promote_f32 (f32.load (local.get $star_addr))))
+      (local.set $star_y (f64.promote_f32 (f32.load (i32.add (local.get $star_addr) (i32.const 4)))))
+      (local.set $star_z (f64.promote_f32 (f32.load (i32.add (local.get $star_addr) (i32.const 8)))))
+
+      ;; Distance from BH
+      (local.set $d2 (f64.add (f64.add
+        (f64.mul (local.get $star_x) (local.get $star_x))
+        (f64.mul (local.get $star_y) (local.get $star_y)))
+        (f64.mul (local.get $star_z) (local.get $star_z))))
+      (local.set $r (f64.sqrt (local.get $d2)))
+
+      ;; Respawn if absorbed (r < 15)
+      (if (f64.lt (local.get $r) (f64.const 15.0))
+        (then
+          (local.set $rnd (call $rand))
+          (local.set $ix (i32.rem_u (i32.and (local.get $rnd) (i32.const 0x7FFFFFFF)) (i32.const 6)))
+          (local.set $rnd (call $rand))
+          (local.set $cu (i32.and (local.get $rnd) (i32.const 127)))
+          (local.set $cv (i32.and (i32.shr_u (local.get $rnd) (i32.const 8)) (i32.const 127)))
+          (call $star_dir (local.get $ix) (local.get $cu) (local.get $cv) (local.get $star_addr))
+          ;; Scale to radius 150-350
+          (local.set $rnd (call $rand))
+          (local.set $t (f64.add (f64.const 150.0)
+            (f64.mul (f64.convert_i32_u (i32.and (local.get $rnd) (i32.const 255))) (f64.const 0.78))))
+          (f32.store (local.get $star_addr)
+            (f32.demote_f64 (f64.mul (f64.promote_f32 (f32.load (local.get $star_addr))) (local.get $t))))
+          (f32.store (i32.add (local.get $star_addr) (i32.const 4))
+            (f32.demote_f64 (f64.mul (f64.promote_f32 (f32.load (i32.add (local.get $star_addr) (i32.const 4)))) (local.get $t))))
+          (f32.store (i32.add (local.get $star_addr) (i32.const 8))
+            (f32.demote_f64 (f64.mul (f64.promote_f32 (f32.load (i32.add (local.get $star_addr) (i32.const 8)))) (local.get $t))))
+        )
+        (else
+          ;; Orbital rotation around Y: θ = 2.0 / r (Keplerian-ish)
+          ;; Small-angle: new_x ≈ x + z*θ, new_z ≈ z - x*θ
+          (local.set $t (f64.div (f64.const 2.0) (local.get $r)))
+          (local.set $fx (f64.add (local.get $star_x) (f64.mul (local.get $star_z) (local.get $t))))
+          (local.set $fz (f64.sub (local.get $star_z) (f64.mul (local.get $star_x) (local.get $t))))
+
+          ;; Inward spiral: scale = 1 - 3/r² (close stars drift in faster)
+          (local.set $t (f64.sub (f64.const 1.0) (f64.div (f64.const 3.0) (local.get $d2))))
+          ;; Flatten toward disk: y *= 0.999
+          (f32.store (local.get $star_addr) (f32.demote_f64 (f64.mul (local.get $fx) (local.get $t))))
+          (f32.store (i32.add (local.get $star_addr) (i32.const 4))
+            (f32.demote_f64 (f64.mul (local.get $star_y) (f64.const 0.999))))
+          (f32.store (i32.add (local.get $star_addr) (i32.const 8))
+            (f32.demote_f64 (f64.mul (local.get $fz) (local.get $t))))
+        ))
+
+      (local.set $star_id (i32.add (local.get $star_id) (i32.const 1)))
+      (br $rot_lp)
+    ))
+
+    ;; === Rebuild cubemap from updated star positions ===
+    ;; Clear cubemap (i32.store for speed)
+    (local.set $idx (i32.const 0))
+    (block $cl_done (loop $cl_lp
+      (br_if $cl_done (i32.ge_u (local.get $idx) (i32.const 98304)))
+      (i32.store (i32.add (i32.const 0x20000) (local.get $idx)) (i32.const 0))
+      (local.set $idx (i32.add (local.get $idx) (i32.const 4)))
+      (br $cl_lp)
+    ))
+
+    ;; Write each star's 5×5 block into cubemap
+    (local.set $star_id (i32.const 1))
+    (block $wr_done (loop $wr_lp
+      (br_if $wr_done (i32.gt_u (local.get $star_id) (i32.const 255)))
+      (local.set $star_addr (i32.add (i32.const 0x10400) (i32.shl (local.get $star_id) (i32.const 4))))
+
+      ;; Load position and normalize to get direction
+      (local.set $star_x (f64.promote_f32 (f32.load (local.get $star_addr))))
+      (local.set $star_y (f64.promote_f32 (f32.load (i32.add (local.get $star_addr) (i32.const 4)))))
+      (local.set $star_z (f64.promote_f32 (f32.load (i32.add (local.get $star_addr) (i32.const 8)))))
+      (local.set $r (f64.sqrt (f64.add (f64.add
+        (f64.mul (local.get $star_x) (local.get $star_x))
+        (f64.mul (local.get $star_y) (local.get $star_y)))
+        (f64.mul (local.get $star_z) (local.get $star_z)))))
+      (local.set $star_x (f64.div (local.get $star_x) (local.get $r)))
+      (local.set $star_y (f64.div (local.get $star_y) (local.get $r)))
+      (local.set $star_z (f64.div (local.get $star_z) (local.get $r)))
+
+      ;; Convert direction to cubemap face + u,v
+      (local.set $fx (f64.abs (local.get $star_x)))
+      (local.set $fy (f64.abs (local.get $star_y)))
+      (local.set $fz (f64.abs (local.get $star_z)))
+
+      (if (i32.and (f64.ge (local.get $fx) (local.get $fy))
+                   (f64.ge (local.get $fx) (local.get $fz)))
+        (then
+          (local.set $d2 (local.get $fx))
+          (if (f64.gt (local.get $star_x) (f64.const 0.0))
+            (then (local.set $ix (i32.const 0))
+              (local.set $fx (f64.neg (local.get $star_z)))
+              (local.set $fy (f64.neg (local.get $star_y))))
+            (else (local.set $ix (i32.const 1))
+              (local.set $fx (local.get $star_z))
+              (local.set $fy (f64.neg (local.get $star_y))))))
+        (else
+          (if (i32.and (f64.ge (local.get $fy) (local.get $fx))
+                       (f64.ge (local.get $fy) (local.get $fz)))
+            (then
+              (local.set $d2 (local.get $fy))
+              (if (f64.gt (local.get $star_y) (f64.const 0.0))
+                (then (local.set $ix (i32.const 2))
+                  (local.set $fx (local.get $star_x))
+                  (local.set $fy (local.get $star_z)))
+                (else (local.set $ix (i32.const 3))
+                  (local.set $fx (local.get $star_x))
+                  (local.set $fy (f64.neg (local.get $star_z))))))
+            (else
+              (local.set $d2 (local.get $fz))
+              (if (f64.gt (local.get $star_z) (f64.const 0.0))
+                (then (local.set $ix (i32.const 4))
+                  (local.set $fx (local.get $star_x))
+                  (local.set $fy (f64.neg (local.get $star_y))))
+                (else (local.set $ix (i32.const 5))
+                  (local.set $fx (f64.neg (local.get $star_x)))
+                  (local.set $fy (f64.neg (local.get $star_y)))))))))
+
+      ;; Compute u,v from sc/tc/ma
+      (local.set $cu (i32.trunc_f64_s
+        (f64.mul (f64.mul (f64.add
+          (f64.div (local.get $fx) (local.get $d2))
+          (f64.const 1.0)) (f64.const 0.5)) (f64.const 127.0))))
+      (local.set $cv (i32.trunc_f64_s
+        (f64.mul (f64.mul (f64.add
+          (f64.div (local.get $fy) (local.get $d2))
+          (f64.const 1.0)) (f64.const 0.5)) (f64.const 127.0))))
+      ;; Clamp
+      (if (i32.lt_s (local.get $cu) (i32.const 0)) (then (local.set $cu (i32.const 0))))
+      (if (i32.gt_s (local.get $cu) (i32.const 127)) (then (local.set $cu (i32.const 127))))
+      (if (i32.lt_s (local.get $cv) (i32.const 0)) (then (local.set $cv (i32.const 0))))
+      (if (i32.gt_s (local.get $cv) (i32.const 127)) (then (local.set $cv (i32.const 127))))
+
+      ;; Write 5×5 block
+      (local.set $star_base (i32.const -2))
+      (block $wy_done (loop $wy_lp
+        (br_if $wy_done (i32.gt_s (local.get $star_base) (i32.const 2)))
+        (local.set $star_bright (i32.const -2))
+        (block $wx_done (loop $wx_lp
+          (br_if $wx_done (i32.gt_s (local.get $star_bright) (i32.const 2)))
+          (local.set $hash (i32.add (local.get $cu) (local.get $star_bright)))
+          (local.set $iy (i32.add (local.get $cv) (local.get $star_base)))
+          (if (i32.and (i32.and
+                (i32.ge_s (local.get $hash) (i32.const 0))
+                (i32.le_s (local.get $hash) (i32.const 127)))
+              (i32.and
+                (i32.ge_s (local.get $iy) (i32.const 0))
+                (i32.le_s (local.get $iy) (i32.const 127))))
+            (then
+              (i32.store8 (i32.add (i32.const 0x20000)
+                (i32.add (i32.shl (local.get $ix) (i32.const 14))
+                  (i32.add (i32.shl (local.get $iy) (i32.const 7)) (local.get $hash))))
+                (local.get $star_id))))
+          (local.set $star_bright (i32.add (local.get $star_bright) (i32.const 1)))
+          (br $wx_lp)
+        ))
+        (local.set $star_base (i32.add (local.get $star_base) (i32.const 1)))
+        (br $wy_lp)
+      ))
+
+      (local.set $star_id (i32.add (local.get $star_id) (i32.const 1)))
+      (br $wr_lp)
+    ))
 
     ;; === Pixel loop ===
     (local.set $py (i32.const 0))
@@ -900,21 +1095,32 @@
 
               (if (local.get $idx)
                 (then
-                  ;; Look up star direction from table
+                  ;; Look up star position from table
                   (local.set $star_base (i32.add (i32.const 0x10400) (i32.shl (local.get $idx) (i32.const 4))))
-                  ;; d² = |vel - star_dir|² (both unit vectors)
-                  (local.set $fx (f64.sub (local.get $vel_x) (f64.promote_f32 (f32.load (local.get $star_base)))))
-                  (local.set $fy (f64.sub (local.get $vel_y) (f64.promote_f32 (f32.load (i32.add (local.get $star_base) (i32.const 4))))))
-                  (local.set $fz (f64.sub (local.get $vel_z) (f64.promote_f32 (f32.load (i32.add (local.get $star_base) (i32.const 8))))))
+                  (local.set $star_x (f64.promote_f32 (f32.load (local.get $star_base))))
+                  (local.set $star_y (f64.promote_f32 (f32.load (i32.add (local.get $star_base) (i32.const 4)))))
+                  (local.set $star_z (f64.promote_f32 (f32.load (i32.add (local.get $star_base) (i32.const 8)))))
+
+                  ;; Distance and normalized direction
+                  (local.set $disk_r2 (f64.add (f64.add
+                    (f64.mul (local.get $star_x) (local.get $star_x))
+                    (f64.mul (local.get $star_y) (local.get $star_y)))
+                    (f64.mul (local.get $star_z) (local.get $star_z))))
+                  (local.set $disk_r (f64.sqrt (local.get $disk_r2)))
+                  ;; dir = pos / dist
+                  (local.set $fx (f64.sub (local.get $vel_x) (f64.div (local.get $star_x) (local.get $disk_r))))
+                  (local.set $fy (f64.sub (local.get $vel_y) (f64.div (local.get $star_y) (local.get $disk_r))))
+                  (local.set $fz (f64.sub (local.get $vel_z) (f64.div (local.get $star_z) (local.get $disk_r))))
+                  ;; d² = |vel - dir|²
                   (local.set $d2 (f64.add (f64.add
                     (f64.mul (local.get $fx) (local.get $fx))
                     (f64.mul (local.get $fy) (local.get $fy)))
                     (f64.mul (local.get $fz) (local.get $fz))))
 
-                  ;; Smooth falloff: brightness = max(0, 1 - d² * 2500)
-                  ;; ~2 texel diameter stars, fades well within ±2 block
+                  ;; Distance-scaled falloff: closer stars appear bigger
+                  ;; factor = 0.25 * dist² → at dist=100 factor=2500, dist=50 factor=625
                   (local.set $brightness (f64.sub (f64.const 1.0)
-                    (f64.mul (local.get $d2) (f64.const 2500.0))))
+                    (f64.mul (local.get $d2) (f64.mul (f64.const 0.25) (local.get $disk_r2)))))
                   (if (f64.gt (local.get $brightness) (f64.const 0.0))
                     (then
                       ;; palette_idx = base + trunc(brightness * max_offset)
