@@ -1426,7 +1426,7 @@
         (if (i32.and (i32.eq (local.get $wx) (local.get $prev_wx))
                      (i32.eq (local.get $wy) (local.get $prev_wy)))
           (then
-            (local.set $t (f64.add (local.get $t) (f64.const 0.15)))
+            (local.set $t (f64.add (local.get $t) (f64.const 0.08)))
             (br $ray_lp)))
         (local.set $prev_wx (local.get $wx))
         (local.set $prev_wy (local.get $wy))
@@ -1658,11 +1658,11 @@
         )
 
         ;; Step size: finer near, coarser far
-        (if (f64.lt (local.get $t) (f64.const 3.0))
-          (then (local.set $step_size (f64.const 0.15)))
-          (else (if (f64.lt (local.get $t) (f64.const 10.0))
-            (then (local.set $step_size (f64.const 0.3)))
-            (else (local.set $step_size (f64.const 0.6))))))
+        (if (f64.lt (local.get $t) (f64.const 4.0))
+          (then (local.set $step_size (f64.const 0.12)))
+          (else (if (f64.lt (local.get $t) (f64.const 14.0))
+            (then (local.set $step_size (f64.const 0.25)))
+            (else (local.set $step_size (f64.const 0.4))))))
         (local.set $t (f64.add (local.get $t) (local.get $step_size)))
         (br $ray_lp)))
 
