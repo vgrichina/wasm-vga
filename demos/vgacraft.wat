@@ -2105,7 +2105,7 @@
                         (call $dither_test (local.get $px_col) (local.get $px_row) (local.get $shade_frac))
                         (i32.lt_s (local.get $sky_idx) (i32.const 7)))
                     (then (local.set $sky_idx (i32.add (local.get $sky_idx) (i32.const 1)))))
-                  (i32.store8 (local.get $fb_addr) (local.get $sky_idx))))))
+                  (i32.store8 (local.get $fb_addr) (local.get $sky_idx)))))))
               (else
                 ;; Below horizon fog (now at 136+7=143)
                 (i32.store8 (local.get $fb_addr) (i32.const 143))))))
