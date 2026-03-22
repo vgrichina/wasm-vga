@@ -5208,6 +5208,7 @@
               local.set $color
 
               ;; Water shimmer: use base 6 (water) shades 8..11
+              ;; Slow down animation: tick >> 8 (~4 seconds per cycle at 60fps)
               local.get $hit_type
               i32.const 5
               i32.eq
@@ -5217,7 +5218,7 @@
                 local.get $tex_v
                 i32.add
                 local.get $tick
-                i32.const 4
+                i32.const 8
                 i32.shr_u
                 i32.add
                 i32.const 3
@@ -5333,24 +5334,69 @@
                   f64.gt
                   i32.and
                   if
-                    ;; Moon hit: base 13 (white) shades
+                    ;; Moon hit: base 13 (white) shades with dithering
+                    ;; Map cel_dot from 0.992..1.0 to shade range
                     local.get $cel_dot
-                    f64.const 0.998
-                    f64.gt
-                    if
-                      ;; Moon core: base 13 shade 13 = 221
-                      local.get $fb_addr
-                      i32.const 221
-                      i32.store8
-                    else
-                      ;; Moon edge: base 13 shade 10 = 218
-                      local.get $fb_addr
-                      i32.const 218
-                      i32.store8
-                    end
+                    f64.const 0.992
+                    f64.sub
+                    f64.const 125000.0  ;; scale 0..0.008 to 0..1000
+                    f64.mul
+                    i32.trunc_f64_s
+                    local.set $shade_full
+                    local.get $shade_full
+                    i32.const 0
+                    i32.lt_s
+                    if  i32.const 0  local.set $shade_full  end
+                    local.get $shade_full
+                    i32.const 1000
+                    i32.gt_s
+                    if  i32.const 1000  local.set $shade_full  end
+                    ;; Map 0..1000 to shade 8..15 (moon edge to core)
+                    ;; shade = 8 + shade_full * 7 / 1000
+                    local.get $shade_full
+                    i32.const 7
+                    i32.mul
+                    i32.const 1000
+                    i32.div_u
+                    local.set $shade
+                    ;; Fractional part for dithering
+                    local.get $shade_full
+                    i32.const 7
+                    i32.mul
+                    local.get $shade
+                    i32.const 1000
+                    i32.mul
+                    i32.sub
+                    i32.const 15
+                    i32.mul
+                    i32.const 1000
+                    i32.div_u
+                    local.set $shade_frac
+                    ;; Apply Bayer dither
+                    local.get $px_col
+                    local.get $px_row
+                    local.get $shade_frac
+                    call $dither_test
+                    local.set $dither_bump
+                    local.get $shade
+                    local.get $dither_bump
+                    i32.add
+                    i32.const 8
+                    i32.add
+                    local.set $shade
+                    local.get $shade
+                    i32.const 15
+                    i32.gt_s
+                    if  i32.const 15  local.set $shade  end
+                    local.get $fb_addr
+                    i32.const 208  ;; base 13 * 16
+                    local.get $shade
+                    i32.add
+                    i32.store8
                   else
                     ;; Normal sky gradient: base 1 (sky) = indices 16..31
                     ;; Map ray_dz to shade: higher = brighter
+                    ;; Use dithering for smooth sky gradients
                     i32.const 240
                     local.get $ray_dz
                     f64.const 200.0
@@ -5366,12 +5412,38 @@
                     i32.const 240
                     i32.gt_s
                     if  i32.const 240  local.set $shade_full  end
-                    ;; Map 0..240 to shade 0..15
+                    ;; Map 0..240 to shade 0..15 with dithering
+                    ;; sky_idx = shade_full * 15 / 240 (integer part)
+                    ;; shade_frac = (shade_full * 15) mod 240, remapped to 0..15 for dither
                     local.get $shade_full
+                    i32.const 15
+                    i32.mul
+                    local.set $shade_frac  ;; reuse as temp = shade_full * 15
+                    local.get $shade_frac
+                    i32.const 240
+                    i32.div_u
+                    local.set $sky_idx
+                    ;; Compute fractional part for dithering
+                    local.get $shade_frac
+                    local.get $sky_idx
+                    i32.const 240
+                    i32.mul
+                    i32.sub
+                    ;; Now we have remainder in 0..239, scale to 0..15
                     i32.const 15
                     i32.mul
                     i32.const 240
                     i32.div_u
+                    local.set $shade_frac
+                    ;; Apply Bayer dither
+                    local.get $px_col
+                    local.get $px_row
+                    local.get $shade_frac
+                    call $dither_test
+                    local.set $dither_bump
+                    local.get $sky_idx
+                    local.get $dither_bump
+                    i32.add
                     local.set $sky_idx
                     local.get $sky_idx
                     i32.const 15
