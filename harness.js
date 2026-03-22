@@ -239,38 +239,24 @@ function toggleMute() {
   if (btn) btn.textContent = isMuted ? 'OFF' : 'SND';
 }
 
-// default VGA palette: 16 base colors × 16 light levels = 256 colors
-// index = base * 16 + light (light 0=darkest, 15=brightest)
+// RGB+Brightness palette: 2 bits R, 2 bits G, 2 bits B, 2 bits brightness
+// index = (R<<6) | (G<<4) | (B<<2) | L
+// R,G,B channel values: 0→0, 1→85, 2→170, 3→255
+// L brightness: 0→0.13, 1→0.40, 2→0.70, 3→1.0
 function defaultPalette() {
   const pal = new Uint8Array(768);
-  // 16 base colors at full brightness [R, G, B]
-  const bases = [
-    [  0,   0,   0], // 0: black/void
-    [100, 160, 240], // 1: sky blue
-    [ 80, 200,  50], // 2: grass green
-    [160, 120,  60], // 3: dirt brown
-    [160, 160, 170], // 4: stone gray
-    [240, 220, 140], // 5: sand yellow
-    [ 50, 120, 220], // 6: water blue
-    [140,  95,  50], // 7: wood brown
-    [ 60, 160,  50], // 8: leaves green
-    [100, 100, 110], // 9: coal dark gray
-    [ 40, 180,  30], // 10: creeper green
-    [120, 140,  60], // 11: zombie brown-green
-    [200, 195, 180], // 12: skeleton bone
-    [255, 255, 255], // 13: white (HUD, crosshair)
-    [255,  60,  60], // 14: red (damage, health)
-    [255, 240, 100], // 15: yellow/gold (sun)
-  ];
-  for (let base = 0; base < 16; base++) {
-    const [r, g, b] = bases[base];
-    for (let light = 0; light < 16; light++) {
-      const t = light / 15; // 0..1
-      const idx = (base * 16 + light) * 3;
-      pal[idx]     = Math.round(r * t);
-      pal[idx + 1] = Math.round(g * t);
-      pal[idx + 2] = Math.round(b * t);
-    }
+  const chanLevels = [0, 85, 170, 255];
+  const brightLevels = [0.13, 0.40, 0.70, 1.0];
+  for (let i = 0; i < 256; i++) {
+    const rb = (i >> 6) & 3;
+    const gb = (i >> 4) & 3;
+    const bb = (i >> 2) & 3;
+    const lb = i & 3;
+    const bright = brightLevels[lb];
+    const idx = i * 3;
+    pal[idx]     = Math.round(chanLevels[rb] * bright);
+    pal[idx + 1] = Math.round(chanLevels[gb] * bright);
+    pal[idx + 2] = Math.round(chanLevels[bb] * bright);
   }
   return pal;
 }
