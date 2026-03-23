@@ -788,6 +788,672 @@
     call $sin_a
   )
 
+  ;; ---- HSL to RGB conversion ----
+  ;; h: 0-360 (degrees), s: 0-255 (saturation), l: 0-255 (lightness)
+  ;; Returns packed 0x00RRGGBB
+  (func $hsl_to_rgb (param $h i32) (param $s_byte i32) (param $l_byte i32) (result i32)
+    (local $s f64) (local $l f64) (local $c f64) (local $x f64) (local $m f64)
+    (local $hf f64) (local $hmod f64)
+    (local $r f64) (local $g f64) (local $b f64)
+    (local $ri i32) (local $gi i32) (local $bi i32)
+    ;; s = s_byte / 255.0, l = l_byte / 255.0
+    local.get $s_byte
+    f64.convert_i32_u
+    f64.const 255.0
+    f64.div
+    local.set $s
+    local.get $l_byte
+    f64.convert_i32_u
+    f64.const 255.0
+    f64.div
+    local.set $l
+    ;; c = (1 - |2l - 1|) * s
+    f64.const 2.0
+    local.get $l
+    f64.mul
+    f64.const 1.0
+    f64.sub
+    local.set $c
+    local.get $c
+    f64.const 0.0
+    f64.lt
+    if
+      f64.const 0.0
+      local.get $c
+      f64.sub
+      local.set $c
+    end
+    f64.const 1.0
+    local.get $c
+    f64.sub
+    local.get $s
+    f64.mul
+    local.set $c
+    ;; hf = h / 60.0
+    local.get $h
+    f64.convert_i32_u
+    f64.const 60.0
+    f64.div
+    local.set $hf
+    ;; hmod = hf - floor(hf/2)*2 (hf mod 2)
+    local.get $hf
+    f64.const 2.0
+    f64.div
+    f64.floor
+    f64.const 2.0
+    f64.mul
+    local.set $hmod
+    local.get $hf
+    local.get $hmod
+    f64.sub
+    local.set $hmod
+    ;; x = c * (1 - |hmod - 1|)
+    local.get $hmod
+    f64.const 1.0
+    f64.sub
+    local.set $x
+    local.get $x
+    f64.const 0.0
+    f64.lt
+    if
+      f64.const 0.0
+      local.get $x
+      f64.sub
+      local.set $x
+    end
+    local.get $c
+    f64.const 1.0
+    local.get $x
+    f64.sub
+    f64.mul
+    local.set $x
+    ;; m = l - c/2
+    local.get $l
+    local.get $c
+    f64.const 2.0
+    f64.div
+    f64.sub
+    local.set $m
+    ;; Default
+    f64.const 0.0
+    local.set $r
+    f64.const 0.0
+    local.set $g
+    f64.const 0.0
+    local.set $b
+    ;; Sector selection based on hf (0-6)
+    local.get $hf
+    f64.const 1.0
+    f64.lt
+    if
+      local.get $c
+      local.set $r
+      local.get $x
+      local.set $g
+      f64.const 0.0
+      local.set $b
+    else
+      local.get $hf
+      f64.const 2.0
+      f64.lt
+      if
+        local.get $x
+        local.set $r
+        local.get $c
+        local.set $g
+        f64.const 0.0
+        local.set $b
+      else
+        local.get $hf
+        f64.const 3.0
+        f64.lt
+        if
+          f64.const 0.0
+          local.set $r
+          local.get $c
+          local.set $g
+          local.get $x
+          local.set $b
+        else
+          local.get $hf
+          f64.const 4.0
+          f64.lt
+          if
+            f64.const 0.0
+            local.set $r
+            local.get $x
+            local.set $g
+            local.get $c
+            local.set $b
+          else
+            local.get $hf
+            f64.const 5.0
+            f64.lt
+            if
+              local.get $x
+              local.set $r
+              f64.const 0.0
+              local.set $g
+              local.get $c
+              local.set $b
+            else
+              local.get $c
+              local.set $r
+              f64.const 0.0
+              local.set $g
+              local.get $x
+              local.set $b
+            end
+          end
+        end
+      end
+    end
+    ;; Final RGB = (component + m) * 255
+    local.get $r
+    local.get $m
+    f64.add
+    f64.const 255.0
+    f64.mul
+    f64.nearest
+    i32.trunc_f64_s
+    local.set $ri
+    local.get $g
+    local.get $m
+    f64.add
+    f64.const 255.0
+    f64.mul
+    f64.nearest
+    i32.trunc_f64_s
+    local.set $gi
+    local.get $b
+    local.get $m
+    f64.add
+    f64.const 255.0
+    f64.mul
+    f64.nearest
+    i32.trunc_f64_s
+    local.set $bi
+    ;; Clamp 0-255
+    local.get $ri
+    i32.const 0
+    i32.lt_s
+    if  i32.const 0  local.set $ri  end
+    local.get $ri
+    i32.const 255
+    i32.gt_s
+    if  i32.const 255  local.set $ri  end
+    local.get $gi
+    i32.const 0
+    i32.lt_s
+    if  i32.const 0  local.set $gi  end
+    local.get $gi
+    i32.const 255
+    i32.gt_s
+    if  i32.const 255  local.set $gi  end
+    local.get $bi
+    i32.const 0
+    i32.lt_s
+    if  i32.const 0  local.set $bi  end
+    local.get $bi
+    i32.const 255
+    i32.gt_s
+    if  i32.const 255  local.set $bi  end
+    ;; Pack as 0x00RRGGBB
+    local.get $ri
+    i32.const 16
+    i32.shl
+    local.get $gi
+    i32.const 8
+    i32.shl
+    i32.or
+    local.get $bi
+    i32.or
+  )
+
+  ;; ============================================================
+  ;; PALETTE + LUT INIT — fully in WAT
+  ;; 14 hues × 16 shades + 32 grays = 256 palette entries
+  ;; Then builds 32KB nearest-color LUT at 0x20000
+  ;; ============================================================
+  (func $init_palette
+    (local $i i32) (local $hi i32) (local $sh i32) (local $idx i32)
+    (local $hue i32) (local $lightness i32) (local $saturation i32)
+    (local $rgb i32) (local $r i32) (local $g i32) (local $b i32)
+    (local $v i32)
+    (local $ri i32) (local $gi i32) (local $bi i32)
+    (local $pr i32) (local $pg i32) (local $pb i32)
+    (local $dr i32) (local $dg i32) (local $db i32)
+    (local $dist i32) (local $best_dist i32) (local $best_idx i32)
+    (local $p i32) (local $addr i32)
+    (local $sin_val f64) (local $sat_f64 f64)
+
+    ;; ---- 32 grayscale entries (indices 0-31) ----
+    i32.const 0
+    local.set $i
+    block $gray_done
+      loop $gray_lp
+        local.get $i
+        i32.const 32
+        i32.ge_u
+        br_if $gray_done
+        ;; v = i * 255 / 31
+        local.get $i
+        i32.const 255
+        i32.mul
+        i32.const 31
+        i32.div_u
+        local.set $v
+        local.get $i
+        local.get $v
+        local.get $v
+        local.get $v
+        call $set_pal
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $gray_lp
+      end
+    end
+
+    ;; ---- 14 hue ramps × 16 shades (indices 32-255) ----
+    ;; Hue table stored temporarily at 0x28000 (14 × 2 bytes = 28 bytes)
+    ;; Hues: 0, 25, 45, 65, 90, 120, 150, 180, 210, 240, 270, 300, 330, 15
+    i32.const 0x28000
+    i32.const 0
+    i32.store16
+    i32.const 0x28002
+    i32.const 25
+    i32.store16
+    i32.const 0x28004
+    i32.const 45
+    i32.store16
+    i32.const 0x28006
+    i32.const 65
+    i32.store16
+    i32.const 0x28008
+    i32.const 90
+    i32.store16
+    i32.const 0x2800A
+    i32.const 120
+    i32.store16
+    i32.const 0x2800C
+    i32.const 150
+    i32.store16
+    i32.const 0x2800E
+    i32.const 180
+    i32.store16
+    i32.const 0x28010
+    i32.const 210
+    i32.store16
+    i32.const 0x28012
+    i32.const 240
+    i32.store16
+    i32.const 0x28014
+    i32.const 270
+    i32.store16
+    i32.const 0x28016
+    i32.const 300
+    i32.store16
+    i32.const 0x28018
+    i32.const 330
+    i32.store16
+    i32.const 0x2801A
+    i32.const 15
+    i32.store16
+
+    i32.const 0
+    local.set $hi
+    block $hue_done
+      loop $hue_lp
+        local.get $hi
+        i32.const 14
+        i32.ge_u
+        br_if $hue_done
+
+        ;; Load hue from table
+        i32.const 0x28000
+        local.get $hi
+        i32.const 2
+        i32.mul
+        i32.add
+        i32.load16_u
+        local.set $hue
+
+        i32.const 0
+        local.set $sh
+        block $shade_done
+          loop $shade_lp
+            local.get $sh
+            i32.const 16
+            i32.ge_u
+            br_if $shade_done
+
+            ;; palette index = 32 + hi*16 + sh
+            i32.const 32
+            local.get $hi
+            i32.const 16
+            i32.mul
+            i32.add
+            local.get $sh
+            i32.add
+            local.set $idx
+
+            ;; lightness = sh * 255 / 15
+            local.get $sh
+            i32.const 255
+            i32.mul
+            i32.const 15
+            i32.div_u
+            local.set $lightness
+
+            ;; saturation = sin(sh/15 * π) * 0.95 * 255
+            ;; = sin(sh * π / 15) * 242
+            local.get $sh
+            f64.convert_i32_u
+            f64.const 3.141592653589793
+            f64.mul
+            f64.const 15.0
+            f64.div
+            call $sin_a
+            f64.const 0.95
+            f64.mul
+            local.set $sat_f64
+            ;; Convert to 0-255 byte
+            local.get $sat_f64
+            f64.const 255.0
+            f64.mul
+            f64.nearest
+            i32.trunc_f64_s
+            local.set $saturation
+            local.get $saturation
+            i32.const 0
+            i32.lt_s
+            if  i32.const 0  local.set $saturation  end
+            local.get $saturation
+            i32.const 255
+            i32.gt_s
+            if  i32.const 255  local.set $saturation  end
+
+            ;; HSL to RGB
+            local.get $hue
+            local.get $saturation
+            local.get $lightness
+            call $hsl_to_rgb
+            local.set $rgb
+
+            ;; Unpack RGB
+            local.get $rgb
+            i32.const 16
+            i32.shr_u
+            i32.const 255
+            i32.and
+            local.set $r
+            local.get $rgb
+            i32.const 8
+            i32.shr_u
+            i32.const 255
+            i32.and
+            local.set $g
+            local.get $rgb
+            i32.const 255
+            i32.and
+            local.set $b
+
+            local.get $idx
+            local.get $r
+            local.get $g
+            local.get $b
+            call $set_pal
+
+            local.get $sh
+            i32.const 1
+            i32.add
+            local.set $sh
+            br $shade_lp
+          end
+        end
+
+        local.get $hi
+        i32.const 1
+        i32.add
+        local.set $hi
+        br $hue_lp
+      end
+    end
+
+    ;; ---- Build 32KB nearest-color LUT at 0x20000 ----
+    ;; LUT[ri<<10 | gi<<5 | bi] = nearest palette index
+    ;; ri,gi,bi each 0-31 (5-bit quantized RGB)
+    ;; First, cache palette RGB at 0x28100 (256 * 3 = 768 bytes temp)
+    i32.const 0
+    local.set $i
+    block $cache_done
+      loop $cache_lp
+        local.get $i
+        i32.const 256
+        i32.ge_u
+        br_if $cache_done
+        ;; Read from palette memory at 0x0040
+        local.get $i
+        i32.const 3
+        i32.mul
+        local.set $addr
+        ;; R
+        i32.const 0x28100
+        local.get $i
+        i32.const 3
+        i32.mul
+        i32.add
+        i32.const 0x0040
+        local.get $addr
+        i32.add
+        i32.load8_u
+        i32.store8
+        ;; G
+        i32.const 0x28101
+        local.get $i
+        i32.const 3
+        i32.mul
+        i32.add
+        i32.const 0x0041
+        local.get $addr
+        i32.add
+        i32.load8_u
+        i32.store8
+        ;; B
+        i32.const 0x28102
+        local.get $i
+        i32.const 3
+        i32.mul
+        i32.add
+        i32.const 0x0042
+        local.get $addr
+        i32.add
+        i32.load8_u
+        i32.store8
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $cache_lp
+      end
+    end
+
+    ;; Now iterate 32×32×32 RGB cube
+    i32.const 0
+    local.set $ri
+    block $ri_done
+      loop $ri_lp
+        local.get $ri
+        i32.const 32
+        i32.ge_u
+        br_if $ri_done
+        ;; r = ri * 255 / 31
+        local.get $ri
+        i32.const 255
+        i32.mul
+        i32.const 31
+        i32.div_u
+        local.set $r
+
+        i32.const 0
+        local.set $gi
+        block $gi_done
+          loop $gi_lp
+            local.get $gi
+            i32.const 32
+            i32.ge_u
+            br_if $gi_done
+            ;; g = gi * 255 / 31
+            local.get $gi
+            i32.const 255
+            i32.mul
+            i32.const 31
+            i32.div_u
+            local.set $g
+
+            i32.const 0
+            local.set $bi
+            block $bi_done
+              loop $bi_lp
+                local.get $bi
+                i32.const 32
+                i32.ge_u
+                br_if $bi_done
+                ;; b = bi * 255 / 31
+                local.get $bi
+                i32.const 255
+                i32.mul
+                i32.const 31
+                i32.div_u
+                local.set $b
+
+                ;; Find nearest palette entry
+                i32.const 0x7FFFFFFF
+                local.set $best_dist
+                i32.const 0
+                local.set $best_idx
+
+                i32.const 0
+                local.set $p
+                block $p_done
+                  loop $p_lp
+                    local.get $p
+                    i32.const 256
+                    i32.ge_u
+                    br_if $p_done
+
+                    ;; pr = cached palette R
+                    local.get $p
+                    i32.const 3
+                    i32.mul
+                    local.set $addr
+                    i32.const 0x28100
+                    local.get $addr
+                    i32.add
+                    i32.load8_u
+                    local.set $pr
+                    i32.const 0x28101
+                    local.get $addr
+                    i32.add
+                    i32.load8_u
+                    local.set $pg
+                    i32.const 0x28102
+                    local.get $addr
+                    i32.add
+                    i32.load8_u
+                    local.set $pb
+
+                    ;; Weighted perceptual distance: dr²×2 + dg²×4 + db²
+                    local.get $r
+                    local.get $pr
+                    i32.sub
+                    local.set $dr
+                    local.get $g
+                    local.get $pg
+                    i32.sub
+                    local.set $dg
+                    local.get $b
+                    local.get $pb
+                    i32.sub
+                    local.set $db
+
+                    local.get $dr
+                    local.get $dr
+                    i32.mul
+                    i32.const 2
+                    i32.mul
+                    local.get $dg
+                    local.get $dg
+                    i32.mul
+                    i32.const 4
+                    i32.mul
+                    i32.add
+                    local.get $db
+                    local.get $db
+                    i32.mul
+                    i32.add
+                    local.set $dist
+
+                    local.get $dist
+                    local.get $best_dist
+                    i32.lt_u
+                    if
+                      local.get $dist
+                      local.set $best_dist
+                      local.get $p
+                      local.set $best_idx
+                    end
+
+                    local.get $p
+                    i32.const 1
+                    i32.add
+                    local.set $p
+                    br $p_lp
+                  end
+                end
+
+                ;; Write LUT entry
+                i32.const 0x20000
+                local.get $ri
+                i32.const 10
+                i32.shl
+                local.get $gi
+                i32.const 5
+                i32.shl
+                i32.or
+                local.get $bi
+                i32.or
+                i32.add
+                local.get $best_idx
+                i32.store8
+
+                local.get $bi
+                i32.const 1
+                i32.add
+                local.set $bi
+                br $bi_lp
+              end
+            end
+
+            local.get $gi
+            i32.const 1
+            i32.add
+            local.set $gi
+            br $gi_lp
+          end
+        end
+
+        local.get $ri
+        i32.const 1
+        i32.add
+        local.set $ri
+        br $ri_lp
+      end
+    end
+  )
+
   ;; ---- Set palette entry ----
   (func $set_pal (param $idx i32) (param $r i32) (param $g i32) (param $b i32)
     (local $a i32)
@@ -887,7 +1553,7 @@
 
   ;; ---- Enhanced palette helpers (14×16+32 palette) ----
   ;; Block type base colors stored as 24-bit RGB at 0x19500 (9 entries × 3 bytes)
-  ;; Written by harness JS after init
+  ;; Written by $init in WAT
   ;; Helper: get base R for a block type (0-8)
   (func $block_base_r (param $type i32) (result i32)
     i32.const 0x19500
@@ -1207,9 +1873,9 @@
 
     ;; ================================================================
     ;; Enhanced palette: 14 hues × 16 shades + 32 grays = 256 colors
-    ;; Palette + LUT + block colors written by harness JS after init.
-    ;; Here we just write the Bayer dither matrix and channel level table.
+    ;; Palette + LUT generated entirely in WAT by $init_palette.
     ;; ================================================================
+    call $init_palette
 
     ;; Write Bayer 4x4 dither matrix at 0x19640 (16 bytes)
     ;; Standard Bayer ordered dither matrix values 0-15
@@ -1289,9 +1955,8 @@
     i32.store8
 
     ;; ================================================================
-    ;; Block type base colors now stored as 24-bit RGB at 0x19500
-    ;; (9 entries × 3 bytes = 27 bytes, written by harness JS)
-    ;; We write defaults here that will be overridden by harness.
+    ;; Block type base colors stored as 24-bit RGB at 0x19500
+    ;; (9 entries × 3 bytes = 27 bytes)
     ;; ================================================================
     ;; air: 0,0,0
     i32.const 0x19500
@@ -1384,7 +2049,7 @@
     i32.const 60
     i32.store8
 
-    ;; Initialize player position (palette set by harness)
+    ;; Initialize player position (palette set by $init_palette above)
     i32.const 0x10344
     f64.const 32.5
     f64.store
@@ -1413,7 +2078,7 @@
     f64.store
 
     ;; Write monster base color table at 0x1951B (3 entries × 3 bytes = 9 bytes)
-    ;; Now stored as 24-bit RGB (written by harness, defaults here)
+    ;; Stored as 24-bit RGB
     ;; creeper(type 0): dark green 30,120,30
     i32.const 0x1951B
     i32.const 30
@@ -6769,6 +7434,7 @@
   ;; RGB24 to palette index via 32KB LUT with ordered dithering
   ;; LUT at 0x20000: 32×32×32 RGB cube → nearest palette index
   ;; 14 hues × 16 shades + 32 grays = 256 palette entries
+  ;; Palette + LUT built entirely in WAT by $init_palette
   ;; Dithering adds noise to RGB before LUT lookup for smooth gradients
   ;; ============================================================
   (func $rgb_to_rgbl_dither (param $px i32) (param $py i32) (param $r i32) (param $g i32) (param $b i32) (result i32)
