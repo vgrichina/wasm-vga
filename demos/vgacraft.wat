@@ -5704,93 +5704,237 @@
               i32.gt_s
               if  i32.const 255  local.set $shade_full  end
 
-              ;; Extract integer shade and fractional part
+              ;; ============================================================
+              ;; Apply day_bright to shade_full for proper day/night lighting
+              ;; shade_full (0-255) * day_bright (0-255) / 255
+              ;; This gives us 256 brightness levels before palette mapping
+              ;; ============================================================
               local.get $shade_full
-              i32.const 4
-              i32.shr_u
-              local.set $shade
-              local.get $shade_full
-              i32.const 15
-              i32.and
-              local.set $shade_frac
-              ;; Bayer dither
-              local.get $px_col
-              local.get $px_row
-              local.get $shade_frac
-              call $dither_test
-              local.set $dither_bump
-              local.get $shade
-              local.get $dither_bump
-              i32.add
-              local.set $shade
-              local.get $shade
-              i32.const 0
-              i32.lt_s
-              if  i32.const 0  local.set $shade  end
-              local.get $shade
-              i32.const 15
-              i32.gt_s
-              if  i32.const 15  local.set $shade  end
+              local.get $day_bright
+              i32.mul
+              i32.const 255
+              i32.div_u
+              local.set $shade_full
 
-              ;; Color = block_base(type) | (shade >> 2)
+              ;; ============================================================
+              ;; Convert block color to 24-bit RGB, then dither to RGBL palette
+              ;; Block base encodes R,G,B as 2-bit indices (0-3) in RGBL format
+              ;; base = (R2<<6)|(G2<<4)|(B2<<2)
+              ;; Channel levels: 0→0, 1→85, 2→170, 3→255
+              ;; Final RGB = channel[base_component] * shade_full / 255
+              ;; ============================================================
+              ;; Get base color components from block type
               local.get $hit_type
               call $block_base
-              local.get $shade
-              i32.const 2
-              i32.shr_u
-              i32.or
-              local.set $color
+              local.set $color  ;; reuse $color as temp for base
 
-              ;; Water shimmer: water base=0x1C, brightness cycles 1..3
+              ;; Water shimmer: override base for water blocks
               local.get $hit_type
               i32.const 5
               i32.eq
               if
-                i32.const 0x1C  ;; water base
+                i32.const 0x1C  ;; water base R=0,G=1,B=3
+                local.set $color
+                ;; Add shimmer by modifying shade
+                local.get $shade_full
                 local.get $tex_u
                 local.get $tex_v
                 i32.add
                 local.get $tick
-                i32.const 8
+                i32.const 6
                 i32.shr_u
                 i32.add
-                i32.const 3
+                i32.const 7
                 i32.and
-                i32.or
-                local.set $color
+                i32.const 8
+                i32.mul
+                i32.add
+                local.set $shade_full
+                local.get $shade_full
+                i32.const 255
+                i32.gt_s
+                if  i32.const 255  local.set $shade_full  end
               end
 
-              ;; Distance fog: blend to sky (0x5C base) with increasing brightness
+              ;; Distance fog: blend shade toward sky color at far distances
               local.get $dist
               f64.const 18.0
               f64.gt
               if
-                ;; fog_t = (dist-18)*2, clamped to 0..3
+                ;; fog_t = (dist-18)*64, clamped to 0..255
                 local.get $dist
                 f64.const 18.0
                 f64.sub
-                f64.const 1.0
+                f64.const 64.0
                 f64.mul
                 i32.trunc_f64_s
-                local.set $color
-                local.get $color
+                local.set $shade_frac  ;; reuse as fog amount
+                local.get $shade_frac
                 i32.const 0
                 i32.lt_s
-                if  i32.const 0  local.set $color  end
-                local.get $color
-                i32.const 3
+                if  i32.const 0  local.set $shade_frac  end
+                local.get $shade_frac
+                i32.const 255
                 i32.gt_s
-                if  i32.const 3  local.set $color  end
-                ;; sky base + brightness level
-                i32.const 0x5C
+                if  i32.const 255  local.set $shade_frac  end
+                ;; Blend to sky: write dithered sky color and skip block color
+                local.get $fb_addr
+                local.get $px_col
+                local.get $px_row
+                ;; R: fog from block R to sky R
+                ;; sky R at day: 140*day_bright/255, night: 2
+                ;; Simplified: just use sky color
+                i32.const 140
+                local.get $day_bright
+                i32.mul
+                i32.const 2
+                i32.const 255
+                local.get $day_bright
+                i32.sub
+                i32.mul
+                i32.add
+                i32.const 255
+                i32.div_u
+                local.get $shade_frac
+                i32.mul
+                ;; block R contribution
+                i32.const 0x19600
                 local.get $color
-                i32.or
-                local.set $color
+                i32.const 6
+                i32.shr_u
+                i32.const 3
+                i32.and
+                i32.add
+                i32.load8_u
+                local.get $shade_full
+                i32.mul
+                i32.const 255
+                i32.div_u
+                i32.const 255
+                local.get $shade_frac
+                i32.sub
+                i32.mul
+                i32.add
+                i32.const 255
+                i32.div_u
+                ;; G: fog blend
+                i32.const 180
+                local.get $day_bright
+                i32.mul
+                i32.const 4
+                i32.const 255
+                local.get $day_bright
+                i32.sub
+                i32.mul
+                i32.add
+                i32.const 255
+                i32.div_u
+                local.get $shade_frac
+                i32.mul
+                i32.const 0x19600
+                local.get $color
+                i32.const 4
+                i32.shr_u
+                i32.const 3
+                i32.and
+                i32.add
+                i32.load8_u
+                local.get $shade_full
+                i32.mul
+                i32.const 255
+                i32.div_u
+                i32.const 255
+                local.get $shade_frac
+                i32.sub
+                i32.mul
+                i32.add
+                i32.const 255
+                i32.div_u
+                ;; B: fog blend
+                i32.const 220
+                local.get $day_bright
+                i32.mul
+                i32.const 10
+                i32.const 255
+                local.get $day_bright
+                i32.sub
+                i32.mul
+                i32.add
+                i32.const 255
+                i32.div_u
+                local.get $shade_frac
+                i32.mul
+                i32.const 0x19600
+                local.get $color
+                i32.const 2
+                i32.shr_u
+                i32.const 3
+                i32.and
+                i32.add
+                i32.load8_u
+                local.get $shade_full
+                i32.mul
+                i32.const 255
+                i32.div_u
+                i32.const 255
+                local.get $shade_frac
+                i32.sub
+                i32.mul
+                i32.add
+                i32.const 255
+                i32.div_u
+                call $rgb_to_rgbl_dither
+                i32.store8
+              else
+                ;; No fog: compute 24-bit RGB from block base and shade, then dither
+                ;; R = channel[(base>>6)&3] * shade_full / 255
+                ;; G = channel[(base>>4)&3] * shade_full / 255
+                ;; B = channel[(base>>2)&3] * shade_full / 255
+                local.get $fb_addr
+                local.get $px_col
+                local.get $px_row
+                ;; R
+                i32.const 0x19600
+                local.get $color
+                i32.const 6
+                i32.shr_u
+                i32.const 3
+                i32.and
+                i32.add
+                i32.load8_u
+                local.get $shade_full
+                i32.mul
+                i32.const 255
+                i32.div_u
+                ;; G
+                i32.const 0x19600
+                local.get $color
+                i32.const 4
+                i32.shr_u
+                i32.const 3
+                i32.and
+                i32.add
+                i32.load8_u
+                local.get $shade_full
+                i32.mul
+                i32.const 255
+                i32.div_u
+                ;; B
+                i32.const 0x19600
+                local.get $color
+                i32.const 2
+                i32.shr_u
+                i32.const 3
+                i32.and
+                i32.add
+                i32.load8_u
+                local.get $shade_full
+                i32.mul
+                i32.const 255
+                i32.div_u
+                call $rgb_to_rgbl_dither
+                i32.store8
               end
-
-              local.get $fb_addr
-              local.get $color
-              i32.store8
             else
               ;; Sky
               local.get $ray_dz
