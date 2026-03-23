@@ -366,18 +366,35 @@
     overflow: hidden;
     padding: 0;
     justify-content: center;
+    align-items: center;
+    height: 100vh;
+    height: 100dvh;
+    width: 100vw;
+    background: #000;
   }
   body.portrait-mode .top-bar { display: none; }
   body.portrait-mode .bottom-bar { display: none; }
   body.portrait-mode #virtual-controls { display: none !important; }
   body.portrait-mode .canvas-wrap {
-    transform: rotate(-90deg);
-    transform-origin: center center;
-    width: min(calc(100vh - 20px), calc(100vw * 1.6));
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(-90deg);
+    /* After -90deg rotation: CSS width → visual height, CSS height → visual width.
+       We want visual height = 100dvh → CSS width = 100dvh
+       We want visual width ≤ 100vw → CSS height ≤ 100vw
+       With aspect-ratio 320/200: height = width / 1.6
+       So: width ≤ 100vw * 1.6 (to keep height ≤ 100vw)
+       And: width ≤ 100dvh (to keep visual height ≤ screen height) */
+    width: min(100vh, 100vw * 1.6);
+    width: min(100dvh, 100vw * 1.6);
     aspect-ratio: 320 / 200;
     border-radius: 0;
     border: none;
     box-shadow: none;
+    max-width: none;
+    max-height: none;
+    flex-shrink: 0;
   }
   body.portrait-mode .canvas-wrap::before { display: none; }
 
