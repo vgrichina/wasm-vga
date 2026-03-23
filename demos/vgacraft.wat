@@ -5358,9 +5358,11 @@
   )
 
   ;; ============================================================
-  ;; SHADOW RAY — Simple short-range DDA to check sun occlusion
-  ;; Returns: 0 = in shadow, 1 = lit, intermediate = partial
-  ;; Max 20 block steps, no octree (short distance is fast)
+  ;; SHADOW RAY — Octree-accelerated DDA to check light occlusion
+  ;; Returns: 0 = in shadow, 1 = lit
+  ;; Uses 2-level octree skip (mega 16×16×16, chunk 4×4×4) for
+  ;; proper long-distance shadow casting (up to 64 blocks)
+  ;; Works for both sun and moon directions
   ;; ============================================================
   (func $shadow_ray (param $ox f64) (param $oy f64) (param $oz f64)
                      (param $sdx f64) (param $sdy f64) (param $sdz f64)
@@ -5371,6 +5373,12 @@
     (local $t_delta_x f64) (local $t_delta_y f64) (local $t_delta_z f64)
     (local $steps i32) (local $block i32)
     (local $inv_dx f64) (local $inv_dy f64) (local $inv_dz f64)
+    (local $t_cur f64)
+    (local $cx i32) (local $cy i32) (local $cz i32)
+    (local $mcx i32) (local $mcy i32) (local $mcz i32)
+    (local $chunk_occ i32) (local $mega_occ i32)
+    (local $t_skip_x f64) (local $t_skip_y f64) (local $t_skip_z f64)
+    (local $t_skip f64)
 
     ;; Starting voxel
     local.get $ox
@@ -5386,24 +5394,7 @@
     i32.trunc_f64_s
     local.set $vz
 
-    ;; Step direction
-    local.get $sdx
-    f64.const 0.0
-    f64.ge
-    if (result i32)  i32.const 1  else  i32.const -1  end
-    local.set $step_x
-    local.get $sdy
-    f64.const 0.0
-    f64.ge
-    if (result i32)  i32.const 1  else  i32.const -1  end
-    local.set $step_y
-    local.get $sdz
-    f64.const 0.0
-    f64.ge
-    if (result i32)  i32.const 1  else  i32.const -1  end
-    local.set $step_z
-
-    ;; Inverse direction
+    ;; Inverse direction (precompute once)
     local.get $sdx
     f64.abs
     f64.const 0.000001
@@ -5441,117 +5432,863 @@
     end
     local.set $inv_dz
 
-    ;; t_delta = abs(1/dir)
-    local.get $inv_dx
-    f64.abs
-    local.set $t_delta_x
-    local.get $inv_dy
-    f64.abs
-    local.set $t_delta_y
-    local.get $inv_dz
-    f64.abs
-    local.set $t_delta_z
-
-    ;; t_max = distance to next boundary
-    local.get $step_x
-    i32.const 1
-    i32.eq
-    if (result f64)
+    ;; Step direction
+    local.get $sdx
+    f64.const 0.0
+    f64.gt
+    if
+      i32.const 1
+      local.set $step_x
       local.get $vx
       f64.convert_i32_s
       f64.const 1.0
       f64.add
       local.get $ox
       f64.sub
-      local.get $inv_dx
-      f64.mul
-    else
-      local.get $ox
-      local.get $vx
-      f64.convert_i32_s
-      f64.sub
-      local.get $inv_dx
-      f64.neg
-      f64.mul
-    end
-    local.set $t_max_x
-    local.get $step_y
-    i32.const 1
-    i32.eq
-    if (result f64)
-      local.get $vy
-      f64.convert_i32_s
+      local.get $sdx
+      f64.div
+      local.set $t_max_x
       f64.const 1.0
-      f64.add
-      local.get $oy
-      f64.sub
-      local.get $inv_dy
-      f64.mul
+      local.get $sdx
+      f64.div
+      local.set $t_delta_x
     else
-      local.get $oy
-      local.get $vy
-      f64.convert_i32_s
-      f64.sub
-      local.get $inv_dy
-      f64.neg
-      f64.mul
+      local.get $sdx
+      f64.const 0.0
+      f64.lt
+      if
+        i32.const -1
+        local.set $step_x
+        local.get $vx
+        f64.convert_i32_s
+        local.get $ox
+        f64.sub
+        local.get $sdx
+        f64.div
+        local.set $t_max_x
+        f64.const -1.0
+        local.get $sdx
+        f64.div
+        local.set $t_delta_x
+      else
+        i32.const 0
+        local.set $step_x
+        f64.const 999999.0
+        local.set $t_max_x
+        f64.const 999999.0
+        local.set $t_delta_x
+      end
     end
-    local.set $t_max_y
-    local.get $step_z
-    i32.const 1
-    i32.eq
-    if (result f64)
-      local.get $vz
-      f64.convert_i32_s
-      f64.const 1.0
-      f64.add
-      local.get $oz
-      f64.sub
-      local.get $inv_dz
-      f64.mul
-    else
-      local.get $oz
-      local.get $vz
-      f64.convert_i32_s
-      f64.sub
-      local.get $inv_dz
-      f64.neg
-      f64.mul
-    end
-    local.set $t_max_z
 
+    ;; Step direction Y
+    local.get $sdy
+    f64.const 0.0
+    f64.gt
+    if
+      i32.const 1
+      local.set $step_y
+      local.get $vy
+      f64.convert_i32_s
+      f64.const 1.0
+      f64.add
+      local.get $oy
+      f64.sub
+      local.get $sdy
+      f64.div
+      local.set $t_max_y
+      f64.const 1.0
+      local.get $sdy
+      f64.div
+      local.set $t_delta_y
+    else
+      local.get $sdy
+      f64.const 0.0
+      f64.lt
+      if
+        i32.const -1
+        local.set $step_y
+        local.get $vy
+        f64.convert_i32_s
+        local.get $oy
+        f64.sub
+        local.get $sdy
+        f64.div
+        local.set $t_max_y
+        f64.const -1.0
+        local.get $sdy
+        f64.div
+        local.set $t_delta_y
+      else
+        i32.const 0
+        local.set $step_y
+        f64.const 999999.0
+        local.set $t_max_y
+        f64.const 999999.0
+        local.set $t_delta_y
+      end
+    end
+
+    ;; Step direction Z
+    local.get $sdz
+    f64.const 0.0
+    f64.gt
+    if
+      i32.const 1
+      local.set $step_z
+      local.get $vz
+      f64.convert_i32_s
+      f64.const 1.0
+      f64.add
+      local.get $oz
+      f64.sub
+      local.get $sdz
+      f64.div
+      local.set $t_max_z
+      f64.const 1.0
+      local.get $sdz
+      f64.div
+      local.set $t_delta_z
+    else
+      local.get $sdz
+      f64.const 0.0
+      f64.lt
+      if
+        i32.const -1
+        local.set $step_z
+        local.get $vz
+        f64.convert_i32_s
+        local.get $oz
+        f64.sub
+        local.get $sdz
+        f64.div
+        local.set $t_max_z
+        f64.const -1.0
+        local.get $sdz
+        f64.div
+        local.set $t_delta_z
+      else
+        i32.const 0
+        local.set $step_z
+        f64.const 999999.0
+        local.set $t_max_z
+        f64.const 999999.0
+        local.set $t_delta_z
+      end
+    end
+
+    f64.const 0.0
+    local.set $t_cur
     i32.const 0
     local.set $steps
 
     block $done
       loop $lp
         local.get $steps
-        i32.const 20
+        i32.const 200
         i32.ge_u
         br_if $done
 
-        ;; Step to next voxel boundary
+        ;; ---- MEGA-CHUNK SKIP (16×16×16) ----
+        local.get $vx
+        i32.const 16
+        call $floor_div
+        local.set $mcx
+        local.get $vy
+        i32.const 16
+        call $floor_div
+        local.set $mcy
+        local.get $vz
+        i32.const 16
+        call $floor_div
+        local.set $mcz
+
+        local.get $mcx
+        local.get $mcy
+        local.get $mcz
+        call $mega_chunk_occupied
+        local.set $mega_occ
+
+        local.get $mega_occ
+        i32.eqz
+        if
+          ;; EMPTY MEGA-CHUNK: skip to boundary
+          f64.const 999999.0
+          local.set $t_skip_x
+          local.get $step_x
+          i32.const 1
+          i32.eq
+          if
+            local.get $mcx
+            i32.const 1
+            i32.add
+            i32.const 4
+            i32.shl
+            f64.convert_i32_s
+            local.get $ox
+            f64.sub
+            local.get $t_cur
+            local.get $sdx
+            f64.mul
+            f64.sub
+            local.get $inv_dx
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_x
+          end
+          local.get $step_x
+          i32.const -1
+          i32.eq
+          if
+            local.get $mcx
+            i32.const 4
+            i32.shl
+            f64.convert_i32_s
+            local.get $ox
+            f64.sub
+            local.get $t_cur
+            local.get $sdx
+            f64.mul
+            f64.sub
+            local.get $inv_dx
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_x
+          end
+
+          f64.const 999999.0
+          local.set $t_skip_y
+          local.get $step_y
+          i32.const 1
+          i32.eq
+          if
+            local.get $mcy
+            i32.const 1
+            i32.add
+            i32.const 4
+            i32.shl
+            f64.convert_i32_s
+            local.get $oy
+            f64.sub
+            local.get $t_cur
+            local.get $sdy
+            f64.mul
+            f64.sub
+            local.get $inv_dy
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_y
+          end
+          local.get $step_y
+          i32.const -1
+          i32.eq
+          if
+            local.get $mcy
+            i32.const 4
+            i32.shl
+            f64.convert_i32_s
+            local.get $oy
+            f64.sub
+            local.get $t_cur
+            local.get $sdy
+            f64.mul
+            f64.sub
+            local.get $inv_dy
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_y
+          end
+
+          f64.const 999999.0
+          local.set $t_skip_z
+          local.get $step_z
+          i32.const 1
+          i32.eq
+          if
+            local.get $mcz
+            i32.const 1
+            i32.add
+            i32.const 4
+            i32.shl
+            f64.convert_i32_s
+            local.get $oz
+            f64.sub
+            local.get $t_cur
+            local.get $sdz
+            f64.mul
+            f64.sub
+            local.get $inv_dz
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_z
+          end
+
+          ;; Min exit t
+          local.get $t_skip_x
+          local.set $t_skip
+          local.get $t_skip_y
+          local.get $t_skip
+          f64.lt
+          if
+            local.get $t_skip_y
+            local.set $t_skip
+          end
+          local.get $t_skip_z
+          local.get $t_skip
+          f64.lt
+          if
+            local.get $t_skip_z
+            local.set $t_skip
+          end
+
+          local.get $t_skip
+          f64.const 0.001
+          f64.add
+          local.set $t_cur
+
+          ;; Bail if too far
+          local.get $t_cur
+          f64.const 64.0
+          f64.gt
+          br_if $done
+
+          ;; Recompute voxel from t
+          local.get $ox
+          local.get $sdx
+          local.get $t_cur
+          f64.mul
+          f64.add
+          f64.floor
+          i32.trunc_f64_s
+          local.set $vx
+          local.get $oy
+          local.get $sdy
+          local.get $t_cur
+          f64.mul
+          f64.add
+          f64.floor
+          i32.trunc_f64_s
+          local.set $vy
+          local.get $oz
+          local.get $sdz
+          local.get $t_cur
+          f64.mul
+          f64.add
+          f64.floor
+          i32.trunc_f64_s
+          local.set $vz
+
+          ;; Recompute t_max from new position
+          local.get $sdx
+          f64.const 0.0
+          f64.gt
+          if
+            local.get $vx
+            f64.convert_i32_s
+            f64.const 1.0
+            f64.add
+            local.get $ox
+            f64.sub
+            local.get $sdx
+            local.get $t_cur
+            f64.mul
+            f64.sub
+            local.get $inv_dx
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_max_x
+          else
+            local.get $sdx
+            f64.const 0.0
+            f64.lt
+            if
+              local.get $vx
+              f64.convert_i32_s
+              local.get $ox
+              f64.sub
+              local.get $sdx
+              local.get $t_cur
+              f64.mul
+              f64.sub
+              local.get $inv_dx
+              f64.mul
+              local.get $t_cur
+              f64.add
+              local.set $t_max_x
+            end
+          end
+          local.get $sdy
+          f64.const 0.0
+          f64.gt
+          if
+            local.get $vy
+            f64.convert_i32_s
+            f64.const 1.0
+            f64.add
+            local.get $oy
+            f64.sub
+            local.get $sdy
+            local.get $t_cur
+            f64.mul
+            f64.sub
+            local.get $inv_dy
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_max_y
+          else
+            local.get $sdy
+            f64.const 0.0
+            f64.lt
+            if
+              local.get $vy
+              f64.convert_i32_s
+              local.get $oy
+              f64.sub
+              local.get $sdy
+              local.get $t_cur
+              f64.mul
+              f64.sub
+              local.get $inv_dy
+              f64.mul
+              local.get $t_cur
+              f64.add
+              local.set $t_max_y
+            end
+          end
+          local.get $sdz
+          f64.const 0.0
+          f64.gt
+          if
+            local.get $vz
+            f64.convert_i32_s
+            f64.const 1.0
+            f64.add
+            local.get $oz
+            f64.sub
+            local.get $sdz
+            local.get $t_cur
+            f64.mul
+            f64.sub
+            local.get $inv_dz
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_max_z
+          else
+            local.get $sdz
+            f64.const 0.0
+            f64.lt
+            if
+              local.get $vz
+              f64.convert_i32_s
+              local.get $oz
+              f64.sub
+              local.get $sdz
+              local.get $t_cur
+              f64.mul
+              f64.sub
+              local.get $inv_dz
+              f64.mul
+              local.get $t_cur
+              f64.add
+              local.set $t_max_z
+            end
+          end
+
+          ;; Bail if out of Z range
+          local.get $vz
+          i32.const -1
+          i32.lt_s
+          br_if $done
+          local.get $vz
+          i32.const 40
+          i32.gt_s
+          br_if $done
+
+          local.get $steps
+          i32.const 1
+          i32.add
+          local.set $steps
+          br $lp
+        end
+
+        ;; ---- CHUNK SKIP (4×4×4) ----
+        local.get $vx
+        i32.const 4
+        call $floor_div
+        local.set $cx
+        local.get $vy
+        i32.const 4
+        call $floor_div
+        local.set $cy
+        local.get $vz
+        i32.const 4
+        call $floor_div
+        local.set $cz
+
+        local.get $cx
+        local.get $cy
+        local.get $cz
+        call $chunk_occupied
+        local.set $chunk_occ
+
+        local.get $chunk_occ
+        i32.eqz
+        if
+          ;; EMPTY CHUNK: skip to boundary
+          f64.const 999999.0
+          local.set $t_skip_x
+          local.get $step_x
+          i32.const 1
+          i32.eq
+          if
+            local.get $cx
+            i32.const 1
+            i32.add
+            i32.const 2
+            i32.shl
+            f64.convert_i32_s
+            local.get $ox
+            f64.sub
+            local.get $t_cur
+            local.get $sdx
+            f64.mul
+            f64.sub
+            local.get $inv_dx
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_x
+          end
+          local.get $step_x
+          i32.const -1
+          i32.eq
+          if
+            local.get $cx
+            i32.const 2
+            i32.shl
+            f64.convert_i32_s
+            local.get $ox
+            f64.sub
+            local.get $t_cur
+            local.get $sdx
+            f64.mul
+            f64.sub
+            local.get $inv_dx
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_x
+          end
+
+          f64.const 999999.0
+          local.set $t_skip_y
+          local.get $step_y
+          i32.const 1
+          i32.eq
+          if
+            local.get $cy
+            i32.const 1
+            i32.add
+            i32.const 2
+            i32.shl
+            f64.convert_i32_s
+            local.get $oy
+            f64.sub
+            local.get $t_cur
+            local.get $sdy
+            f64.mul
+            f64.sub
+            local.get $inv_dy
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_y
+          end
+          local.get $step_y
+          i32.const -1
+          i32.eq
+          if
+            local.get $cy
+            i32.const 2
+            i32.shl
+            f64.convert_i32_s
+            local.get $oy
+            f64.sub
+            local.get $t_cur
+            local.get $sdy
+            f64.mul
+            f64.sub
+            local.get $inv_dy
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_y
+          end
+
+          f64.const 999999.0
+          local.set $t_skip_z
+          local.get $step_z
+          i32.const 1
+          i32.eq
+          if
+            local.get $cz
+            i32.const 1
+            i32.add
+            i32.const 2
+            i32.shl
+            f64.convert_i32_s
+            local.get $oz
+            f64.sub
+            local.get $t_cur
+            local.get $sdz
+            f64.mul
+            f64.sub
+            local.get $inv_dz
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_z
+          end
+
+          ;; Min exit t
+          local.get $t_skip_x
+          local.set $t_skip
+          local.get $t_skip_y
+          local.get $t_skip
+          f64.lt
+          if
+            local.get $t_skip_y
+            local.set $t_skip
+          end
+          local.get $t_skip_z
+          local.get $t_skip
+          f64.lt
+          if
+            local.get $t_skip_z
+            local.set $t_skip
+          end
+
+          local.get $t_skip
+          f64.const 0.001
+          f64.add
+          local.set $t_cur
+
+          ;; Bail if too far
+          local.get $t_cur
+          f64.const 64.0
+          f64.gt
+          br_if $done
+
+          ;; Recompute voxel from t
+          local.get $ox
+          local.get $sdx
+          local.get $t_cur
+          f64.mul
+          f64.add
+          f64.floor
+          i32.trunc_f64_s
+          local.set $vx
+          local.get $oy
+          local.get $sdy
+          local.get $t_cur
+          f64.mul
+          f64.add
+          f64.floor
+          i32.trunc_f64_s
+          local.set $vy
+          local.get $oz
+          local.get $sdz
+          local.get $t_cur
+          f64.mul
+          f64.add
+          f64.floor
+          i32.trunc_f64_s
+          local.set $vz
+
+          ;; Recompute t_max from new position
+          local.get $sdx
+          f64.const 0.0
+          f64.gt
+          if
+            local.get $vx
+            f64.convert_i32_s
+            f64.const 1.0
+            f64.add
+            local.get $ox
+            f64.sub
+            local.get $sdx
+            local.get $t_cur
+            f64.mul
+            f64.sub
+            local.get $inv_dx
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_max_x
+          else
+            local.get $sdx
+            f64.const 0.0
+            f64.lt
+            if
+              local.get $vx
+              f64.convert_i32_s
+              local.get $ox
+              f64.sub
+              local.get $sdx
+              local.get $t_cur
+              f64.mul
+              f64.sub
+              local.get $inv_dx
+              f64.mul
+              local.get $t_cur
+              f64.add
+              local.set $t_max_x
+            end
+          end
+          local.get $sdy
+          f64.const 0.0
+          f64.gt
+          if
+            local.get $vy
+            f64.convert_i32_s
+            f64.const 1.0
+            f64.add
+            local.get $oy
+            f64.sub
+            local.get $sdy
+            local.get $t_cur
+            f64.mul
+            f64.sub
+            local.get $inv_dy
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_max_y
+          else
+            local.get $sdy
+            f64.const 0.0
+            f64.lt
+            if
+              local.get $vy
+              f64.convert_i32_s
+              local.get $oy
+              f64.sub
+              local.get $sdy
+              local.get $t_cur
+              f64.mul
+              f64.sub
+              local.get $inv_dy
+              f64.mul
+              local.get $t_cur
+              f64.add
+              local.set $t_max_y
+            end
+          end
+          local.get $sdz
+          f64.const 0.0
+          f64.gt
+          if
+            local.get $vz
+            f64.convert_i32_s
+            f64.const 1.0
+            f64.add
+            local.get $oz
+            f64.sub
+            local.get $sdz
+            local.get $t_cur
+            f64.mul
+            f64.sub
+            local.get $inv_dz
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_max_z
+          else
+            local.get $sdz
+            f64.const 0.0
+            f64.lt
+            if
+              local.get $vz
+              f64.convert_i32_s
+              local.get $oz
+              f64.sub
+              local.get $sdz
+              local.get $t_cur
+              f64.mul
+              f64.sub
+              local.get $inv_dz
+              f64.mul
+              local.get $t_cur
+              f64.add
+              local.set $t_max_z
+            end
+          end
+
+          ;; Bail if out of Z range
+          local.get $vz
+          i32.const -1
+          i32.lt_s
+          br_if $done
+          local.get $vz
+          i32.const 40
+          i32.gt_s
+          br_if $done
+
+          local.get $steps
+          i32.const 1
+          i32.add
+          local.set $steps
+          br $lp
+        end
+
+        ;; ---- OCCUPIED: fine DDA step (single voxel) ----
         local.get $t_max_x
         local.get $t_max_y
         f64.le
-        local.get $t_max_x
-        local.get $t_max_z
-        f64.le
-        i32.and
         if
-          local.get $vx
-          local.get $step_x
-          i32.add
-          local.set $vx
           local.get $t_max_x
-          local.get $t_delta_x
-          f64.add
-          local.set $t_max_x
+          local.get $t_max_z
+          f64.le
+          if
+            ;; Step X
+            local.get $t_max_x
+            local.set $t_cur
+            local.get $vx
+            local.get $step_x
+            i32.add
+            local.set $vx
+            local.get $t_max_x
+            local.get $t_delta_x
+            f64.add
+            local.set $t_max_x
+          else
+            ;; Step Z
+            local.get $t_max_z
+            local.set $t_cur
+            local.get $vz
+            local.get $step_z
+            i32.add
+            local.set $vz
+            local.get $t_max_z
+            local.get $t_delta_z
+            f64.add
+            local.set $t_max_z
+          end
         else
           local.get $t_max_y
           local.get $t_max_z
           f64.le
           if
+            ;; Step Y
+            local.get $t_max_y
+            local.set $t_cur
             local.get $vy
             local.get $step_y
             i32.add
@@ -5561,6 +6298,9 @@
             f64.add
             local.set $t_max_y
           else
+            ;; Step Z
+            local.get $t_max_z
+            local.set $t_cur
             local.get $vz
             local.get $step_z
             i32.add
@@ -5572,19 +6312,19 @@
           end
         end
 
-        ;; Bounds check: skip if outside world
+        ;; Bail if too far or out of Z range
+        local.get $t_cur
+        f64.const 64.0
+        f64.gt
+        br_if $done
         local.get $vz
-        i32.const 0
+        i32.const -1
         i32.lt_s
+        br_if $done
         local.get $vz
-        i32.const 32
+        i32.const 40
         i32.gt_s
-        i32.or
-        if
-          ;; Escaped world vertically — likely clear sky above
-          i32.const 1
-          return
-        end
+        br_if $done
 
         ;; Check block at new voxel
         local.get $vx
@@ -5613,7 +6353,7 @@
       end
     end
 
-    ;; Reached max steps without hitting — consider lit
+    ;; Reached max steps or distance without hitting — consider lit
     i32.const 1
   )
 
@@ -7486,18 +8226,17 @@
               if  i32.const 255  local.set $shade_full  end
 
               ;; ============================================================
-              ;; SUN SHADOW RAY + DIRECTIONAL LIGHTING
-              ;; Cast shadow ray from hit point toward sun to check occlusion
-              ;; Also compute N·L for directional sun lighting
+              ;; CELESTIAL SHADOW RAY + DIRECTIONAL LIGHTING
+              ;; Cast shadow ray from hit point toward sun/moon to check occlusion
+              ;; Also compute N·L for directional lighting
+              ;; Works for both sun and moon when visible
               ;; ============================================================
               i32.const 1
               local.set $shadow_lit
 
               local.get $cel_active
-              local.get $cel_is_sun
-              i32.and
               if
-                ;; Compute face normal dot sun direction for directional lighting
+                ;; Compute face normal dot light direction for directional lighting
                 ;; face 0 (top): normal = (0, 0, 1)  → dot = cel_dir_z
                 ;; face 1 (side bright): normal ~ (-1,0,0) or (0,-1,0) → approximate with -cel_dir_x
                 ;; face 2 (side dim): normal ~ (1,0,0) or (0,1,0) → approximate with cel_dir_x
@@ -7559,22 +8298,31 @@
                   local.set $sun_dot
                 end
 
-                ;; Apply directional lighting: blend between ambient (0.35) and full lit (1.0)
-                ;; effective = 0.35 + 0.65 * sun_dot
-                ;; shade_full = shade_full * effective
+                ;; Apply directional lighting: blend between ambient and full lit
+                ;; For sun: ambient=0.35, strength=0.65
+                ;; For moon: ambient=0.55, strength=0.45 (subtler directional)
                 local.get $shade_full
                 f64.convert_i32_s
-                f64.const 0.35
-                f64.const 0.65
-                local.get $sun_dot
-                f64.mul
-                f64.add
+                local.get $cel_is_sun
+                if (result f64)
+                  f64.const 0.35
+                  f64.const 0.65
+                  local.get $sun_dot
+                  f64.mul
+                  f64.add
+                else
+                  f64.const 0.55
+                  f64.const 0.45
+                  local.get $sun_dot
+                  f64.mul
+                  f64.add
+                end
                 f64.mul
                 i32.trunc_f64_s
                 local.set $shade_full
 
                 ;; Shadow ray: offset hit point slightly along face normal
-                ;; to avoid self-intersection, then trace toward sun
+                ;; to avoid self-intersection, then trace toward light source
                 ;; Only trace on checkerboard pattern for performance (every other pixel)
                 local.get $px_col
                 local.get $px_row
@@ -7636,7 +8384,7 @@
                     local.set $shadow_oy
                   end
 
-                  ;; Cast shadow ray toward sun
+                  ;; Cast shadow ray toward light source (sun or moon)
                   local.get $shadow_ox
                   local.get $shadow_oy
                   local.get $shadow_oz
@@ -7652,12 +8400,19 @@
                   local.set $shadow_lit
                 end
 
-                ;; Apply shadow: if in shadow, darken by 55%
+                ;; Apply shadow: if in shadow, darken
+                ;; Sun shadow: 45% brightness (strong shadow)
+                ;; Moon shadow: 65% brightness (soft shadow)
                 local.get $shadow_lit
                 i32.eqz
                 if
                   local.get $shade_full
-                  i32.const 115  ;; 45% brightness when shadowed (0.45 * 256 ≈ 115)
+                  local.get $cel_is_sun
+                  if (result i32)
+                    i32.const 115  ;; 45% brightness when sun-shadowed (0.45 * 256 ≈ 115)
+                  else
+                    i32.const 166  ;; 65% brightness when moon-shadowed (0.65 * 256 ≈ 166)
+                  end
                   i32.mul
                   i32.const 256
                   i32.div_u
