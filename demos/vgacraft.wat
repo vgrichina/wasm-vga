@@ -8800,13 +8800,19 @@
 
                 ;; Shadow ray: offset hit point slightly along face normal
                 ;; to avoid self-intersection, then trace toward light source
-                ;; Only trace on checkerboard pattern for performance (every other pixel)
+                ;; Only skip on checkerboard pattern when dithering is enabled;
+                ;; when dithering is off, cast every pixel to avoid visible pattern
                 local.get $px_col
                 local.get $px_row
                 i32.add
                 i32.const 1
                 i32.and
                 i32.eqz
+                ;; Also cast if dither is disabled (flag at 0x11 == 0)
+                i32.const 0x11
+                i32.load8_u
+                i32.eqz
+                i32.or
                 if
                   ;; Compute shadow origin: hit point + face normal * 0.01
                   local.get $hit_px
