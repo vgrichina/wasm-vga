@@ -37,7 +37,9 @@
   ;;   0x10C00  Modification table (max ~1900 entries * 16 bytes)
   ;;   0x19000  String data
   ;;   0x19200  Font data
-  ;;   NOTE: Octree is now cache-free — occupancy computed procedurally!
+  ;;   0x1A000  Chunk cache (4×4×4) — 1024 entries × 8 bytes = 8192 bytes
+  ;;   0x1C000  Mega-chunk cache (16×16×16) — 256 entries × 8 bytes = 2048 bytes
+  ;;   Cache: per-frame generation-tagged direct-mapped hash table
   ;; ============================================================
 
   ;; ---- PRNG (xorshift32) ----
@@ -698,7 +700,13 @@
     i32.add
     i32.store
 
-    ;; No cache to invalidate — octree is purely procedural now
+    ;; Invalidate octree caches — bump generation so all entries become stale
+    global.get $g_cache_gen
+    i32.const 1
+    i32.add
+    i32.const 0xFF
+    i32.and
+    global.set $g_cache_gen
   )
 
   ;; ---- sin/cos approximation ----
@@ -1380,7 +1388,9 @@
     i32.const 0
     i32.store
 
-    ;; Octree is now cache-free (purely procedural) — no init needed
+    ;; Init octree cache generation counter
+    i32.const 1
+    global.set $g_cache_gen
 
     ;; Spawn monsters
     call $spawn_monsters
@@ -3468,18 +3478,21 @@
   (data (i32.const 0x190E0) ":\00")
 
   ;; ============================================================
-  ;; OCTREE-ACCELERATED VOXEL RAYTRACER (CACHE-FREE)
+  ;; OCTREE-ACCELERATED VOXEL RAYTRACER (CACHED)
   ;; ============================================================
-  ;; Multi-level procedural octree: NO cache needed!
-  ;; Chunk occupancy computed on-the-fly from terrain height bounds.
+  ;; Multi-level procedural octree with per-frame hash cache.
+  ;; Chunk occupancy computed from terrain height bounds, then cached.
   ;; Level 0 (mega):  16×16×16 voxels — fast reject large empty volumes
   ;; Level 1 (chunk): 4×4×4 voxels — fine skip over empty air
   ;; Level 2 (fine):  standard per-voxel DDA in occupied chunks
   ;;
   ;; Terrain height range is 2-14 + trees up to +6 = max 20.
   ;; Water at Z<=4. Bedrock at Z<0.
-  ;; All occupancy derived procedurally → infinite world, zero cache.
+  ;; Cache: direct-mapped hash table, generation-tagged per frame.
   ;; ============================================================
+
+  ;; Cache generation counter (low byte of frame counter, bumped on mods)
+  (global $g_cache_gen (mut i32) (i32.const 0))
 
   (global $g_hit_face (mut i32) (i32.const 0))
   (global $g_hit_dist (mut f64) (f64.const 0.0))
@@ -3676,12 +3689,79 @@
     i32.const 0
   )
 
-  ;; ---- Chunk occupancy (4×4×4) — purely procedural, no cache ----
+  ;; ---- Chunk occupancy (4×4×4) — cached with generation tag ----
   ;; Returns 0 if chunk is definitely all air, 1 if it may have solid blocks
+  ;; Cache: 1024-entry direct-mapped hash table at 0x1A000
+  ;; Entry format: [tag: i32, result: i32] (8 bytes)
+  ;; Tag: (gen << 24) | ((cx & 0xFF) << 16) | ((cy & 0xFF) << 8) | (cz & 0xFF)
   (func $chunk_occupied (param $cx i32) (param $cy i32) (param $cz i32) (result i32)
     (local $z_lo i32) (local $z_hi i32)
     (local $x0 i32) (local $y0 i32)
     (local $th_max i32) (local $th_min i32)
+    (local $tag i32) (local $hash i32) (local $addr i32) (local $result i32)
+
+    ;; ---- Cache lookup ----
+    ;; Build tag: (gen << 24) | ((cx & 0xFF) << 16) | ((cy & 0xFF) << 8) | (cz & 0xFF)
+    global.get $g_cache_gen
+    i32.const 24
+    i32.shl
+    local.get $cx
+    i32.const 0xFF
+    i32.and
+    i32.const 16
+    i32.shl
+    i32.or
+    local.get $cy
+    i32.const 0xFF
+    i32.and
+    i32.const 8
+    i32.shl
+    i32.or
+    local.get $cz
+    i32.const 0xFF
+    i32.and
+    i32.or
+    local.set $tag
+
+    ;; Hash index: ((cx * 73) ^ (cy * 157) ^ (cz * 31)) & 1023
+    local.get $cx
+    i32.const 73
+    i32.mul
+    local.get $cy
+    i32.const 157
+    i32.mul
+    i32.xor
+    local.get $cz
+    i32.const 31
+    i32.mul
+    i32.xor
+    i32.const 1023
+    i32.and
+    local.set $hash
+
+    ;; Cache address: 0x1A000 + hash * 8
+    i32.const 0x1A000
+    local.get $hash
+    i32.const 3
+    i32.shl
+    i32.add
+    local.set $addr
+
+    ;; Check tag match
+    local.get $addr
+    i32.load
+    local.get $tag
+    i32.eq
+    if
+      ;; Cache hit — return stored result
+      local.get $addr
+      i32.const 4
+      i32.add
+      i32.load
+      return
+    end
+
+    ;; ---- Cache miss: compute occupancy ----
     ;; World Z range of this chunk
     local.get $cz
     i32.const 2
@@ -3697,6 +3777,15 @@
     i32.const 0
     i32.lt_s
     if
+      ;; Store in cache and return
+      local.get $addr
+      local.get $tag
+      i32.store
+      local.get $addr
+      i32.const 4
+      i32.add
+      i32.const 1
+      i32.store
       i32.const 1
       return
     end
@@ -3726,6 +3815,17 @@
       i32.add
       local.get $z_hi
       call $has_mods_in_region
+      local.set $result
+      ;; Store in cache and return
+      local.get $addr
+      local.get $tag
+      i32.store
+      local.get $addr
+      i32.const 4
+      i32.add
+      local.get $result
+      i32.store
+      local.get $result
       return
     end
 
@@ -3775,6 +3875,15 @@
       i32.le_s
       i32.and
       if
+        ;; Store in cache and return occupied
+        local.get $addr
+        local.get $tag
+        i32.store
+        local.get $addr
+        i32.const 4
+        i32.add
+        i32.const 1
+        i32.store
         i32.const 1
         return
       end
@@ -3790,20 +3899,106 @@
       i32.add
       local.get $z_hi
       call $has_mods_in_region
+      local.set $result
+      ;; Store in cache and return
+      local.get $addr
+      local.get $tag
+      i32.store
+      local.get $addr
+      i32.const 4
+      i32.add
+      local.get $result
+      i32.store
+      local.get $result
       return
     end
 
     ;; Chunk overlaps potential terrain/tree/water zone → occupied
     ;; (Conservative: some chunks might be empty but we say occupied)
+    ;; Store in cache and return
+    local.get $addr
+    local.get $tag
+    i32.store
+    local.get $addr
+    i32.const 4
+    i32.add
+    i32.const 1
+    i32.store
     i32.const 1
   )
 
-  ;; ---- Mega-chunk occupancy (16×16×16 voxels) — procedural, no cache ----
+  ;; ---- Mega-chunk occupancy (16×16×16 voxels) — cached ----
   ;; Returns 0 if mega-chunk is definitely all air, 1 if may have solids
+  ;; Cache: 256-entry direct-mapped hash table at 0x1C000
+  ;; Entry format: [tag: i32, result: i32] (8 bytes)
   (func $mega_chunk_occupied (param $mcx i32) (param $mcy i32) (param $mcz i32) (result i32)
     (local $z_lo i32) (local $z_hi i32)
     (local $x0 i32) (local $y0 i32)
     (local $th_max i32) (local $th_min i32)
+    (local $tag i32) (local $hash i32) (local $addr i32) (local $result i32)
+
+    ;; ---- Cache lookup ----
+    ;; Build tag: (gen << 24) | ((mcx & 0xFF) << 16) | ((mcy & 0xFF) << 8) | (mcz & 0xFF)
+    global.get $g_cache_gen
+    i32.const 24
+    i32.shl
+    local.get $mcx
+    i32.const 0xFF
+    i32.and
+    i32.const 16
+    i32.shl
+    i32.or
+    local.get $mcy
+    i32.const 0xFF
+    i32.and
+    i32.const 8
+    i32.shl
+    i32.or
+    local.get $mcz
+    i32.const 0xFF
+    i32.and
+    i32.or
+    local.set $tag
+
+    ;; Hash index: ((mcx * 73) ^ (mcy * 157) ^ (mcz * 31)) & 255
+    local.get $mcx
+    i32.const 73
+    i32.mul
+    local.get $mcy
+    i32.const 157
+    i32.mul
+    i32.xor
+    local.get $mcz
+    i32.const 31
+    i32.mul
+    i32.xor
+    i32.const 255
+    i32.and
+    local.set $hash
+
+    ;; Cache address: 0x1C000 + hash * 8
+    i32.const 0x1C000
+    local.get $hash
+    i32.const 3
+    i32.shl
+    i32.add
+    local.set $addr
+
+    ;; Check tag match
+    local.get $addr
+    i32.load
+    local.get $tag
+    i32.eq
+    if
+      ;; Cache hit — return stored result
+      local.get $addr
+      i32.const 4
+      i32.add
+      i32.load
+      return
+    end
+
+    ;; ---- Cache miss: compute occupancy ----
     ;; World Z range of this mega-chunk (16 voxels)
     local.get $mcz
     i32.const 4
@@ -3819,6 +4014,14 @@
     i32.const 0
     i32.lt_s
     if
+      local.get $addr
+      local.get $tag
+      i32.store
+      local.get $addr
+      i32.const 4
+      i32.add
+      i32.const 1
+      i32.store
       i32.const 1
       return
     end
@@ -3848,6 +4051,16 @@
       i32.add
       local.get $z_hi
       call $has_mods_in_region
+      local.set $result
+      local.get $addr
+      local.get $tag
+      i32.store
+      local.get $addr
+      i32.const 4
+      i32.add
+      local.get $result
+      i32.store
+      local.get $result
       return
     end
 
@@ -3891,6 +4104,14 @@
       i32.le_s
       i32.and
       if
+        local.get $addr
+        local.get $tag
+        i32.store
+        local.get $addr
+        i32.const 4
+        i32.add
+        i32.const 1
+        i32.store
         i32.const 1
         return
       end
@@ -3906,10 +4127,28 @@
       i32.add
       local.get $z_hi
       call $has_mods_in_region
+      local.set $result
+      local.get $addr
+      local.get $tag
+      i32.store
+      local.get $addr
+      i32.const 4
+      i32.add
+      local.get $result
+      i32.store
+      local.get $result
       return
     end
 
     ;; Overlaps terrain zone → occupied
+    local.get $addr
+    local.get $tag
+    i32.store
+    local.get $addr
+    i32.const 4
+    i32.add
+    i32.const 1
+    i32.store
     i32.const 1
   )
 
@@ -3940,10 +4179,10 @@
   )
 
   ;; ============================================================
-  ;; cast_ray — Multi-level procedural octree 3D DDA
-  ;; Three-level skip hierarchy (all cache-free):
-  ;;   1. Mega-chunk (16×16×16): skip large empty volumes
-  ;;   2. Chunk (4×4×4): skip medium empty regions
+  ;; cast_ray — Multi-level cached octree 3D DDA
+  ;; Three-level skip hierarchy (4×4 and 16×16 cached):
+  ;;   1. Mega-chunk (16×16×16): skip large empty volumes (cached)
+  ;;   2. Chunk (4×4×4): skip medium empty regions (cached)
   ;;   3. Fine voxel DDA: per-block stepping in occupied chunks
   ;; Max distance: 128 blocks, max steps: 300
   ;; ============================================================
@@ -6881,7 +7120,7 @@
                 local.set $tex_v
               end
 
-              ;; Distance-based shade (extended for multi-level octree range)
+              ;; Distance-based shade (extended for multi-level cached octree range)
               i32.const 240
               local.get $dist
               f64.const 1.9
