@@ -27,6 +27,8 @@ let animId = null;
 let frameCount = 0, fpsFrames = 0, lastFpsTime = 0;
 let paused = false;
 let ditherEnabled = true;
+// Dither mode: 0 = RAW (off), 1 = Bayer ordered (WAT-side), 2 = Floyd-Steinberg (JS-side)
+let ditherMode = 1;
 
 // --- Sound engine ---
 let audioCtx = null, masterGain = null, isMuted = false, audioDest = null;
@@ -279,17 +281,112 @@ function defaultPalette() {
 
 
 
+// Pre-allocated error diffusion buffers for Floyd-Steinberg (two rows of RGB errors)
+const fsErrCur = new Float32Array(WIDTH * 3);
+const fsErrNxt = new Float32Array(WIDTH * 3);
+
+function findNearestColor(pal, r, g, b) {
+  let bestIdx = 0, bestDist = Infinity;
+  for (let i = 0; i < 256; i++) {
+    const p = i * 3;
+    const dr = r - pal[p], dg = g - pal[p + 1], db = b - pal[p + 2];
+    // Weighted distance (human eye is more sensitive to green)
+    const d = dr * dr * 2 + dg * dg * 4 + db * db * 3;
+    if (d < bestDist) { bestDist = d; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
 function blitFramebuffer() {
   const pal = memU8.subarray(PAL_OFFSET, PAL_OFFSET + 768);
   const fb  = memU8.subarray(FB_OFFSET, FB_OFFSET + FB_SIZE);
-  for (let i = 0; i < FB_SIZE; i++) {
-    const c = fb[i];
-    const p = c * 3;
-    const o = i * 4;
-    rgba[o]     = pal[p];
-    rgba[o + 1] = pal[p + 1];
-    rgba[o + 2] = pal[p + 2];
-    rgba[o + 3] = 255;
+
+  if (ditherMode === 2) {
+    // Floyd-Steinberg error diffusion dithering (JS-side post-process)
+    // Convert framebuffer palette indices back to RGB, then re-quantize with error diffusion
+    fsErrCur.fill(0);
+    fsErrNxt.fill(0);
+
+    for (let y = 0; y < HEIGHT; y++) {
+      // Swap error rows: current row's "next" becomes this row's errors
+      // (fsErrNxt was accumulated from the previous row's diffusion)
+      // At start of each row, fsErrCur has this row's accumulated error
+      for (let x = 0; x < WIDTH; x++) {
+        const fbIdx = y * WIDTH + x;
+        const origColor = fb[fbIdx];
+        const pp = origColor * 3;
+
+        // Original RGB + accumulated error
+        const x3 = x * 3;
+        let r = pal[pp]     + fsErrCur[x3];
+        let g = pal[pp + 1] + fsErrCur[x3 + 1];
+        let b = pal[pp + 2] + fsErrCur[x3 + 2];
+
+        // Clamp
+        r = r < 0 ? 0 : r > 255 ? 255 : r;
+        g = g < 0 ? 0 : g > 255 ? 255 : g;
+        b = b < 0 ? 0 : b > 255 ? 255 : b;
+
+        // Find nearest palette color
+        const nearest = findNearestColor(pal, r, g, b);
+        const np = nearest * 3;
+        const nr = pal[np], ng = pal[np + 1], nb = pal[np + 2];
+
+        // Write to canvas
+        const o = fbIdx * 4;
+        rgba[o]     = nr;
+        rgba[o + 1] = ng;
+        rgba[o + 2] = nb;
+        rgba[o + 3] = 255;
+
+        // Compute quantization error
+        const er = r - nr, eg = g - ng, eb = b - nb;
+
+        // Distribute error (Floyd-Steinberg coefficients)
+        // Right: 7/16
+        if (x + 1 < WIDTH) {
+          const nx3 = (x + 1) * 3;
+          fsErrCur[nx3]     += er * 0.4375;
+          fsErrCur[nx3 + 1] += eg * 0.4375;
+          fsErrCur[nx3 + 2] += eb * 0.4375;
+        }
+        // Below-left: 3/16
+        if (x > 0) {
+          const nx3 = (x - 1) * 3;
+          fsErrNxt[nx3]     += er * 0.1875;
+          fsErrNxt[nx3 + 1] += eg * 0.1875;
+          fsErrNxt[nx3 + 2] += eb * 0.1875;
+        }
+        // Below: 5/16
+        {
+          const nx3 = x * 3;
+          fsErrNxt[nx3]     += er * 0.3125;
+          fsErrNxt[nx3 + 1] += eg * 0.3125;
+          fsErrNxt[nx3 + 2] += eb * 0.3125;
+        }
+        // Below-right: 1/16
+        if (x + 1 < WIDTH) {
+          const nx3 = (x + 1) * 3;
+          fsErrNxt[nx3]     += er * 0.0625;
+          fsErrNxt[nx3 + 1] += eg * 0.0625;
+          fsErrNxt[nx3 + 2] += eb * 0.0625;
+        }
+      }
+      // Move next row errors to current, clear next
+      fsErrCur.set(fsErrNxt);
+      fsErrNxt.fill(0);
+    }
+  } else {
+    // Standard blit (RAW or Bayer — Bayer is handled in WASM)
+    for (let i = 0; i < FB_SIZE; i++) {
+      const c = fb[i];
+      const p = c * 3;
+      const o = i * 4;
+      rgba[o]     = pal[p];
+      rgba[o + 1] = pal[p + 1];
+      rgba[o + 2] = pal[p + 2];
+      rgba[o + 3] = 255;
+    }
   }
   ctx.putImageData(imgData, 0, 0);
   if (recorder) recCtx.drawImage(canvas, 0, 0, recCanvas.width, recCanvas.height);
@@ -302,7 +399,8 @@ function loop(ts) {
   memU32[0] = frameCount++;         // frame counter (monotonic)
   fpsFrames++;
   memU32[3] = (ts | 0);            // tick_ms
-  memU8[CTL_OFFSET + 17] = ditherEnabled ? 1 : 0;  // dither flag
+  // Dither flag for WASM: enable Bayer only in mode 1, disable for RAW(0) and F-S(2)
+  memU8[CTL_OFFSET + 17] = (ditherMode === 1) ? 1 : 0;
 
   // call guest frame
   if (wasmInstance.exports.frame) {
@@ -322,11 +420,14 @@ function loop(ts) {
 }
 
 function toggleDither() {
-  ditherEnabled = !ditherEnabled;
+  // Cycle: 0 (RAW) → 1 (Bayer) → 2 (Floyd-Steinberg) → 0
+  ditherMode = (ditherMode + 1) % 3;
+  ditherEnabled = ditherMode > 0;
   const btn = document.getElementById('dither-btn');
   if (btn) {
-    btn.textContent = ditherEnabled ? 'DTH' : 'RAW';
-    btn.classList.toggle('active', ditherEnabled);
+    const labels = ['RAW', 'DTH', 'F-S'];
+    btn.textContent = labels[ditherMode];
+    btn.classList.toggle('active', ditherMode > 0);
   }
 }
 
