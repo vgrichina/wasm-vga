@@ -6471,25 +6471,27 @@
     i32.rem_u
     local.set $game_min
 
-    ;; Brightness curve
+    ;; Brightness curve (min 51 = ~20% moonlight at night)
     local.get $day_phase
     i32.const 48
     i32.lt_u
     if
-      i32.const 0
+      i32.const 51
       local.set $day_bright
     else
       local.get $day_phase
       i32.const 80
       i32.lt_u
       if
+        i32.const 51
         local.get $day_phase
         i32.const 48
         i32.sub
-        i32.const 255
+        i32.const 204
         i32.mul
         i32.const 32
         i32.div_u
+        i32.add
         local.set $day_bright
       else
         local.get $day_phase
@@ -6503,16 +6505,18 @@
           i32.const 208
           i32.lt_u
           if
+            i32.const 51
             i32.const 208
             local.get $day_phase
             i32.sub
-            i32.const 255
+            i32.const 204
             i32.mul
             i32.const 32
             i32.div_u
+            i32.add
             local.set $day_bright
           else
-            i32.const 0
+            i32.const 51
             local.set $day_bright
           end
         end
