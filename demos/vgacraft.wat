@@ -5173,6 +5173,32 @@
     i32.const 0
     local.set $steps
 
+    ;; ---- EARLY SKY EXIT ----
+    ;; If ray origin is above max terrain+tree height (Z > 21) and ray goes up,
+    ;; there's nothing to hit — skip expensive traversal entirely.
+    local.get $vz
+    i32.const 22
+    i32.gt_s
+    local.get $dz
+    f64.const 0.0
+    f64.ge
+    i32.and
+    if
+      ;; No hit — sky
+      i32.const 0
+      global.set $g_hit_face
+      f64.const 999.0
+      global.set $g_hit_dist
+      i32.const 0
+      global.set $g_hit_vx
+      i32.const 0
+      global.set $g_hit_vy
+      i32.const 0
+      global.set $g_hit_vz
+      i32.const 0
+      return
+    end
+
     ;; Check starting block
     local.get $vz
     i32.const -1
@@ -5561,15 +5587,21 @@
             end
           end
 
-          ;; Bail if out of Z range
+          ;; Bail if out of Z range (terrain max ~20, lowered from 40 for faster sky exit)
           local.get $vz
           i32.const -1
           i32.lt_s
           br_if $done
           local.get $vz
-          i32.const 40
+          i32.const 24
           i32.gt_s
-          br_if $done
+          if
+            ;; Above terrain: if going up, bail immediately
+            local.get $step_z
+            i32.const -1
+            i32.ne
+            br_if $done
+          end
 
           local.get $steps
           i32.const 1
@@ -5924,15 +5956,21 @@
             end
           end
 
-          ;; Bail if out of Z range
+          ;; Bail if out of Z range (terrain max ~20, lowered from 40 for faster sky exit)
           local.get $vz
           i32.const -1
           i32.lt_s
           br_if $done
           local.get $vz
-          i32.const 40
+          i32.const 24
           i32.gt_s
-          br_if $done
+          if
+            ;; Above terrain: if going up, bail immediately
+            local.get $step_z
+            i32.const -1
+            i32.ne
+            br_if $done
+          end
 
           local.get $steps
           i32.const 1
@@ -6056,9 +6094,15 @@
         i32.lt_s
         br_if $done
         local.get $vz
-        i32.const 40
+        i32.const 24
         i32.gt_s
-        br_if $done
+        if
+          ;; Above terrain: if going up, bail immediately
+          local.get $step_z
+          i32.const -1
+          i32.ne
+          br_if $done
+        end
 
         ;; Check block
         local.get $vx
