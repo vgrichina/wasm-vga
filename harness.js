@@ -341,9 +341,9 @@ function setMouseBtn(bit, down) {
   else memU8[CTL_OFFSET + 8] &= ~(1 << bit);
 }
 
-// Detect if canvas is CSS-rotated (portrait mobile)
+// Detect if canvas is CSS-rotated (portrait mode toggled by user)
 function isCanvasRotated() {
-  return window.matchMedia('(pointer: coarse) and (orientation: portrait)').matches;
+  return document.body.classList.contains('portrait-mode');
 }
 
 canvas.addEventListener('mousemove', (e) => {
