@@ -3584,6 +3584,7 @@
     i32.const 2
     i32.lt_s
     if i32.const 2 local.set $mn end
+    local.get $mn
     global.set $g_th_min
     local.get $mx
     i32.const 2
