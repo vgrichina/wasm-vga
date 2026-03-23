@@ -37,6 +37,7 @@
   ;;   0x10C00  Modification table (max ~1900 entries * 16 bytes)
   ;;   0x19000  String data
   ;;   0x19200  Font data
+  ;;   NOTE: Octree is now cache-free — occupancy computed procedurally!
   ;; ============================================================
 
   ;; ---- PRNG (xorshift32) ----
@@ -697,11 +698,7 @@
     i32.add
     i32.store
 
-    ;; Invalidate octree around the modified block
-    local.get $wx
-    local.get $wy
-    local.get $wz
-    call $octree_invalidate
+    ;; No cache to invalidate — octree is purely procedural now
   )
 
   ;; ---- sin/cos approximation ----
@@ -1383,8 +1380,7 @@
     i32.const 0
     i32.store
 
-    ;; Initialize octree cache
-    call $octree_init
+    ;; Octree is now cache-free (purely procedural) — no init needed
 
     ;; Spawn monsters
     call $spawn_monsters
@@ -3472,19 +3468,17 @@
   (data (i32.const 0x190E0) ":\00")
 
   ;; ============================================================
-  ;; OCTREE-ACCELERATED VOXEL RAYTRACER
+  ;; OCTREE-ACCELERATED VOXEL RAYTRACER (CACHE-FREE)
   ;; ============================================================
-  ;; Two-level octree for O(log n) raycasting over long distances.
-  ;; Level 0 (coarse): 4×4×4 chunk grid. Each chunk = 1 byte
-  ;;   (0=all air/empty, 1=has solid blocks, 255=not yet computed).
-  ;;   Cached at 0x1A000. Index = ((cx&63)*64 + (cy&63))*8 + (cz&7)
-  ;;   Chunks are 4×4×4 voxels, covering world Z 0..31.
-  ;;   Lazily built from procedural terrain on first access.
-  ;; Level 1 (fine): standard DDA within non-empty chunks.
+  ;; Multi-level procedural octree: NO cache needed!
+  ;; Chunk occupancy computed on-the-fly from terrain height bounds.
+  ;; Level 0 (mega):  16×16×16 voxels — fast reject large empty volumes
+  ;; Level 1 (chunk): 4×4×4 voxels — fine skip over empty air
+  ;; Level 2 (fine):  standard per-voxel DDA in occupied chunks
   ;;
-  ;; Memory layout for octree cache:
-  ;;   0x1A000 .. 0x1FFFF  chunk occupancy (64*64*8 = 32768 bytes)
-  ;;   0x20000 .. 0x20003  cache_gen counter (invalidated on set_block)
+  ;; Terrain height range is 2-14 + trees up to +6 = max 20.
+  ;; Water at Z<=4. Bedrock at Z<0.
+  ;; All occupancy derived procedurally → infinite world, zero cache.
   ;; ============================================================
 
   (global $g_hit_face (mut i32) (i32.const 0))
@@ -3492,24 +3486,185 @@
   (global $g_hit_vx (mut i32) (i32.const 0))
   (global $g_hit_vy (mut i32) (i32.const 0))
   (global $g_hit_vz (mut i32) (i32.const 0))
-  (global $g_cache_gen (mut i32) (i32.const 0))
 
-  ;; ---- Initialize octree cache (fill with 255 = unknown) ----
-  (func $octree_init
-    (local $i i32)
+  ;; ---- Terrain height bounds for a rectangular XY region ----
+  ;; Returns min terrain height via global, max as result
+  ;; Samples corners + center of the region for speed
+  (global $g_th_min (mut i32) (i32.const 0))
+  (func $terrain_height_bounds (param $x0 i32) (param $y0 i32) (param $x1 i32) (param $y1 i32) (result i32)
+    (local $h i32) (local $mn i32) (local $mx i32)
+    (local $midx i32) (local $midy i32)
+    i32.const 999
+    local.set $mn
+    i32.const -999
+    local.set $mx
+    ;; Sample the 4 corners + center (5 samples for speed)
+    ;; Corner (x0, y0)
+    local.get $x0
+    local.get $y0
+    call $terrain_height
+    local.set $h
+    local.get $h
+    local.get $mn
+    i32.lt_s
+    if local.get $h local.set $mn end
+    local.get $h
+    local.get $mx
+    i32.gt_s
+    if local.get $h local.set $mx end
+    ;; Corner (x1, y0)
+    local.get $x1
+    local.get $y0
+    call $terrain_height
+    local.set $h
+    local.get $h
+    local.get $mn
+    i32.lt_s
+    if local.get $h local.set $mn end
+    local.get $h
+    local.get $mx
+    i32.gt_s
+    if local.get $h local.set $mx end
+    ;; Corner (x0, y1)
+    local.get $x0
+    local.get $y1
+    call $terrain_height
+    local.set $h
+    local.get $h
+    local.get $mn
+    i32.lt_s
+    if local.get $h local.set $mn end
+    local.get $h
+    local.get $mx
+    i32.gt_s
+    if local.get $h local.set $mx end
+    ;; Corner (x1, y1)
+    local.get $x1
+    local.get $y1
+    call $terrain_height
+    local.set $h
+    local.get $h
+    local.get $mn
+    i32.lt_s
+    if local.get $h local.set $mn end
+    local.get $h
+    local.get $mx
+    i32.gt_s
+    if local.get $h local.set $mx end
+    ;; Center
+    local.get $x0
+    local.get $x1
+    i32.add
+    i32.const 1
+    i32.shr_s
+    local.set $midx
+    local.get $y0
+    local.get $y1
+    i32.add
+    i32.const 1
+    i32.shr_s
+    local.set $midy
+    local.get $midx
+    local.get $midy
+    call $terrain_height
+    local.set $h
+    local.get $h
+    local.get $mn
+    i32.lt_s
+    if local.get $h local.set $mn end
+    local.get $h
+    local.get $mx
+    i32.gt_s
+    if local.get $h local.set $mx end
+    ;; Apply safety margin: height can vary by ±2 between samples
+    local.get $mn
+    i32.const 2
+    i32.sub
+    local.tee $mn
+    i32.const 2
+    i32.lt_s
+    if i32.const 2 local.set $mn end
+    global.set $g_th_min
+    local.get $mx
+    i32.const 2
+    i32.add
+    local.tee $mx
+    i32.const 14
+    i32.gt_s
+    if i32.const 14 local.set $mx end
+    local.get $mx
+  )
+
+  ;; ---- Check if region might have modifications ----
+  ;; Returns 1 if any modification falls within the bounding box
+  (func $has_mods_in_region (param $x0 i32) (param $y0 i32) (param $z0 i32)
+                            (param $x1 i32) (param $y1 i32) (param $z1 i32) (result i32)
+    (local $i i32) (local $count i32) (local $addr i32)
+    (local $mx i32) (local $my i32) (local $mz i32)
+    i32.const 0x10390
+    i32.load
+    local.set $count
+    local.get $count
+    i32.eqz
+    if
+      i32.const 0
+      return
+    end
     i32.const 0
     local.set $i
     block $done
       loop $lp
         local.get $i
-        i32.const 32768
+        local.get $count
         i32.ge_u
         br_if $done
-        i32.const 0x1A000
+        i32.const 0x10C00
         local.get $i
+        i32.const 16
+        i32.mul
         i32.add
-        i32.const 255
-        i32.store8
+        local.set $addr
+        local.get $addr
+        i32.load
+        local.set $mx
+        local.get $addr
+        i32.const 4
+        i32.add
+        i32.load
+        local.set $my
+        local.get $addr
+        i32.const 8
+        i32.add
+        i32.load
+        local.set $mz
+        ;; Check if within bounding box
+        local.get $mx
+        local.get $x0
+        i32.ge_s
+        local.get $mx
+        local.get $x1
+        i32.le_s
+        i32.and
+        local.get $my
+        local.get $y0
+        i32.ge_s
+        i32.and
+        local.get $my
+        local.get $y1
+        i32.le_s
+        i32.and
+        local.get $mz
+        local.get $z0
+        i32.ge_s
+        i32.and
+        local.get $mz
+        local.get $z1
+        i32.le_s
+        i32.and
+        if
+          i32.const 1
+          return
+        end
         local.get $i
         i32.const 1
         i32.add
@@ -3517,253 +3672,244 @@
         br $lp
       end
     end
+    i32.const 0
   )
 
-  ;; ---- Invalidate octree near a modification ----
-  ;; Called when a block is set/removed. Marks the chunk and neighbors as unknown.
-  (func $octree_invalidate (param $wx i32) (param $wy i32) (param $wz i32)
-    (local $cx i32) (local $cy i32) (local $cz i32)
-    (local $dx i32) (local $dy i32) (local $dz i32)
-    (local $ncx i32) (local $ncy i32) (local $ncz i32)
-    (local $addr i32)
-    ;; chunk coords
-    local.get $wx
-    i32.const 2
-    i32.shr_s
-    local.set $cx
-    local.get $wy
-    i32.const 2
-    i32.shr_s
-    local.set $cy
-    local.get $wz
-    i32.const 2
-    i32.shr_s
-    local.set $cz
-    ;; Mark 3x3x3 neighborhood of chunks as unknown
-    i32.const -1
-    local.set $dx
-    block $dx_done
-      loop $dx_lp
-        local.get $dx
-        i32.const 2
-        i32.ge_s
-        br_if $dx_done
-        i32.const -1
-        local.set $dy
-        block $dy_done
-          loop $dy_lp
-            local.get $dy
-            i32.const 2
-            i32.ge_s
-            br_if $dy_done
-            i32.const -1
-            local.set $dz
-            block $dz_done
-              loop $dz_lp
-                local.get $dz
-                i32.const 2
-                i32.ge_s
-                br_if $dz_done
-                local.get $cx
-                local.get $dx
-                i32.add
-                i32.const 63
-                i32.and
-                local.set $ncx
-                local.get $cy
-                local.get $dy
-                i32.add
-                i32.const 63
-                i32.and
-                local.set $ncy
-                local.get $cz
-                local.get $dz
-                i32.add
-                local.set $ncz
-                local.get $ncz
-                i32.const 0
-                i32.ge_s
-                local.get $ncz
-                i32.const 8
-                i32.lt_s
-                i32.and
-                if
-                  i32.const 0x1A000
-                  local.get $ncx
-                  i32.const 6
-                  i32.shl
-                  local.get $ncy
-                  i32.add
-                  i32.const 3
-                  i32.shl
-                  local.get $ncz
-                  i32.add
-                  i32.add
-                  i32.const 255
-                  i32.store8
-                end
-                local.get $dz
-                i32.const 1
-                i32.add
-                local.set $dz
-                br $dz_lp
-              end
-            end
-            local.get $dy
-            i32.const 1
-            i32.add
-            local.set $dy
-            br $dy_lp
-          end
-        end
-        local.get $dx
-        i32.const 1
-        i32.add
-        local.set $dx
-        br $dx_lp
-      end
-    end
-  )
-
-  ;; ---- Get chunk occupancy (lazy-build from procedural terrain) ----
-  ;; Returns 0 if chunk is all air, 1 if it has any solid block
+  ;; ---- Chunk occupancy (4×4×4) — purely procedural, no cache ----
+  ;; Returns 0 if chunk is definitely all air, 1 if it may have solid blocks
   (func $chunk_occupied (param $cx i32) (param $cy i32) (param $cz i32) (result i32)
-    (local $addr i32) (local $val i32)
-    (local $bx i32) (local $by i32) (local $bz i32)
-    (local $wx i32) (local $wy i32) (local $wz i32)
-    (local $has_solid i32)
-    ;; Clamp cz to 0..7
+    (local $z_lo i32) (local $z_hi i32)
+    (local $x0 i32) (local $y0 i32)
+    (local $th_max i32) (local $th_min i32)
+    ;; World Z range of this chunk
     local.get $cz
+    i32.const 2
+    i32.shl
+    local.set $z_lo
+    local.get $z_lo
+    i32.const 3
+    i32.add
+    local.set $z_hi
+
+    ;; Below world (z_lo < 0): always solid (bedrock)
+    local.get $z_lo
     i32.const 0
     i32.lt_s
     if
-      ;; Below world: always solid (bedrock)
       i32.const 1
       return
     end
-    local.get $cz
-    i32.const 7
+
+    ;; Far above any possible terrain+trees (max terrain=14, trees add 6 → 20)
+    local.get $z_lo
+    i32.const 21
     i32.gt_s
     if
-      ;; Above world: always empty
-      i32.const 0
+      ;; Still check for modifications up here
+      local.get $cx
+      i32.const 2
+      i32.shl
+      local.get $cy
+      i32.const 2
+      i32.shl
+      local.get $z_lo
+      local.get $cx
+      i32.const 2
+      i32.shl
+      i32.const 3
+      i32.add
+      local.get $cy
+      i32.const 2
+      i32.shl
+      i32.const 3
+      i32.add
+      local.get $z_hi
+      call $has_mods_in_region
       return
     end
-    ;; Compute cache address
-    i32.const 0x1A000
+
+    ;; World XY range of this chunk
     local.get $cx
-    i32.const 63
-    i32.and
-    i32.const 6
+    i32.const 2
     i32.shl
+    local.set $x0
     local.get $cy
-    i32.const 63
-    i32.and
-    i32.add
-    i32.const 3
+    i32.const 2
     i32.shl
-    local.get $cz
+    local.set $y0
+
+    ;; Get terrain height bounds for this 4×4 region
+    local.get $x0
+    local.get $y0
+    local.get $x0
+    i32.const 3
     i32.add
+    local.get $y0
+    i32.const 3
     i32.add
-    local.set $addr
-    local.get $addr
-    i32.load8_u
-    local.set $val
-    ;; If already computed (0 or 1), return it
-    local.get $val
-    i32.const 255
-    i32.ne
+    call $terrain_height_bounds
+    local.set $th_max
+    global.get $g_th_min
+    local.set $th_min
+
+    ;; Check if chunk Z range intersects terrain
+    ;; Terrain fills from Z=0 to Z=th (surface). Below surface = solid.
+    ;; So terrain occupies Z <= th_max for any column.
+    ;; Trees can extend up to th_max + 6.
+    ;; Water at Z <= 4 when th <= 4.
+
+    ;; If chunk bottom is above terrain+trees+margin, it's empty (just air)
+    local.get $z_lo
+    local.get $th_max
+    i32.const 7  ;; tree height (6) + 1 safety margin
+    i32.add
+    i32.gt_s
     if
-      local.get $val
+      ;; Might still have water if z_lo <= 4
+      local.get $z_lo
+      i32.const 5
+      i32.le_s
+      local.get $th_min
+      i32.const 5
+      i32.le_s
+      i32.and
+      if
+        i32.const 1
+        return
+      end
+      ;; Check modifications
+      local.get $x0
+      local.get $y0
+      local.get $z_lo
+      local.get $x0
+      i32.const 3
+      i32.add
+      local.get $y0
+      i32.const 3
+      i32.add
+      local.get $z_hi
+      call $has_mods_in_region
       return
     end
-    ;; Lazy build: scan all 4×4×4 voxels in this chunk
+
+    ;; Chunk overlaps potential terrain/tree/water zone → occupied
+    ;; (Conservative: some chunks might be empty but we say occupied)
+    i32.const 1
+  )
+
+  ;; ---- Mega-chunk occupancy (16×16×16 voxels) — procedural, no cache ----
+  ;; Returns 0 if mega-chunk is definitely all air, 1 if may have solids
+  (func $mega_chunk_occupied (param $mcx i32) (param $mcy i32) (param $mcz i32) (result i32)
+    (local $z_lo i32) (local $z_hi i32)
+    (local $x0 i32) (local $y0 i32)
+    (local $th_max i32) (local $th_min i32)
+    ;; World Z range of this mega-chunk (16 voxels)
+    local.get $mcz
+    i32.const 4
+    i32.shl
+    local.set $z_lo
+    local.get $z_lo
+    i32.const 15
+    i32.add
+    local.set $z_hi
+
+    ;; Below world: always solid
+    local.get $z_lo
     i32.const 0
-    local.set $has_solid
-    i32.const 0
-    local.set $bx
-    block $scan_done
-      loop $scan_x
-        local.get $bx
-        i32.const 4
-        i32.ge_u
-        br_if $scan_done
-        i32.const 0
-        local.set $by
-        block $sy_done
-          loop $scan_y
-            local.get $by
-            i32.const 4
-            i32.ge_u
-            br_if $sy_done
-            i32.const 0
-            local.set $bz
-            block $sz_done
-              loop $scan_z
-                local.get $bz
-                i32.const 4
-                i32.ge_u
-                br_if $sz_done
-                local.get $cx
-                i32.const 2
-                i32.shl
-                local.get $bx
-                i32.add
-                local.set $wx
-                local.get $cy
-                i32.const 2
-                i32.shl
-                local.get $by
-                i32.add
-                local.set $wy
-                local.get $cz
-                i32.const 2
-                i32.shl
-                local.get $bz
-                i32.add
-                local.set $wz
-                local.get $wx
-                local.get $wy
-                local.get $wz
-                call $get_block
-                i32.const 0
-                i32.ne
-                if
-                  i32.const 1
-                  local.set $has_solid
-                  ;; Early exit
-                  local.get $addr
-                  i32.const 1
-                  i32.store8
-                  i32.const 1
-                  return
-                end
-                local.get $bz
-                i32.const 1
-                i32.add
-                local.set $bz
-                br $scan_z
-              end
-            end
-            local.get $by
-            i32.const 1
-            i32.add
-            local.set $by
-            br $scan_y
-          end
-        end
-        local.get $bx
-        i32.const 1
-        i32.add
-        local.set $bx
-        br $scan_x
-      end
+    i32.lt_s
+    if
+      i32.const 1
+      return
     end
-    ;; All air
-    local.get $addr
-    i32.const 0
-    i32.store8
-    i32.const 0
+
+    ;; Far above everything
+    local.get $z_lo
+    i32.const 21
+    i32.gt_s
+    if
+      ;; Check modifications
+      local.get $mcx
+      i32.const 4
+      i32.shl
+      local.get $mcy
+      i32.const 4
+      i32.shl
+      local.get $z_lo
+      local.get $mcx
+      i32.const 4
+      i32.shl
+      i32.const 15
+      i32.add
+      local.get $mcy
+      i32.const 4
+      i32.shl
+      i32.const 15
+      i32.add
+      local.get $z_hi
+      call $has_mods_in_region
+      return
+    end
+
+    ;; World XY range
+    local.get $mcx
+    i32.const 4
+    i32.shl
+    local.set $x0
+    local.get $mcy
+    i32.const 4
+    i32.shl
+    local.set $y0
+
+    ;; Get terrain height bounds for 16×16 region
+    local.get $x0
+    local.get $y0
+    local.get $x0
+    i32.const 15
+    i32.add
+    local.get $y0
+    i32.const 15
+    i32.add
+    call $terrain_height_bounds
+    local.set $th_max
+    global.get $g_th_min
+    local.set $th_min
+
+    ;; If mega-chunk bottom is above terrain+trees+margin → empty
+    local.get $z_lo
+    local.get $th_max
+    i32.const 7
+    i32.add
+    i32.gt_s
+    if
+      ;; Water check
+      local.get $z_lo
+      i32.const 5
+      i32.le_s
+      local.get $th_min
+      i32.const 5
+      i32.le_s
+      i32.and
+      if
+        i32.const 1
+        return
+      end
+      ;; Modification check
+      local.get $x0
+      local.get $y0
+      local.get $z_lo
+      local.get $x0
+      i32.const 15
+      i32.add
+      local.get $y0
+      i32.const 15
+      i32.add
+      local.get $z_hi
+      call $has_mods_in_region
+      return
+    end
+
+    ;; Overlaps terrain zone → occupied
+    i32.const 1
   )
 
   ;; ---- Floor divide (handles negatives correctly) ----
@@ -3793,11 +3939,12 @@
   )
 
   ;; ============================================================
-  ;; cast_ray — Octree-accelerated 3D DDA
-  ;; Two phases per step:
-  ;;   1. Check if current chunk (4×4×4) is empty → skip to chunk boundary
-  ;;   2. If chunk has solids → fine DDA within chunk up to 4 steps
-  ;; Max distance: 96 blocks (was 24), max steps: 200
+  ;; cast_ray — Multi-level procedural octree 3D DDA
+  ;; Three-level skip hierarchy (all cache-free):
+  ;;   1. Mega-chunk (16×16×16): skip large empty volumes
+  ;;   2. Chunk (4×4×4): skip medium empty regions
+  ;;   3. Fine voxel DDA: per-block stepping in occupied chunks
+  ;; Max distance: 128 blocks, max steps: 300
   ;; ============================================================
   (func $cast_ray (param $ox f64) (param $oy f64) (param $oz f64)
                    (param $dx f64) (param $dy f64) (param $dz f64)
@@ -3815,6 +3962,9 @@
     (local $t_skip f64)
     (local $new_x f64) (local $new_y f64) (local $new_z f64)
     (local $inv_dx f64) (local $inv_dy f64) (local $inv_dz f64)
+    (local $mcx i32) (local $mcy i32) (local $mcz i32)
+    (local $mega_occ i32)
+    (local $skip_size i32)
 
     ;; Precompute inverse direction
     local.get $dx
@@ -4052,53 +4202,48 @@
       end
     end
 
-    ;; Main traversal loop — max 200 steps (octree skipping keeps this fast)
+    ;; Main traversal loop — max 300 steps (multi-level skipping keeps this fast)
     block $done
       loop $lp
         local.get $steps
-        i32.const 200
+        i32.const 300
         i32.ge_u
         br_if $done
 
-        ;; ---- OCTREE SKIP CHECK ----
-        ;; Current chunk coords (floor_div by 4)
+        ;; ---- MEGA-CHUNK SKIP CHECK (16×16×16) ----
         local.get $vx
-        i32.const 4
+        i32.const 16
         call $floor_div
-        local.set $cx
+        local.set $mcx
         local.get $vy
-        i32.const 4
+        i32.const 16
         call $floor_div
-        local.set $cy
+        local.set $mcy
         local.get $vz
-        i32.const 4
+        i32.const 16
         call $floor_div
-        local.set $cz
+        local.set $mcz
 
-        ;; Check chunk occupancy
-        local.get $cx
-        local.get $cy
-        local.get $cz
-        call $chunk_occupied
-        local.set $chunk_occ
+        local.get $mcx
+        local.get $mcy
+        local.get $mcz
+        call $mega_chunk_occupied
+        local.set $mega_occ
 
-        local.get $chunk_occ
+        local.get $mega_occ
         i32.eqz
         if
-          ;; EMPTY CHUNK: skip to chunk boundary (jump 1-4 voxels at once)
-          ;; Compute t to exit this 4-block chunk in each axis
-          ;; Chunk boundary in world coords:
-          ;;   X: step>0 → (cx+1)*4, step<0 → cx*4, step==0 → huge
+          ;; EMPTY MEGA-CHUNK: skip to mega-chunk boundary (jump 1-16 voxels)
           f64.const 999999.0
           local.set $t_skip_x
           local.get $step_x
           i32.const 1
           i32.eq
           if
-            local.get $cx
+            local.get $mcx
             i32.const 1
             i32.add
-            i32.const 2
+            i32.const 4
             i32.shl
             f64.convert_i32_s
             local.get $ox
@@ -4117,8 +4262,8 @@
           i32.const -1
           i32.eq
           if
-            local.get $cx
-            i32.const 2
+            local.get $mcx
+            i32.const 4
             i32.shl
             f64.convert_i32_s
             local.get $ox
@@ -4140,10 +4285,10 @@
           i32.const 1
           i32.eq
           if
-            local.get $cy
+            local.get $mcy
             i32.const 1
             i32.add
-            i32.const 2
+            i32.const 4
             i32.shl
             f64.convert_i32_s
             local.get $oy
@@ -4162,8 +4307,8 @@
           i32.const -1
           i32.eq
           if
-            local.get $cy
-            i32.const 2
+            local.get $mcy
+            i32.const 4
             i32.shl
             f64.convert_i32_s
             local.get $oy
@@ -4185,10 +4330,10 @@
           i32.const 1
           i32.eq
           if
-            local.get $cz
+            local.get $mcz
             i32.const 1
             i32.add
-            i32.const 2
+            i32.const 4
             i32.shl
             f64.convert_i32_s
             local.get $oz
@@ -4263,7 +4408,7 @@
 
           ;; Bail if too far
           local.get $t_cur
-          f64.const 96.0
+          f64.const 128.0
           f64.gt
           br_if $done
 
@@ -4418,7 +4563,370 @@
           i32.lt_s
           br_if $done
           local.get $vz
-          i32.const 32
+          i32.const 40
+          i32.gt_s
+          br_if $done
+
+          local.get $steps
+          i32.const 1
+          i32.add
+          local.set $steps
+          br $lp
+        end
+
+        ;; ---- CHUNK SKIP CHECK (4×4×4) ----
+        local.get $vx
+        i32.const 4
+        call $floor_div
+        local.set $cx
+        local.get $vy
+        i32.const 4
+        call $floor_div
+        local.set $cy
+        local.get $vz
+        i32.const 4
+        call $floor_div
+        local.set $cz
+
+        local.get $cx
+        local.get $cy
+        local.get $cz
+        call $chunk_occupied
+        local.set $chunk_occ
+
+        local.get $chunk_occ
+        i32.eqz
+        if
+          ;; EMPTY CHUNK: skip to chunk boundary (jump 1-4 voxels at once)
+          f64.const 999999.0
+          local.set $t_skip_x
+          local.get $step_x
+          i32.const 1
+          i32.eq
+          if
+            local.get $cx
+            i32.const 1
+            i32.add
+            i32.const 2
+            i32.shl
+            f64.convert_i32_s
+            local.get $ox
+            f64.sub
+            local.get $t_cur
+            local.get $dx
+            f64.mul
+            f64.sub
+            local.get $inv_dx
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_x
+          end
+          local.get $step_x
+          i32.const -1
+          i32.eq
+          if
+            local.get $cx
+            i32.const 2
+            i32.shl
+            f64.convert_i32_s
+            local.get $ox
+            f64.sub
+            local.get $t_cur
+            local.get $dx
+            f64.mul
+            f64.sub
+            local.get $inv_dx
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_x
+          end
+
+          f64.const 999999.0
+          local.set $t_skip_y
+          local.get $step_y
+          i32.const 1
+          i32.eq
+          if
+            local.get $cy
+            i32.const 1
+            i32.add
+            i32.const 2
+            i32.shl
+            f64.convert_i32_s
+            local.get $oy
+            f64.sub
+            local.get $t_cur
+            local.get $dy
+            f64.mul
+            f64.sub
+            local.get $inv_dy
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_y
+          end
+          local.get $step_y
+          i32.const -1
+          i32.eq
+          if
+            local.get $cy
+            i32.const 2
+            i32.shl
+            f64.convert_i32_s
+            local.get $oy
+            f64.sub
+            local.get $t_cur
+            local.get $dy
+            f64.mul
+            f64.sub
+            local.get $inv_dy
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_y
+          end
+
+          f64.const 999999.0
+          local.set $t_skip_z
+          local.get $step_z
+          i32.const 1
+          i32.eq
+          if
+            local.get $cz
+            i32.const 1
+            i32.add
+            i32.const 2
+            i32.shl
+            f64.convert_i32_s
+            local.get $oz
+            f64.sub
+            local.get $t_cur
+            local.get $dz
+            f64.mul
+            f64.sub
+            local.get $inv_dz
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_skip_z
+          end
+
+          ;; Find minimum exit t and set face accordingly
+          local.get $t_skip_x
+          local.set $t_skip
+          local.get $step_x
+          i32.const 1
+          i32.eq
+          if
+            i32.const 2
+            local.set $face
+          else
+            i32.const 1
+            local.set $face
+          end
+
+          local.get $t_skip_y
+          local.get $t_skip
+          f64.lt
+          if
+            local.get $t_skip_y
+            local.set $t_skip
+            local.get $step_y
+            i32.const 1
+            i32.eq
+            if
+              i32.const 2
+              local.set $face
+            else
+              i32.const 1
+              local.set $face
+            end
+          end
+
+          local.get $t_skip_z
+          local.get $t_skip
+          f64.lt
+          if
+            local.get $t_skip_z
+            local.set $t_skip
+            local.get $step_z
+            i32.const 1
+            i32.eq
+            if
+              i32.const 3
+              local.set $face
+            else
+              i32.const 0
+              local.set $face
+            end
+          end
+
+          ;; Advance to chunk exit + tiny epsilon
+          local.get $t_skip
+          f64.const 0.001
+          f64.add
+          local.set $t_cur
+
+          ;; Bail if too far
+          local.get $t_cur
+          f64.const 128.0
+          f64.gt
+          br_if $done
+
+          ;; Recompute voxel position from parametric t
+          local.get $ox
+          local.get $dx
+          local.get $t_cur
+          f64.mul
+          f64.add
+          f64.floor
+          i32.trunc_f64_s
+          local.set $vx
+          local.get $oy
+          local.get $dy
+          local.get $t_cur
+          f64.mul
+          f64.add
+          f64.floor
+          i32.trunc_f64_s
+          local.set $vy
+          local.get $oz
+          local.get $dz
+          local.get $t_cur
+          f64.mul
+          f64.add
+          f64.floor
+          i32.trunc_f64_s
+          local.set $vz
+
+          ;; Recompute t_max for fine DDA from new position
+          local.get $dx
+          f64.const 0.0
+          f64.gt
+          if
+            local.get $vx
+            f64.convert_i32_s
+            f64.const 1.0
+            f64.add
+            local.get $ox
+            f64.sub
+            local.get $dx
+            local.get $t_cur
+            f64.mul
+            f64.sub
+            local.get $inv_dx
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_max_x
+          else
+            local.get $dx
+            f64.const 0.0
+            f64.lt
+            if
+              local.get $vx
+              f64.convert_i32_s
+              local.get $ox
+              f64.sub
+              local.get $dx
+              local.get $t_cur
+              f64.mul
+              f64.sub
+              local.get $inv_dx
+              f64.mul
+              local.get $t_cur
+              f64.add
+              local.set $t_max_x
+            end
+          end
+          local.get $dy
+          f64.const 0.0
+          f64.gt
+          if
+            local.get $vy
+            f64.convert_i32_s
+            f64.const 1.0
+            f64.add
+            local.get $oy
+            f64.sub
+            local.get $dy
+            local.get $t_cur
+            f64.mul
+            f64.sub
+            local.get $inv_dy
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_max_y
+          else
+            local.get $dy
+            f64.const 0.0
+            f64.lt
+            if
+              local.get $vy
+              f64.convert_i32_s
+              local.get $oy
+              f64.sub
+              local.get $dy
+              local.get $t_cur
+              f64.mul
+              f64.sub
+              local.get $inv_dy
+              f64.mul
+              local.get $t_cur
+              f64.add
+              local.set $t_max_y
+            end
+          end
+          local.get $dz
+          f64.const 0.0
+          f64.gt
+          if
+            local.get $vz
+            f64.convert_i32_s
+            f64.const 1.0
+            f64.add
+            local.get $oz
+            f64.sub
+            local.get $dz
+            local.get $t_cur
+            f64.mul
+            f64.sub
+            local.get $inv_dz
+            f64.mul
+            local.get $t_cur
+            f64.add
+            local.set $t_max_z
+          else
+            local.get $dz
+            f64.const 0.0
+            f64.lt
+            if
+              local.get $vz
+              f64.convert_i32_s
+              local.get $oz
+              f64.sub
+              local.get $dz
+              local.get $t_cur
+              f64.mul
+              f64.sub
+              local.get $inv_dz
+              f64.mul
+              local.get $t_cur
+              f64.add
+              local.set $t_max_z
+            end
+          end
+
+          ;; Bail if out of Z range
+          local.get $vz
+          i32.const -1
+          i32.lt_s
+          br_if $done
+          local.get $vz
+          i32.const 40
           i32.gt_s
           br_if $done
 
@@ -4536,7 +5044,7 @@
 
         ;; Bail if too far or out of Z range
         local.get $t_cur
-        f64.const 96.0
+        f64.const 128.0
         f64.gt
         br_if $done
         local.get $vz
@@ -4544,7 +5052,7 @@
         i32.lt_s
         br_if $done
         local.get $vz
-        i32.const 32
+        i32.const 40
         i32.gt_s
         br_if $done
 
@@ -6372,10 +6880,10 @@
                 local.set $tex_v
               end
 
-              ;; Distance-based shade (extended for octree range)
+              ;; Distance-based shade (extended for multi-level octree range)
               i32.const 240
               local.get $dist
-              f64.const 2.5
+              f64.const 1.9
               f64.mul
               i32.trunc_f64_s
               i32.sub
