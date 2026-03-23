@@ -7431,14 +7431,106 @@
   )
 
   ;; ============================================================
-  ;; RGB24 to palette index via 32KB LUT with ordered dithering
+  ;; RGB24 to palette index via 32KB LUT with dithering
   ;; LUT at 0x20000: 32×32×32 RGB cube → nearest palette index
   ;; 14 hues × 16 shades + 32 grays = 256 palette entries
   ;; Palette + LUT built entirely in WAT by $init_palette
-  ;; Dithering adds noise to RGB before LUT lookup for smooth gradients
+  ;; Dithering modes: 0=RAW, 1=Bayer ordered, 2=Floyd-Steinberg error diffusion
+  ;; F-S error buffer at 0x28000: 2 rows × 320 × 3 channels × 2 bytes (i16) = 3840 bytes
+  ;;   Row 0 (current): 0x28000 .. 0x28000 + 1919
+  ;;   Row 1 (next):    0x28780 .. 0x28780 + 1919
+  ;;   Each pixel = 6 bytes: R_err(i16), G_err(i16), B_err(i16)
   ;; ============================================================
+
+  ;; Clear Floyd-Steinberg error buffer (both rows, 3840 bytes at 0x28000)
+  (func $fs_clear_buf
+    (local $i i32)
+    i32.const 0
+    local.set $i
+    block $done
+      loop $clr
+        local.get $i
+        i32.const 3840
+        i32.ge_u
+        br_if $done
+        i32.const 0x28000
+        local.get $i
+        i32.add
+        i32.const 0
+        i32.store
+        local.get $i
+        i32.const 4
+        i32.add
+        local.set $i
+        br $clr
+      end
+    end
+  )
+
+  ;; Swap F-S error buffer rows: copy row1 → row0, clear row1
+  ;; Called at the start of each scanline when F-S is active
+  (func $fs_swap_rows
+    (local $i i32)
+    i32.const 0
+    local.set $i
+    block $done
+      loop $cpy
+        local.get $i
+        i32.const 1920
+        i32.ge_u
+        br_if $done
+        ;; row0[i] = row1[i]
+        i32.const 0x28000
+        local.get $i
+        i32.add
+        i32.const 0x28780
+        local.get $i
+        i32.add
+        i32.load
+        i32.store
+        ;; clear row1[i]
+        i32.const 0x28780
+        local.get $i
+        i32.add
+        i32.const 0
+        i32.store
+        local.get $i
+        i32.const 4
+        i32.add
+        local.set $i
+        br $cpy
+      end
+    end
+  )
+
+  ;; Add i16 error value to F-S buffer at given address (clamped i16 add)
+  (func $fs_add_err (param $addr i32) (param $val i32)
+    (local $cur i32)
+    local.get $addr
+    i32.load16_s
+    local.get $val
+    i32.add
+    local.tee $cur
+    ;; Clamp to [-255, 255] to prevent overflow accumulation
+    i32.const -255
+    i32.lt_s
+    if  i32.const -255  local.set $cur  end
+    local.get $cur
+    i32.const 255
+    i32.gt_s
+    if  i32.const 255  local.set $cur  end
+    local.get $addr
+    local.get $cur
+    i32.store16
+  )
+
   (func $rgb_to_rgbl_dither (param $px i32) (param $py i32) (param $r i32) (param $g i32) (param $b i32) (result i32)
     (local $bx i32) (local $by i32) (local $idx i32) (local $threshold i32)
+    (local $mode i32)
+    (local $err_addr i32) (local $pal_idx i32) (local $pal_addr i32)
+    (local $qr i32) (local $qg i32) (local $qb i32)
+    (local $er i32) (local $eg i32) (local $eb i32)
+    (local $nr_addr i32)
 
     ;; Clamp inputs to 0-255
     local.get $r
@@ -7466,11 +7558,306 @@
     i32.gt_s
     if  i32.const 255  local.set $b  end
 
-    ;; Check dither enable flag at control block offset 0x11
-    ;; If non-zero, apply ordered dithering; otherwise skip to straight LUT
+    ;; Read dither mode from control block offset 0x11
+    ;; 0=RAW, 1=Bayer ordered, 2=Floyd-Steinberg
     i32.const 0x11
     i32.load8_u
+    local.set $mode
+
+    local.get $mode
+    i32.const 2
+    i32.eq
     if
+      ;; ---- Floyd-Steinberg error diffusion ----
+      ;; Read accumulated error for this pixel from row0 of error buffer
+      ;; Error buffer row0 at 0x28000, each pixel = 6 bytes (3 × i16)
+      local.get $px
+      i32.const 6
+      i32.mul
+      i32.const 0x28000
+      i32.add
+      local.set $err_addr
+
+      ;; Add error to input RGB
+      local.get $r
+      local.get $err_addr
+      i32.load16_s
+      i32.add
+      local.set $r
+      local.get $g
+      local.get $err_addr
+      i32.const 2
+      i32.add
+      i32.load16_s
+      i32.add
+      local.set $g
+      local.get $b
+      local.get $err_addr
+      i32.const 4
+      i32.add
+      i32.load16_s
+      i32.add
+      local.set $b
+
+      ;; Re-clamp after adding error
+      local.get $r
+      i32.const 0
+      i32.lt_s
+      if  i32.const 0  local.set $r  end
+      local.get $r
+      i32.const 255
+      i32.gt_s
+      if  i32.const 255  local.set $r  end
+      local.get $g
+      i32.const 0
+      i32.lt_s
+      if  i32.const 0  local.set $g  end
+      local.get $g
+      i32.const 255
+      i32.gt_s
+      if  i32.const 255  local.set $g  end
+      local.get $b
+      i32.const 0
+      i32.lt_s
+      if  i32.const 0  local.set $b  end
+      local.get $b
+      i32.const 255
+      i32.gt_s
+      if  i32.const 255  local.set $b  end
+
+      ;; Quantize via LUT
+      i32.const 0x20000
+      local.get $r
+      i32.const 3
+      i32.shr_u
+      i32.const 10
+      i32.shl
+      local.get $g
+      i32.const 3
+      i32.shr_u
+      i32.const 5
+      i32.shl
+      i32.or
+      local.get $b
+      i32.const 3
+      i32.shr_u
+      i32.or
+      i32.add
+      i32.load8_u
+      local.set $pal_idx
+
+      ;; Look up actual palette RGB to compute quantization error
+      ;; Palette at 0x0040, each entry = 3 bytes (R, G, B)
+      local.get $pal_idx
+      i32.const 3
+      i32.mul
+      i32.const 0x0040
+      i32.add
+      local.set $pal_addr
+
+      local.get $pal_addr
+      i32.load8_u
+      local.set $qr
+      local.get $pal_addr
+      i32.const 1
+      i32.add
+      i32.load8_u
+      local.set $qg
+      local.get $pal_addr
+      i32.const 2
+      i32.add
+      i32.load8_u
+      local.set $qb
+
+      ;; Compute error: er = input_r - quantized_r (etc.)
+      local.get $r
+      local.get $qr
+      i32.sub
+      local.set $er
+      local.get $g
+      local.get $qg
+      i32.sub
+      local.set $eg
+      local.get $b
+      local.get $qb
+      i32.sub
+      local.set $eb
+
+      ;; Distribute error using Floyd-Steinberg coefficients:
+      ;;   right (+1, 0): 7/16
+      ;;   below-left (-1, +1): 3/16
+      ;;   below (0, +1): 5/16
+      ;;   below-right (+1, +1): 1/16
+
+      ;; Right neighbor (px+1, py) — in row0
+      local.get $px
+      i32.const 319
+      i32.lt_s
+      if
+        local.get $px
+        i32.const 1
+        i32.add
+        i32.const 6
+        i32.mul
+        i32.const 0x28000
+        i32.add
+        local.set $nr_addr
+        ;; R: er * 7 / 16
+        local.get $nr_addr
+        local.get $er
+        i32.const 7
+        i32.mul
+        i32.const 16
+        i32.div_s
+        call $fs_add_err
+        ;; G
+        local.get $nr_addr
+        i32.const 2
+        i32.add
+        local.get $eg
+        i32.const 7
+        i32.mul
+        i32.const 16
+        i32.div_s
+        call $fs_add_err
+        ;; B
+        local.get $nr_addr
+        i32.const 4
+        i32.add
+        local.get $eb
+        i32.const 7
+        i32.mul
+        i32.const 16
+        i32.div_s
+        call $fs_add_err
+      end
+
+      ;; Below-left (px-1, py+1) — in row1
+      local.get $px
+      i32.const 0
+      i32.gt_s
+      if
+        local.get $px
+        i32.const 1
+        i32.sub
+        i32.const 6
+        i32.mul
+        i32.const 0x28780
+        i32.add
+        local.set $nr_addr
+        ;; R: er * 3 / 16
+        local.get $nr_addr
+        local.get $er
+        i32.const 3
+        i32.mul
+        i32.const 16
+        i32.div_s
+        call $fs_add_err
+        ;; G
+        local.get $nr_addr
+        i32.const 2
+        i32.add
+        local.get $eg
+        i32.const 3
+        i32.mul
+        i32.const 16
+        i32.div_s
+        call $fs_add_err
+        ;; B
+        local.get $nr_addr
+        i32.const 4
+        i32.add
+        local.get $eb
+        i32.const 3
+        i32.mul
+        i32.const 16
+        i32.div_s
+        call $fs_add_err
+      end
+
+      ;; Below (px, py+1) — in row1
+      local.get $px
+      i32.const 6
+      i32.mul
+      i32.const 0x28780
+      i32.add
+      local.set $nr_addr
+      ;; R: er * 5 / 16
+      local.get $nr_addr
+      local.get $er
+      i32.const 5
+      i32.mul
+      i32.const 16
+      i32.div_s
+      call $fs_add_err
+      ;; G
+      local.get $nr_addr
+      i32.const 2
+      i32.add
+      local.get $eg
+      i32.const 5
+      i32.mul
+      i32.const 16
+      i32.div_s
+      call $fs_add_err
+      ;; B
+      local.get $nr_addr
+      i32.const 4
+      i32.add
+      local.get $eb
+      i32.const 5
+      i32.mul
+      i32.const 16
+      i32.div_s
+      call $fs_add_err
+
+      ;; Below-right (px+1, py+1) — in row1
+      local.get $px
+      i32.const 319
+      i32.lt_s
+      if
+        local.get $px
+        i32.const 1
+        i32.add
+        i32.const 6
+        i32.mul
+        i32.const 0x28780
+        i32.add
+        local.set $nr_addr
+        ;; R: er * 1 / 16
+        local.get $nr_addr
+        local.get $er
+        i32.const 16
+        i32.div_s
+        call $fs_add_err
+        ;; G
+        local.get $nr_addr
+        i32.const 2
+        i32.add
+        local.get $eg
+        i32.const 16
+        i32.div_s
+        call $fs_add_err
+        ;; B
+        local.get $nr_addr
+        i32.const 4
+        i32.add
+        local.get $eb
+        i32.const 16
+        i32.div_s
+        call $fs_add_err
+      end
+
+      ;; Return palette index
+      local.get $pal_idx
+      return
+    end
+
+    local.get $mode
+    i32.const 1
+    i32.eq
+    if
+      ;; ---- Bayer ordered dithering ----
       ;; Compute Bayer 4x4 threshold for dithering
       local.get $px
       i32.const 3
@@ -8379,6 +8766,15 @@
     local.get $cos_pitch
     local.set $up_z
 
+    ;; Clear Floyd-Steinberg error buffer if F-S mode is active (mode 2)
+    i32.const 0x11
+    i32.load8_u
+    i32.const 2
+    i32.eq
+    if
+      call $fs_clear_buf
+    end
+
     i32.const 0
     local.set $px_row
     block $row_done
@@ -8387,6 +8783,16 @@
         i32.const 200
         i32.ge_s
         br_if $row_done
+
+        ;; Swap F-S error buffer rows at each scanline start (mode 2)
+        ;; row1 (accumulated from previous scanline) → row0, clear row1
+        i32.const 0x11
+        i32.load8_u
+        i32.const 2
+        i32.eq
+        if
+          call $fs_swap_rows
+        end
 
         ;; screen_v
         f64.const 0.5
