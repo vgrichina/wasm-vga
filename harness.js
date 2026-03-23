@@ -341,10 +341,22 @@ function setMouseBtn(bit, down) {
   else memU8[CTL_OFFSET + 8] &= ~(1 << bit);
 }
 
+// Detect if canvas is CSS-rotated (portrait mobile)
+function isCanvasRotated() {
+  return window.matchMedia('(pointer: coarse) and (orientation: portrait)').matches;
+}
+
 canvas.addEventListener('mousemove', (e) => {
   const rect = canvas.getBoundingClientRect();
-  setMousePos((e.clientX - rect.left) / rect.width * WIDTH,
-              (e.clientY - rect.top) / rect.height * HEIGHT);
+  if (isCanvasRotated()) {
+    // CSS rotate(-90deg): visual X maps to canvas Y (inverted), visual Y maps to canvas X
+    const relX = (e.clientX - rect.left) / rect.width;
+    const relY = (e.clientY - rect.top) / rect.height;
+    setMousePos(relY * WIDTH, (1 - relX) * HEIGHT);
+  } else {
+    setMousePos((e.clientX - rect.left) / rect.width * WIDTH,
+                (e.clientY - rect.top) / rect.height * HEIGHT);
+  }
 });
 canvas.addEventListener('mousedown', (e) => {
   e.preventDefault(); ensureAudio();
@@ -363,8 +375,15 @@ function touchToMouse(e) {
   const t = e.touches[0] || e.changedTouches[0];
   if (!t) return;
   const rect = canvas.getBoundingClientRect();
-  setMousePos((t.clientX - rect.left) / rect.width * WIDTH,
-              (t.clientY - rect.top) / rect.height * HEIGHT);
+  if (isCanvasRotated()) {
+    // CSS rotate(-90deg): visual X maps to canvas Y (inverted), visual Y maps to canvas X
+    const relX = (t.clientX - rect.left) / rect.width;
+    const relY = (t.clientY - rect.top) / rect.height;
+    setMousePos(relY * WIDTH, (1 - relX) * HEIGHT);
+  } else {
+    setMousePos((t.clientX - rect.left) / rect.width * WIDTH,
+                (t.clientY - rect.top) / rect.height * HEIGHT);
+  }
 }
 canvas.addEventListener('touchstart', (e) => { e.preventDefault(); ensureAudio(); touchToMouse(e); }, { passive: false });
 canvas.addEventListener('touchmove', (e) => { e.preventDefault(); touchToMouse(e); }, { passive: false });

@@ -295,6 +295,33 @@
     }
   }
 
+  /* Portrait mode on mobile: rotate canvas so 320x200 fills tall viewport better */
+  @media (pointer: coarse) and (orientation: portrait) {
+    body {
+      overflow: hidden;
+      padding: 0;
+      justify-content: center;
+    }
+    .top-bar { display: none; }
+    .bottom-bar { display: none; }
+    #virtual-controls { display: none !important; }
+    .canvas-wrap {
+      /* Rotate 90° CCW: the 320px-wide canvas now runs vertically */
+      transform: rotate(-90deg);
+      transform-origin: center center;
+      /* In portrait, vh > vw. After rotation, we want the canvas's long axis (320) 
+         to fill viewport height, and short axis (200) to fill viewport width.
+         width here = the CSS width BEFORE rotation, which becomes the visual height after rotation.
+         We size based on available space: visual height = vw (since it's rotated into width) */
+      width: min(calc(100vh - 20px), calc(100vw * 1.6));
+      aspect-ratio: 320 / 200;
+      border-radius: 0;
+      border: none;
+      box-shadow: none;
+    }
+    .canvas-wrap::before { display: none; }
+  }
+
   /* Source viewer modal */
   #src-modal {
     display: none;
