@@ -276,6 +276,174 @@ function defaultPalette() {
   return pal;
 }
 
+// ============================================================
+// VGACraft enhanced palette: 14 hues × 16 shades + 32 grays = 256
+// ============================================================
+// Physically-based sinusoidal saturation: S(shade) = sin(shade/15 * π) * 0.95
+// Non-uniform hue placement: warm tones clustered (human vision sensitivity),
+// cool tones spread more loosely.
+// ============================================================
+function vgacraftPalette() {
+  const pal = new Uint8Array(768);
+
+  // --- 32 grayscale entries (indices 0-31) ---
+  for (let i = 0; i < 32; i++) {
+    const v = Math.round(i * 255 / 31);
+    pal[i * 3] = v;
+    pal[i * 3 + 1] = v;
+    pal[i * 3 + 2] = v;
+  }
+
+  // --- 14 hue ramps × 16 shades (indices 32-255) ---
+  // Non-uniform hue placement: reds/warm tones clustered tightly,
+  // blues/violets spread loosely (perceptual uniformity)
+  const hues = [
+    0,    // 0: pure red
+    25,   // 1: red-orange
+    45,   // 2: orange
+    65,   // 3: amber/gold
+    90,   // 4: yellow-green
+    120,  // 5: green
+    150,  // 6: teal
+    180,  // 7: cyan
+    210,  // 8: sky blue
+    240,  // 9: blue
+    270,  // 10: indigo
+    300,  // 11: magenta
+    330,  // 12: rose/pink
+    15    // 13: warm red-orange (skin tones / firelight)
+  ];
+
+  function hslToRgb(h, s, l) {
+    h = ((h % 360) + 360) % 360;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+    let r, g, b;
+    if (h < 60) { r = c; g = x; b = 0; }
+    else if (h < 120) { r = x; g = c; b = 0; }
+    else if (h < 180) { r = 0; g = c; b = x; }
+    else if (h < 240) { r = 0; g = x; b = c; }
+    else if (h < 300) { r = x; g = 0; b = c; }
+    else { r = c; g = 0; b = x; }
+    return [
+      Math.round((r + m) * 255),
+      Math.round((g + m) * 255),
+      Math.round((b + m) * 255)
+    ];
+  }
+
+  for (let hi = 0; hi < 14; hi++) {
+    const hue = hues[hi];
+    for (let sh = 0; sh < 16; sh++) {
+      const idx = 32 + hi * 16 + sh;
+      // Lightness: shade 0 = black, shade 15 = white
+      const lightness = sh / 15;
+      // Sinusoidal saturation curve: peaks at mid-lightness, drops at extremes
+      // S(shade) = sin(shade/15 * π) * 0.95
+      const saturation = Math.sin(sh / 15 * Math.PI) * 0.95;
+      const [r, g, b] = hslToRgb(hue, saturation, lightness);
+      pal[idx * 3] = r;
+      pal[idx * 3 + 1] = g;
+      pal[idx * 3 + 2] = b;
+    }
+  }
+
+  return pal;
+}
+
+// Build a nearest-color lookup table (32KB: 32×32×32 RGB cube → palette index)
+// Written into WASM memory so the WAT code can do fast lookups
+function buildColorLUT(pal) {
+  const lut = new Uint8Array(32768); // 32*32*32
+  // Pre-extract palette RGB
+  const palR = new Uint8Array(256);
+  const palG = new Uint8Array(256);
+  const palB = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) {
+    palR[i] = pal[i * 3];
+    palG[i] = pal[i * 3 + 1];
+    palB[i] = pal[i * 3 + 2];
+  }
+  for (let ri = 0; ri < 32; ri++) {
+    const r = ri * 255 / 31;
+    for (let gi = 0; gi < 32; gi++) {
+      const g = gi * 255 / 31;
+      for (let bi = 0; bi < 32; bi++) {
+        const b = bi * 255 / 31;
+        let bestIdx = 0, bestDist = Infinity;
+        for (let p = 0; p < 256; p++) {
+          const dr = r - palR[p];
+          const dg = g - palG[p];
+          const db = b - palB[p];
+          // Weighted perceptual distance (approximate)
+          const dist = dr * dr * 2 + dg * dg * 4 + db * db;
+          if (dist < bestDist) { bestDist = dist; bestIdx = p; }
+        }
+        lut[(ri << 10) | (gi << 5) | bi] = bestIdx;
+      }
+    }
+  }
+  return lut;
+}
+
+// Write VGACraft palette + LUT into WASM memory after init
+// LUT goes at 0x20000 (32KB), palette at 0x0040
+// Also writes block-type base RGB table at 0x19500 (9*3=27 bytes)
+function installVgacraftPalette() {
+  const pal = vgacraftPalette();
+  const lut = buildColorLUT(pal);
+
+  // Write palette
+  memU8.set(pal, PAL_OFFSET);
+
+  // Write LUT at 0x20000 (safe area past caches)
+  memU8.set(lut, 0x20000);
+
+  // Write channel levels table at 0x19600 for sky palette updates
+  // The new palette stores actual RGB, so sky palette is set via $set_pal
+  // which writes directly to palette memory. We keep the channel table
+  // for backward compat but it's not used for the main dithering anymore.
+  // Store hue ramp info for the WASM-side palette updater:
+  // At 0x19608: 14 hue values (as degrees, u16 each) = 28 bytes
+  const hues = [0, 25, 45, 65, 90, 120, 150, 180, 210, 240, 270, 300, 330, 15];
+  for (let i = 0; i < 14; i++) {
+    memU8[0x19608 + i * 2] = hues[i] & 0xFF;
+    memU8[0x19608 + i * 2 + 1] = (hues[i] >> 8) & 0xFF;
+  }
+
+  // Block type base colors as 24-bit RGB at 0x19500 (9 entries × 3 bytes = 27 bytes)
+  // These replace the old RGBL base indices
+  const blockColors = [
+    [0, 0, 0],       // 0: air (unused)
+    [50, 180, 50],    // 1: grass - vivid green
+    [140, 90, 50],    // 2: dirt - brown
+    [130, 130, 130],  // 3: stone - gray
+    [220, 210, 120],  // 4: sand - warm yellow
+    [30, 80, 200],    // 5: water - blue
+    [110, 80, 40],    // 6: wood - dark brown
+    [30, 120, 30],    // 7: leaves - dark green
+    [60, 60, 60],     // 8: coal - dark gray
+  ];
+  for (let i = 0; i < 9; i++) {
+    memU8[0x19500 + i * 3] = blockColors[i][0];
+    memU8[0x19500 + i * 3 + 1] = blockColors[i][1];
+    memU8[0x19500 + i * 3 + 2] = blockColors[i][2];
+  }
+
+  // Monster base colors as 24-bit RGB at 0x1951B (3 entries × 3 bytes)
+  const monsterColors = [
+    [30, 120, 30],    // creeper: dark green
+    [100, 140, 40],   // zombie: olive
+    [220, 215, 190],  // skeleton: bone
+  ];
+  for (let i = 0; i < 3; i++) {
+    memU8[0x1951B + i * 3] = monsterColors[i][0];
+    memU8[0x1951B + i * 3 + 1] = monsterColors[i][1];
+    memU8[0x1951B + i * 3 + 2] = monsterColors[i][2];
+  }
+}
+
 function blitFramebuffer() {
   const pal = memU8.subarray(PAL_OFFSET, PAL_OFFSET + 768);
   const fb  = memU8.subarray(FB_OFFSET, FB_OFFSET + FB_SIZE);
@@ -497,6 +665,11 @@ async function loadDemo() {
 
     if (wasmInstance.exports.init) {
       wasmInstance.exports.init();
+    }
+
+    // Install enhanced palette for vgacraft after init
+    if (name === 'vgacraft') {
+      installVgacraftPalette();
     }
 
     frameCount = 0;

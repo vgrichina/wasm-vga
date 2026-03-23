@@ -885,28 +885,57 @@
     end
   )
 
-  ;; ---- RGB+Brightness palette helpers ----
-  ;; Palette: index = (R<<6)|(G<<4)|(B<<2)|L  where R,G,B,L are 0-3
-  ;; Block type to RGB base (without brightness bits):
-  ;;   0=air(0x00), 1=grass(0x30), 2=dirt(0x90), 3=stone(0xA8),
-  ;;   4=sand(0xF4), 5=water(0x1C), 6=wood(0x50), 7=leaves(0x20), 8=coal(0x54)
-  ;; Helper: get base RGB index for a block type (0-8)
-  (func $block_base (param $type i32) (result i32)
-    ;; Table stored at 0x19500 (8 bytes)
+  ;; ---- Enhanced palette helpers (14×16+32 palette) ----
+  ;; Block type base colors stored as 24-bit RGB at 0x19500 (9 entries × 3 bytes)
+  ;; Written by harness JS after init
+  ;; Helper: get base R for a block type (0-8)
+  (func $block_base_r (param $type i32) (result i32)
     i32.const 0x19500
     local.get $type
+    i32.const 3
+    i32.mul
     i32.add
     i32.load8_u
   )
-
-  ;; ---- Block color: returns palette index ----
-  ;; face: 0=top, 1=side-bright, 2=side-dim, 3=bottom
-  ;; shade: 0-15 input from distance etc, mapped to 0-3 brightness
-  (func $block_color (param $type i32) (param $face i32) (param $shade i32) (result i32)
-    (local $base i32)
+  (func $block_base_g (param $type i32) (result i32)
+    i32.const 0x19500
     local.get $type
-    call $block_base
-    local.set $base
+    i32.const 3
+    i32.mul
+    i32.add
+    i32.const 1
+    i32.add
+    i32.load8_u
+  )
+  (func $block_base_b (param $type i32) (result i32)
+    i32.const 0x19500
+    local.get $type
+    i32.const 3
+    i32.mul
+    i32.add
+    i32.const 2
+    i32.add
+    i32.load8_u
+  )
+  ;; Backward compat: $block_base returns a dummy value (unused by new renderer)
+  (func $block_base (param $type i32) (result i32)
+    i32.const 0
+  )
+
+  ;; ---- Block color: returns palette index via LUT ----
+  ;; face: 0=top, 1=side-bright, 2=side-dim, 3=bottom
+  ;; shade: 0-15 input from distance etc
+  (func $block_color (param $type i32) (param $face i32) (param $shade i32) (result i32)
+    (local $r i32) (local $g i32) (local $b i32) (local $s i32)
+    local.get $type
+    call $block_base_r
+    local.set $r
+    local.get $type
+    call $block_base_g
+    local.set $g
+    local.get $type
+    call $block_base_b
+    local.set $b
     ;; Top face gets +4 brightness boost
     local.get $face
     i32.const 0
@@ -952,12 +981,49 @@
       i32.const 15
       local.set $shade
     end
-    ;; Map shade 0..15 to brightness 0..3: shade >> 2
-    local.get $base
+    ;; Scale RGB by shade/15: component * shade * 17 / 255
+    ;; (shade*17 maps 0-15 to 0-255)
     local.get $shade
-    i32.const 2
+    i32.const 17
+    i32.mul
+    local.set $s
+    local.get $r
+    local.get $s
+    i32.mul
+    i32.const 255
+    i32.div_u
+    local.set $r
+    local.get $g
+    local.get $s
+    i32.mul
+    i32.const 255
+    i32.div_u
+    local.set $g
+    local.get $b
+    local.get $s
+    i32.mul
+    i32.const 255
+    i32.div_u
+    local.set $b
+    ;; LUT lookup: index = (r>>3)<<10 | (g>>3)<<5 | (b>>3)
+    i32.const 0x20000
+    local.get $r
+    i32.const 3
+    i32.shr_u
+    i32.const 10
+    i32.shl
+    local.get $g
+    i32.const 3
+    i32.shr_u
+    i32.const 5
+    i32.shl
+    i32.or
+    local.get $b
+    i32.const 3
     i32.shr_u
     i32.or
+    i32.add
+    i32.load8_u
   )
 
   ;; ---- Mini font (4x6 bitmap) ----
@@ -1140,16 +1206,63 @@
     i32.store
 
     ;; ================================================================
-    ;; RGB+Brightness palette: 2-bit R, G, B + 2-bit brightness = 256 colors
-    ;; index = (R<<6)|(G<<4)|(B<<2)|L  R,G,B,L in 0..3
-    ;; Channel values: 0→0, 1→85, 2→170, 3→255
-    ;; Brightness: L=0→0.13, L=1→0.40, L=2→0.70, L=3→1.0
-    ;; We must write this palette ourselves since harness uses standard VGA.
+    ;; Enhanced palette: 14 hues × 16 shades + 32 grays = 256 colors
+    ;; Palette + LUT + block colors written by harness JS after init.
+    ;; Here we just write the Bayer dither matrix and channel level table.
     ;; ================================================================
-    ;; Write RGBL palette to 0x0040 (256 entries × 3 bytes = 768 bytes)
-    ;; Channel levels table at 0x19600 (4 bytes): 0, 85, 170, 255
-    ;; Brightness table at 0x19604 (4 × 2 bytes as fixed-point 0..256):
-    ;;   L=0: 33, L=1: 102, L=2: 179, L=3: 255
+
+    ;; Write Bayer 4x4 dither matrix at 0x19640 (16 bytes)
+    ;; Standard Bayer ordered dither matrix values 0-15
+    i32.const 0x19640
+    i32.const 0    ;; [0,0]
+    i32.store8
+    i32.const 0x19641
+    i32.const 8    ;; [0,1]
+    i32.store8
+    i32.const 0x19642
+    i32.const 2    ;; [0,2]
+    i32.store8
+    i32.const 0x19643
+    i32.const 10   ;; [0,3]
+    i32.store8
+    i32.const 0x19644
+    i32.const 12   ;; [1,0]
+    i32.store8
+    i32.const 0x19645
+    i32.const 4    ;; [1,1]
+    i32.store8
+    i32.const 0x19646
+    i32.const 14   ;; [1,2]
+    i32.store8
+    i32.const 0x19647
+    i32.const 6    ;; [1,3]
+    i32.store8
+    i32.const 0x19648
+    i32.const 3    ;; [2,0]
+    i32.store8
+    i32.const 0x19649
+    i32.const 11   ;; [2,1]
+    i32.store8
+    i32.const 0x1964A
+    i32.const 1    ;; [2,2]
+    i32.store8
+    i32.const 0x1964B
+    i32.const 9    ;; [2,3]
+    i32.store8
+    i32.const 0x1964C
+    i32.const 15   ;; [3,0]
+    i32.store8
+    i32.const 0x1964D
+    i32.const 7    ;; [3,1]
+    i32.store8
+    i32.const 0x1964E
+    i32.const 13   ;; [3,2]
+    i32.store8
+    i32.const 0x1964F
+    i32.const 5    ;; [3,3]
+    i32.store8
+
+    ;; Keep channel level table at 0x19600 for backward compat (sky palette etc)
     i32.const 0x19600
     i32.const 0     ;; chan[0] = 0
     i32.store8
@@ -1163,161 +1276,112 @@
     i32.const 255   ;; chan[3] = 255
     i32.store8
     i32.const 0x19604
-    i32.const 33    ;; bright[0] = 33/255 ≈ 0.13
+    i32.const 33    ;; bright[0]
     i32.store8
     i32.const 0x19605
-    i32.const 102   ;; bright[1] = 102/255 ≈ 0.40
+    i32.const 102   ;; bright[1]
     i32.store8
     i32.const 0x19606
-    i32.const 179   ;; bright[2] = 179/255 ≈ 0.70
+    i32.const 179   ;; bright[2]
     i32.store8
     i32.const 0x19607
-    i32.const 255   ;; bright[3] = 255/255 = 1.0
+    i32.const 255   ;; bright[3]
     i32.store8
-    ;; Loop over 256 palette entries
-    i32.const 0
-    local.set $i
-    block $pal_done
-      loop $pal_lp
-        local.get $i
-        i32.const 256
-        i32.ge_u
-        br_if $pal_done
-        ;; Decode: R = (i>>6)&3, G = (i>>4)&3, B = (i>>2)&3, L = i&3
-        ;; bright = table[L]
-        ;; R_out = chan[R] * bright / 255
-        ;; G_out = chan[G] * bright / 255
-        ;; B_out = chan[B] * bright / 255
-        ;; Palette address = 0x0040 + i*3
-        ;; Write R
-        i32.const 0x0040
-        local.get $i
-        i32.const 3
-        i32.mul
-        i32.add
-        ;; chan[(i>>6)&3] * bright[i&3] / 255
-        i32.const 0x19600
-        local.get $i
-        i32.const 6
-        i32.shr_u
-        i32.const 3
-        i32.and
-        i32.add
-        i32.load8_u
-        i32.const 0x19604
-        local.get $i
-        i32.const 3
-        i32.and
-        i32.add
-        i32.load8_u
-        i32.mul
-        i32.const 255
-        i32.div_u
-        i32.store8
-        ;; Write G
-        i32.const 0x0040
-        local.get $i
-        i32.const 3
-        i32.mul
-        i32.add
-        i32.const 1
-        i32.add
-        ;; chan[(i>>4)&3] * bright[i&3] / 255
-        i32.const 0x19600
-        local.get $i
-        i32.const 4
-        i32.shr_u
-        i32.const 3
-        i32.and
-        i32.add
-        i32.load8_u
-        i32.const 0x19604
-        local.get $i
-        i32.const 3
-        i32.and
-        i32.add
-        i32.load8_u
-        i32.mul
-        i32.const 255
-        i32.div_u
-        i32.store8
-        ;; Write B
-        i32.const 0x0040
-        local.get $i
-        i32.const 3
-        i32.mul
-        i32.add
-        i32.const 2
-        i32.add
-        ;; chan[(i>>2)&3] * bright[i&3] / 255
-        i32.const 0x19600
-        local.get $i
-        i32.const 2
-        i32.shr_u
-        i32.const 3
-        i32.and
-        i32.add
-        i32.load8_u
-        i32.const 0x19604
-        local.get $i
-        i32.const 3
-        i32.and
-        i32.add
-        i32.load8_u
-        i32.mul
-        i32.const 255
-        i32.div_u
-        i32.store8
-        ;; Next
-        local.get $i
-        i32.const 1
-        i32.add
-        local.set $i
-        br $pal_lp
-      end
-    end
-    ;; ================================================================
-    ;; Block type base color table at 0x19500 (9 bytes):
-    ;; Indexed by block type from get_block (0=air, 1=grass, ..., 8=coal)
-    ;; RGBL encoding: index = (R<<6)|(G<<4)|(B<<2)|L, L=0 for base
-    ;;   type 0 (air):    0x00 (unused)
-    ;;   type 1 (grass):  R=0,G=3,B=0 → 0x30
-    ;;   type 2 (dirt):   R=2,G=1,B=0 → 0x90
-    ;;   type 3 (stone):  R=2,G=2,B=2 → 0xA8
-    ;;   type 4 (sand):   R=3,G=3,B=1 → 0xF4
-    ;;   type 5 (water):  R=0,G=1,B=3 → 0x1C
-    ;;   type 6 (wood):   R=1,G=1,B=0 → 0x50
-    ;;   type 7 (leaves): R=0,G=2,B=0 → 0x20
-    ;;   type 8 (coal):   R=1,G=1,B=1 → 0x54
-    ;; ================================================================
 
-    ;; Write block base color table
+    ;; ================================================================
+    ;; Block type base colors now stored as 24-bit RGB at 0x19500
+    ;; (9 entries × 3 bytes = 27 bytes, written by harness JS)
+    ;; We write defaults here that will be overridden by harness.
+    ;; ================================================================
+    ;; air: 0,0,0
     i32.const 0x19500
-    i32.const 0x00  ;; air: unused
+    i32.const 0
     i32.store8
     i32.const 0x19501
-    i32.const 0x30  ;; grass: green (R=0,G=3,B=0)
+    i32.const 0
     i32.store8
     i32.const 0x19502
-    i32.const 0x90  ;; dirt: brown (R=2,G=1,B=0)
+    i32.const 0
     i32.store8
+    ;; grass: 50,180,50
     i32.const 0x19503
-    i32.const 0xA8  ;; stone: gray (R=2,G=2,B=2)
+    i32.const 50
     i32.store8
     i32.const 0x19504
-    i32.const 0xF4  ;; sand: yellow (R=3,G=3,B=1)
+    i32.const 180
     i32.store8
     i32.const 0x19505
-    i32.const 0x1C  ;; water: blue (R=0,G=1,B=3)
+    i32.const 50
     i32.store8
+    ;; dirt: 140,90,50
     i32.const 0x19506
-    i32.const 0x50  ;; wood: brown (R=1,G=1,B=0)
+    i32.const 140
     i32.store8
     i32.const 0x19507
-    i32.const 0x20  ;; leaves: dark green (R=0,G=2,B=0)
+    i32.const 90
     i32.store8
     i32.const 0x19508
-    i32.const 0x54  ;; coal: dark gray (R=1,G=1,B=1)
+    i32.const 50
+    i32.store8
+    ;; stone: 130,130,130
+    i32.const 0x19509
+    i32.const 130
+    i32.store8
+    i32.const 0x1950A
+    i32.const 130
+    i32.store8
+    i32.const 0x1950B
+    i32.const 130
+    i32.store8
+    ;; sand: 220,210,120
+    i32.const 0x1950C
+    i32.const 220
+    i32.store8
+    i32.const 0x1950D
+    i32.const 210
+    i32.store8
+    i32.const 0x1950E
+    i32.const 120
+    i32.store8
+    ;; water: 30,80,200
+    i32.const 0x1950F
+    i32.const 30
+    i32.store8
+    i32.const 0x19510
+    i32.const 80
+    i32.store8
+    i32.const 0x19511
+    i32.const 200
+    i32.store8
+    ;; wood: 110,80,40
+    i32.const 0x19512
+    i32.const 110
+    i32.store8
+    i32.const 0x19513
+    i32.const 80
+    i32.store8
+    i32.const 0x19514
+    i32.const 40
+    i32.store8
+    ;; leaves: 30,120,30
+    i32.const 0x19515
+    i32.const 30
+    i32.store8
+    i32.const 0x19516
+    i32.const 120
+    i32.store8
+    i32.const 0x19517
+    i32.const 30
+    i32.store8
+    ;; coal: 60,60,60
+    i32.const 0x19518
+    i32.const 60
+    i32.store8
+    i32.const 0x19519
+    i32.const 60
+    i32.store8
+    i32.const 0x1951A
+    i32.const 60
     i32.store8
 
     ;; Initialize player position (palette set by harness)
@@ -1348,18 +1412,37 @@
     f64.const 0.0
     f64.store
 
-    ;; Write monster base color table at 0x1950C (3 bytes)
-    ;; creeper(type 0): dark green R=0,G=2,B=0 → 0x20
-    ;; zombie(type 1): olive R=1,G=2,B=0 → 0x60
-    ;; skeleton(type 2): bone R=3,G=3,B=2 → 0xF8
-    i32.const 0x1950C
-    i32.const 0x20
+    ;; Write monster base color table at 0x1951B (3 entries × 3 bytes = 9 bytes)
+    ;; Now stored as 24-bit RGB (written by harness, defaults here)
+    ;; creeper(type 0): dark green 30,120,30
+    i32.const 0x1951B
+    i32.const 30
     i32.store8
-    i32.const 0x1950D
-    i32.const 0x60
+    i32.const 0x1951C
+    i32.const 120
     i32.store8
-    i32.const 0x1950E
-    i32.const 0xF8
+    i32.const 0x1951D
+    i32.const 30
+    i32.store8
+    ;; zombie(type 1): olive 100,140,40
+    i32.const 0x1951E
+    i32.const 100
+    i32.store8
+    i32.const 0x1951F
+    i32.const 140
+    i32.store8
+    i32.const 0x19520
+    i32.const 40
+    i32.store8
+    ;; skeleton(type 2): bone 220,215,190
+    i32.const 0x19521
+    i32.const 220
+    i32.store8
+    i32.const 0x19522
+    i32.const 215
+    i32.store8
+    i32.const 0x19523
+    i32.const 190
     i32.store8
 
     ;; Game state
@@ -3476,17 +3559,18 @@
   (data (i32.const 0x190C0) "Mods:\00")
   (data (i32.const 0x190D0) "/\00")
   (data (i32.const 0x190E0) ":\00")
-  (data (i32.const 0x190F0) "RGBL PALETTE\00")
-  (data (i32.const 0x19100) "R\00")
-  (data (i32.const 0x19102) "G\00")
-  (data (i32.const 0x19104) "B\00")
-  (data (i32.const 0x19106) "L\00")
+  (data (i32.const 0x190F0) "HSL PALETTE\00")
+  (data (i32.const 0x19100) "H\00")
+  (data (i32.const 0x19102) "S\00")
+  (data (i32.const 0x19104) "L\00")
+  (data (i32.const 0x19106) " \00")
   (data (i32.const 0x19108) "ESC:CLOSE\00")
   (data (i32.const 0x19112) "0\00")
   (data (i32.const 0x19114) "1\00")
   (data (i32.const 0x19116) "2\00")
   (data (i32.const 0x19118) "3\00")
   (data (i32.const 0x1911A) "256 COLORS\00")
+  ;; Bayer dither matrix at 0x19640 is written in init
 
   ;; ============================================================
   ;; OCTREE-ACCELERATED VOXEL RAYTRACER (CACHED)
@@ -6682,98 +6766,13 @@
   )
 
   ;; ============================================================
-  ;; RGB24 to RGBL with ordered dithering
-  ;; Takes pixel coords (px,py) and 24-bit RGB (r,g,b each 0-255)
-  ;; Returns RGBL palette index = (R<<6)|(G<<4)|(B<<2)|L
+  ;; RGB24 to palette index via 32KB LUT with ordered dithering
+  ;; LUT at 0x20000: 32×32×32 RGB cube → nearest palette index
+  ;; 14 hues × 16 shades + 32 grays = 256 palette entries
+  ;; Dithering adds noise to RGB before LUT lookup for smooth gradients
   ;; ============================================================
   (func $rgb_to_rgbl_dither (param $px i32) (param $py i32) (param $r i32) (param $g i32) (param $b i32) (result i32)
     (local $bx i32) (local $by i32) (local $idx i32) (local $threshold i32)
-    (local $max_c i32) (local $best_l i32) (local $bright i32)
-    (local $ri i32) (local $gi i32) (local $bi i32)
-    (local $rf i32) (local $gf i32) (local $bf i32)
-    (local $scaled i32)
-    ;; Compute Bayer threshold (0-15)
-    local.get $px
-    i32.const 3
-    i32.and
-    local.set $bx
-    local.get $py
-    i32.const 3
-    i32.and
-    local.set $by
-    local.get $by
-    i32.const 4
-    i32.mul
-    local.get $bx
-    i32.add
-    local.set $idx
-    ;; Bayer 4x4 matrix lookup
-    i32.const 0
-    local.set $threshold
-    local.get $idx
-    i32.const 0
-    i32.eq
-    if  i32.const 0  local.set $threshold  end
-    local.get $idx
-    i32.const 1
-    i32.eq
-    if  i32.const 8  local.set $threshold  end
-    local.get $idx
-    i32.const 2
-    i32.eq
-    if  i32.const 2  local.set $threshold  end
-    local.get $idx
-    i32.const 3
-    i32.eq
-    if  i32.const 10  local.set $threshold  end
-    local.get $idx
-    i32.const 4
-    i32.eq
-    if  i32.const 12  local.set $threshold  end
-    local.get $idx
-    i32.const 5
-    i32.eq
-    if  i32.const 4  local.set $threshold  end
-    local.get $idx
-    i32.const 6
-    i32.eq
-    if  i32.const 14  local.set $threshold  end
-    local.get $idx
-    i32.const 7
-    i32.eq
-    if  i32.const 6  local.set $threshold  end
-    local.get $idx
-    i32.const 8
-    i32.eq
-    if  i32.const 3  local.set $threshold  end
-    local.get $idx
-    i32.const 9
-    i32.eq
-    if  i32.const 11  local.set $threshold  end
-    local.get $idx
-    i32.const 10
-    i32.eq
-    if  i32.const 1  local.set $threshold  end
-    local.get $idx
-    i32.const 11
-    i32.eq
-    if  i32.const 9  local.set $threshold  end
-    local.get $idx
-    i32.const 12
-    i32.eq
-    if  i32.const 15  local.set $threshold  end
-    local.get $idx
-    i32.const 13
-    i32.eq
-    if  i32.const 7  local.set $threshold  end
-    local.get $idx
-    i32.const 14
-    i32.eq
-    if  i32.const 13  local.set $threshold  end
-    local.get $idx
-    i32.const 15
-    i32.eq
-    if  i32.const 5  local.set $threshold  end
 
     ;; Clamp inputs to 0-255
     local.get $r
@@ -6801,174 +6800,97 @@
     i32.gt_s
     if  i32.const 255  local.set $b  end
 
-    ;; Find max channel
-    local.get $r
-    local.set $max_c
-    local.get $g
-    local.get $max_c
-    i32.gt_s
-    if  local.get $g  local.set $max_c  end
-    local.get $b
-    local.get $max_c
-    i32.gt_s
-    if  local.get $b  local.set $max_c  end
-
-    ;; Choose brightness level L based on max channel
-    ;; Brightness thresholds: L0=33, L1=102, L2=179, L3=255
-    ;; Choose L such that max_c fits within chan[3]*bright[L]/255 = bright[L]
-    ;; L0 handles max_c 0..33, L1 handles 0..102, L2 handles 0..179, L3 handles 0..255
-    ;; Pick smallest L where bright[L] >= max_c (so channels have room)
-    ;; But also dither between L levels for smoother gradients
+    ;; Compute Bayer 4x4 threshold for dithering
+    local.get $px
     i32.const 3
-    local.set $best_l
-    local.get $max_c
-    i32.const 180
-    i32.lt_s
-    if  i32.const 2  local.set $best_l  end
-    local.get $max_c
-    i32.const 103
-    i32.lt_s
-    if  i32.const 1  local.set $best_l  end
-    local.get $max_c
-    i32.const 34
-    i32.lt_s
-    if  i32.const 0  local.set $best_l  end
+    i32.and
+    local.set $bx
+    local.get $py
+    i32.const 3
+    i32.and
+    local.set $by
+    local.get $by
+    i32.const 4
+    i32.mul
+    local.get $bx
+    i32.add
+    local.set $idx
 
-    ;; Get brightness value for chosen L
-    ;; bright[0]=33, bright[1]=102, bright[2]=179, bright[3]=255
-    i32.const 0x19604
-    local.get $best_l
+    ;; Bayer 4x4 matrix stored at 0x19640 (16 bytes), written by init
+    i32.const 0x19640
+    local.get $idx
     i32.add
     i32.load8_u
-    local.set $bright
+    local.set $threshold
 
-    ;; Avoid division by zero
-    local.get $bright
-    i32.const 1
-    i32.lt_s
-    if  i32.const 1  local.set $bright  end
-
-    ;; Scale each channel: mapped = ch * 3 * 255 / (bright * 85)
-    ;; This maps to 0..765 range, then we quantize to 0..3 with dithering
-    ;; Simplified: mapped = ch * 3 / bright (approximately)
-    ;; More precisely: we want idx such that idx * 85 * bright / 255 ≈ ch
-    ;; So idx_full = ch * 255 / (85 * bright) * 16 for 4-bit precision
-    ;; idx_int = idx_full >> 4, idx_frac = idx_full & 15
-
-    ;; Red: scaled = r * 48 / bright (maps 0-255 to 0-48, where 0,16,32,48 = levels 0-3)
+    ;; Add dither noise to RGB before quantization to 5-bit
+    ;; threshold is 0-15, we scale to ±4 range for smooth dithering
+    ;; noise = (threshold - 8) => range -8..+7, scale to ±4
+    ;; Apply to each channel before >>3 quantization
     local.get $r
-    i32.const 48
-    i32.mul
-    local.get $bright
-    i32.div_u
-    local.set $scaled
-    local.get $scaled
-    i32.const 48
-    i32.gt_s
-    if  i32.const 48  local.set $scaled  end
-    local.get $scaled
-    i32.const 4
-    i32.shr_u
-    local.set $ri
-    local.get $scaled
-    i32.const 15
-    i32.and
-    local.set $rf
-    ;; Dither: if fractional > threshold, bump up
-    local.get $rf
     local.get $threshold
-    i32.gt_u
-    if
-      local.get $ri
-      i32.const 1
-      i32.add
-      local.set $ri
-    end
-    local.get $ri
-    i32.const 3
+    i32.const 8
+    i32.sub
+    i32.add
+    local.set $r
+    local.get $r
+    i32.const 0
+    i32.lt_s
+    if  i32.const 0  local.set $r  end
+    local.get $r
+    i32.const 255
     i32.gt_s
-    if  i32.const 3  local.set $ri  end
+    if  i32.const 255  local.set $r  end
 
-    ;; Green
     local.get $g
-    i32.const 48
-    i32.mul
-    local.get $bright
-    i32.div_u
-    local.set $scaled
-    local.get $scaled
-    i32.const 48
-    i32.gt_s
-    if  i32.const 48  local.set $scaled  end
-    local.get $scaled
-    i32.const 4
-    i32.shr_u
-    local.set $gi
-    local.get $scaled
-    i32.const 15
-    i32.and
-    local.set $gf
-    local.get $gf
     local.get $threshold
-    i32.gt_u
-    if
-      local.get $gi
-      i32.const 1
-      i32.add
-      local.set $gi
-    end
-    local.get $gi
-    i32.const 3
+    i32.const 8
+    i32.sub
+    i32.add
+    local.set $g
+    local.get $g
+    i32.const 0
+    i32.lt_s
+    if  i32.const 0  local.set $g  end
+    local.get $g
+    i32.const 255
     i32.gt_s
-    if  i32.const 3  local.set $gi  end
+    if  i32.const 255  local.set $g  end
 
-    ;; Blue
     local.get $b
-    i32.const 48
-    i32.mul
-    local.get $bright
-    i32.div_u
-    local.set $scaled
-    local.get $scaled
-    i32.const 48
-    i32.gt_s
-    if  i32.const 48  local.set $scaled  end
-    local.get $scaled
-    i32.const 4
-    i32.shr_u
-    local.set $bi
-    local.get $scaled
-    i32.const 15
-    i32.and
-    local.set $bf
-    local.get $bf
     local.get $threshold
-    i32.gt_u
-    if
-      local.get $bi
-      i32.const 1
-      i32.add
-      local.set $bi
-    end
-    local.get $bi
-    i32.const 3
+    i32.const 8
+    i32.sub
+    i32.add
+    local.set $b
+    local.get $b
+    i32.const 0
+    i32.lt_s
+    if  i32.const 0  local.set $b  end
+    local.get $b
+    i32.const 255
     i32.gt_s
-    if  i32.const 3  local.set $bi  end
+    if  i32.const 255  local.set $b  end
 
-    ;; Compose RGBL index
-    local.get $ri
-    i32.const 6
+    ;; LUT lookup: index = (r>>3)<<10 | (g>>3)<<5 | (b>>3)
+    i32.const 0x20000
+    local.get $r
+    i32.const 3
+    i32.shr_u
+    i32.const 10
     i32.shl
-    local.get $gi
-    i32.const 4
+    local.get $g
+    i32.const 3
+    i32.shr_u
+    i32.const 5
     i32.shl
     i32.or
-    local.get $bi
-    i32.const 2
-    i32.shl
+    local.get $b
+    i32.const 3
+    i32.shr_u
     i32.or
-    local.get $best_l
-    i32.or
+    i32.add
+    i32.load8_u
   )
 
   ;; ============================================================
@@ -7551,12 +7473,13 @@
       end
     end
 
-    ;; Update sky palette: 4 brightness levels of sky blue (0x5C..0x5F)
+    ;; Update sky palette: 4 brightness levels of sky blue
+    ;; New palette: write actual RGB to 4 reserved palette slots (indices 92-95)
+    ;; These are within hue ramp 3 (amber, indices 80-95) - repurposed for sky
+    ;; Actually just overwrite palette entries 0x5C-0x5F (92-95) directly
     ;; Sky at full day: R=85, G=170, B=255
-    ;; Brightness scales: L0=33/255, L1=102/255, L2=179/255, L3=255/255
-    ;; Each sky palette entry: R = 85*scale*day_bright/65025, etc.
 
-    ;; L=0: scale=33
+    ;; Level 0: darkest sky (shadows)
     i32.const 85
     i32.const 33
     i32.mul
@@ -7587,7 +7510,7 @@
     local.get $sky_b
     call $set_pal
 
-    ;; L=1: scale=102
+    ;; Level 1
     i32.const 85
     i32.const 102
     i32.mul
@@ -7618,7 +7541,7 @@
     local.get $sky_b
     call $set_pal
 
-    ;; L=2: scale=179
+    ;; Level 2
     i32.const 85
     i32.const 179
     i32.mul
@@ -7649,7 +7572,7 @@
     local.get $sky_b
     call $set_pal
 
-    ;; L=3: scale=255
+    ;; Level 3: full brightness sky
     i32.const 85
     local.get $day_bright
     i32.mul
@@ -7691,7 +7614,7 @@
         local.get $m_active
         if
           ;; Monster type at offset +4 (0=creep,1=zombie,2=skeleton)
-          ;; Monster base from table at 0x1950C
+          ;; Monster base from table at 0x1951B (24-bit RGB, 3 bytes per entry)
           local.get $m_addr
           i32.const 4
           i32.add
@@ -8443,24 +8366,15 @@
               local.set $shade_full
 
               ;; ============================================================
-              ;; Convert block color to 24-bit RGB, then dither to RGBL palette
-              ;; Block base encodes R,G,B as 2-bit indices (0-3) in RGBL format
-              ;; base = (R2<<6)|(G2<<4)|(B2<<2)
-              ;; Channel levels: 0→0, 1→85, 2→170, 3→255
-              ;; Final RGB = channel[base_component] * shade_full / 255
+              ;; Convert block color to 24-bit RGB using new 24-bit base colors
+              ;; Block base stored as RGB triplet at 0x19500 + type*3
+              ;; Final RGB = base_component * shade_full / 255
               ;; ============================================================
-              ;; Get base color components from block type
-              local.get $hit_type
-              call $block_base
-              local.set $color  ;; reuse $color as temp for base
-
-              ;; Water shimmer: override base for water blocks
+              ;; Water shimmer: modify shade for water blocks
               local.get $hit_type
               i32.const 5
               i32.eq
               if
-                i32.const 0x1C  ;; water base R=0,G=1,B=3
-                local.set $color
                 ;; Add shimmer by modifying shade
                 local.get $shade_full
                 local.get $tex_u
@@ -8504,12 +8418,12 @@
                 i32.gt_s
                 if  i32.const 255  local.set $shade_frac  end
                 ;; Blend to sky: write dithered sky color and skip block color
+                ;; Now using 24-bit block base colors from 0x19500 + type*3
                 local.get $fb_addr
                 local.get $px_col
                 local.get $px_row
                 ;; R: fog from block R to sky R
                 ;; sky R at day: 140*day_bright/255, night: 2
-                ;; Simplified: just use sky color
                 i32.const 140
                 local.get $day_bright
                 i32.mul
@@ -8523,15 +8437,9 @@
                 i32.div_u
                 local.get $shade_frac
                 i32.mul
-                ;; block R contribution
-                i32.const 0x19600
-                local.get $color
-                i32.const 6
-                i32.shr_u
-                i32.const 3
-                i32.and
-                i32.add
-                i32.load8_u
+                ;; block R contribution (24-bit base)
+                local.get $hit_type
+                call $block_base_r
                 local.get $shade_full
                 i32.mul
                 i32.const 255
@@ -8557,14 +8465,8 @@
                 i32.div_u
                 local.get $shade_frac
                 i32.mul
-                i32.const 0x19600
-                local.get $color
-                i32.const 4
-                i32.shr_u
-                i32.const 3
-                i32.and
-                i32.add
-                i32.load8_u
+                local.get $hit_type
+                call $block_base_g
                 local.get $shade_full
                 i32.mul
                 i32.const 255
@@ -8590,14 +8492,8 @@
                 i32.div_u
                 local.get $shade_frac
                 i32.mul
-                i32.const 0x19600
-                local.get $color
-                i32.const 2
-                i32.shr_u
-                i32.const 3
-                i32.and
-                i32.add
-                i32.load8_u
+                local.get $hit_type
+                call $block_base_b
                 local.get $shade_full
                 i32.mul
                 i32.const 255
@@ -8613,47 +8509,29 @@
                 i32.store8
               else
                 ;; No fog: compute 24-bit RGB from block base and shade, then dither
-                ;; R = channel[(base>>6)&3] * shade_full / 255
-                ;; G = channel[(base>>4)&3] * shade_full / 255
-                ;; B = channel[(base>>2)&3] * shade_full / 255
+                ;; R = block_base_r(type) * shade_full / 255
+                ;; G = block_base_g(type) * shade_full / 255
+                ;; B = block_base_b(type) * shade_full / 255
                 local.get $fb_addr
                 local.get $px_col
                 local.get $px_row
                 ;; R
-                i32.const 0x19600
-                local.get $color
-                i32.const 6
-                i32.shr_u
-                i32.const 3
-                i32.and
-                i32.add
-                i32.load8_u
+                local.get $hit_type
+                call $block_base_r
                 local.get $shade_full
                 i32.mul
                 i32.const 255
                 i32.div_u
                 ;; G
-                i32.const 0x19600
-                local.get $color
-                i32.const 4
-                i32.shr_u
-                i32.const 3
-                i32.and
-                i32.add
-                i32.load8_u
+                local.get $hit_type
+                call $block_base_g
                 local.get $shade_full
                 i32.mul
                 i32.const 255
                 i32.div_u
                 ;; B
-                i32.const 0x19600
-                local.get $color
-                i32.const 2
-                i32.shr_u
-                i32.const 3
-                i32.and
-                i32.add
-                i32.load8_u
+                local.get $hit_type
+                call $block_base_b
                 local.get $shade_full
                 i32.mul
                 i32.const 255
@@ -9068,19 +8946,19 @@
       local.get $game_hour
       i32.const 280
       i32.const 2
-      i32.const 223
+      i32.const 31
       call $draw_num
     else
       local.get $game_hour
       i32.const 275
       i32.const 2
-      i32.const 223
+      i32.const 31
       call $draw_num
     end
     i32.const 0x190E0
     i32.const 285
     i32.const 2
-    i32.const 223
+    i32.const 31
     call $draw_str
     local.get $game_min
     i32.const 10
@@ -9094,13 +8972,13 @@
       local.get $game_min
       i32.const 295
       i32.const 2
-      i32.const 223
+      i32.const 31
       call $draw_num
     else
       local.get $game_min
       i32.const 290
       i32.const 2
-      i32.const 223
+      i32.const 31
       call $draw_num
     end
     ;; Day/Night indicator
@@ -9124,24 +9002,24 @@
     i32.const 0x190C0
     i32.const 2
     i32.const 2
-    i32.const 223
+    i32.const 31
     call $draw_str
     i32.const 0x10390
     i32.load
     i32.const 32
     i32.const 2
-    i32.const 223
+    i32.const 31
     call $draw_num
     i32.const 0x190D0
     i32.const 57
     i32.const 2
-    i32.const 221
+    i32.const 24
     call $draw_str
     i32.const 0x10394
     i32.load
     i32.const 62
     i32.const 2
-    i32.const 221
+    i32.const 24
     call $draw_num
 
     ;; ---- Gods angry message ----
@@ -9166,17 +9044,17 @@
       i32.const 0x19050
       i32.const 80
       i32.const 78
-      i32.const 236  ;; base 14 shade 12 (red text)
+      i32.const 44   ;; red hue ramp shade 12
       call $draw_str
       i32.const 0x19070
       i32.const 72
       i32.const 90
-      i32.const 236
+      i32.const 44
       call $draw_str
       i32.const 0x19090
       i32.const 72
       i32.const 102
-      i32.const 236
+      i32.const 44
       call $draw_str
       local.get $msg_timer
       i32.const 31
@@ -9200,17 +9078,17 @@
       i32.const 0x19000
       i32.const 105
       i32.const 30
-      i32.const 175  ;; base 10 shade 15 (green bright)
+      i32.const 124  ;; green hue ramp shade 12
       call $draw_str
       i32.const 0x19010
       i32.const 70
       i32.const 180
-      i32.const 221  ;; base 13 shade 13 (white dim)
+      i32.const 28   ;; bright gray
       call $draw_str
       i32.const 0x19030
       i32.const 60
       i32.const 190
-      i32.const 221
+      i32.const 28
       call $draw_str
     end
 
@@ -9268,11 +9146,9 @@
   )
 
   ;; ============================================================
-  ;; INVENTORY — Full 256-color RGBL palette display
-  ;; Organized as 16 rows × 16 columns showing all RGBL combinations
-  ;; Rows: R (0-3) × G (0-3) = 16 rows
-  ;; Columns: B (0-3) × L (0-3) = 16 columns
-  ;; Each cell shows the actual palette color as a filled rectangle
+  ;; INVENTORY — Full 256-color palette display
+  ;; Row 0: 32 grayscale entries (indices 0-31)
+  ;; Rows 1-14: 14 hue ramps × 16 shades each (indices 32-255)
   ;; ============================================================
   (func $draw_inventory
     (local $r i32) (local $g i32) (local $b i32) (local $l i32)
@@ -9328,395 +9204,129 @@
       end
     end
 
-    ;; Title: "RGBL PALETTE" centered at top
-    i32.const 0x190F0  ;; "RGBL PALETTE"
+    ;; Title: "HSL PALETTE" centered at top
+    i32.const 0x190F0  ;; "HSL PALETTE"
     i32.const 100
     i32.const 3
-    i32.const 0x3F  ;; bright white (R=0,G=3,B=3,L=3)
+    i32.const 31  ;; bright white (gray ramp index 31)
     call $draw_str
 
     ;; "256 COLORS" subtitle
     i32.const 0x1911A  ;; "256 COLORS"
     i32.const 110
     i32.const 11
-    i32.const 0x2F  ;; green bright (R=0,G=2,B=3,L=3)
+    i32.const 95  ;; green-ish from hue ramp (hue 3, shade 15)
     call $draw_str
 
-    ;; Column header: "B" label
-    i32.const 0x19104  ;; "B"
+    ;; Column header: "S" (shade) label
+    i32.const 0x19102  ;; "S"
     i32.const 36
     i32.const 21
-    i32.const 0x1F  ;; blue-ish (R=0,G=1,B=3,L=3)
-    call $draw_str
-    ;; "L" label
-    i32.const 0x19106  ;; "L"
-    i32.const 46
-    i32.const 21
-    i32.const 0xFB  ;; yellow dim (R=3,G=3,B=2,L=3)
+    i32.const 20  ;; mid gray
     call $draw_str
 
-    ;; Row header: "R" and "G" labels
-    i32.const 0x19100  ;; "R"
+    ;; Row header: "H" (hue) label
+    i32.const 0x19100  ;; "H"
     i32.const 2
     i32.const 30
-    i32.const 0xC3  ;; red (R=3,G=0,B=0,L=3)
-    call $draw_str
-    i32.const 0x19102  ;; "G"
-    i32.const 10
-    i32.const 30
-    i32.const 0x33  ;; green (R=0,G=3,B=0,L=3)
+    i32.const 20  ;; mid gray
     call $draw_str
 
-    ;; Draw B axis labels (0,1,2,3) across top for each B group
+    ;; ---- Draw the 256 color swatches ----
+    ;; Row 0 (y=22): 32 grayscale entries, each 9px wide
+    ;; Note: only first 16 fit well; show 16 evenly sampled from 32
     i32.const 0
-    local.set $b
-    block $blab_done
-      loop $blab_lp
-        local.get $b
-        i32.const 4
+    local.set $i
+    block $gray_done
+      loop $gray_lp
+        local.get $i
+        i32.const 32
         i32.ge_u
-        br_if $blab_done
-        ;; B label at x = 22 + b*72 + 32 (centered in B group)
-        i32.const 0x19112  ;; "0" base
-        local.get $b
-        i32.const 2
+        br_if $gray_done
+        ;; Cell: x = 16 + i*9, y = 22, w=8, h=8
+        i32.const 16
+        local.get $i
+        i32.const 9
         i32.mul
         i32.add
-        i32.const 40
-        local.get $b
-        i32.const 72
-        i32.mul
-        i32.add
-        i32.const 21
-        i32.const 0x1F  ;; blue accent
-        call $draw_str
-
-        local.get $b
+        i32.const 22
+        i32.const 8
+        i32.const 8
+        local.get $i  ;; palette index = i (0-31 are grays)
+        call $fill_rect
+        local.get $i
         i32.const 1
         i32.add
-        local.set $b
-        br $blab_lp
+        local.set $i
+        br $gray_lp
       end
     end
 
-    ;; Draw L axis labels (0,1,2,3) across sub-columns
+    ;; Rows 1-14: 14 hue ramps × 16 shades
+    ;; Each cell: w=17, h=10, x = 16 + shade*18, y = 34 + hue*11
     i32.const 0
-    local.set $b
-    block $llab_done
-      loop $llab_lp
-        local.get $b
-        i32.const 4
+    local.set $r  ;; hue index 0-13
+    block $hue_done
+      loop $hue_lp
+        local.get $r
+        i32.const 14
         i32.ge_u
-        br_if $llab_done
+        br_if $hue_done
         i32.const 0
-        local.set $l
-        block $llab2_done
-          loop $llab2_lp
+        local.set $l  ;; shade index 0-15
+        block $shade_done
+          loop $shade_lp
             local.get $l
-            i32.const 4
+            i32.const 16
             i32.ge_u
-            br_if $llab2_done
-            ;; L label at x = 22 + b*72 + l*18 + 6
-            i32.const 0x19112  ;; "0" base
+            br_if $shade_done
+
+            ;; Palette index = 32 + hue*16 + shade
+            i32.const 32
+            local.get $r
+            i32.const 16
+            i32.mul
+            i32.add
             local.get $l
-            i32.const 2
-            i32.mul
             i32.add
-            i32.const 28
-            local.get $b
-            i32.const 72
-            i32.mul
-            i32.add
+            local.set $pal_idx
+
+            ;; Cell x = 16 + shade*18
+            i32.const 16
             local.get $l
             i32.const 18
             i32.mul
             i32.add
-            i32.const 27
-            i32.const 0xFB  ;; yellow dim
-            call $draw_str
+            local.set $cx
+
+            ;; Cell y = 34 + hue*11
+            i32.const 34
+            local.get $r
+            i32.const 11
+            i32.mul
+            i32.add
+            local.set $cy
+
+            ;; Draw filled rectangle 17×10
+            local.get $cx
+            local.get $cy
+            i32.const 17
+            i32.const 10
+            local.get $pal_idx
+            call $fill_rect
 
             local.get $l
             i32.const 1
             i32.add
             local.set $l
-            br $llab2_lp
-          end
-        end
-        local.get $b
-        i32.const 1
-        i32.add
-        local.set $b
-        br $llab_lp
-      end
-    end
-
-    ;; Draw R/G row labels on left side
-    i32.const 0
-    local.set $r
-    block $rlab_done
-      loop $rlab_lp
-        local.get $r
-        i32.const 4
-        i32.ge_u
-        br_if $rlab_done
-        i32.const 0
-        local.set $g
-        block $glab_done
-          loop $glab_lp
-            local.get $g
-            i32.const 4
-            i32.ge_u
-            br_if $glab_done
-            ;; Row = r*4 + g, y = 34 + row*10
-            ;; R digit at x=2
-            i32.const 0x19112
-            local.get $r
-            i32.const 2
-            i32.mul
-            i32.add
-            i32.const 2
-            i32.const 34
-            local.get $r
-            i32.const 4
-            i32.mul
-            local.get $g
-            i32.add
-            i32.const 10
-            i32.mul
-            i32.add
-            i32.const 0xC3  ;; red
-            call $draw_str
-            ;; G digit at x=10
-            i32.const 0x19112
-            local.get $g
-            i32.const 2
-            i32.mul
-            i32.add
-            i32.const 10
-            i32.const 34
-            local.get $r
-            i32.const 4
-            i32.mul
-            local.get $g
-            i32.add
-            i32.const 10
-            i32.mul
-            i32.add
-            i32.const 0x33  ;; green
-            call $draw_str
-
-            local.get $g
-            i32.const 1
-            i32.add
-            local.set $g
-            br $glab_lp
+            br $shade_lp
           end
         end
         local.get $r
         i32.const 1
         i32.add
         local.set $r
-        br $rlab_lp
-      end
-    end
-
-    ;; ---- Draw the 256 color swatches ----
-    ;; Grid: 16 rows (R*4+G) × 16 cols (B*4+L)
-    ;; Cell origin: x = 20 + col*18, y = 34 + row*10
-    ;; Cell size: 16×8 pixels
-    i32.const 0
-    local.set $r
-    block $r_done
-      loop $r_lp
-        local.get $r
-        i32.const 4
-        i32.ge_u
-        br_if $r_done
-        i32.const 0
-        local.set $g
-        block $g_done
-          loop $g_lp
-            local.get $g
-            i32.const 4
-            i32.ge_u
-            br_if $g_done
-            i32.const 0
-            local.set $b
-            block $b_done
-              loop $b_lp
-                local.get $b
-                i32.const 4
-                i32.ge_u
-                br_if $b_done
-                i32.const 0
-                local.set $l
-                block $l_done
-                  loop $l_lp
-                    local.get $l
-                    i32.const 4
-                    i32.ge_u
-                    br_if $l_done
-
-                    ;; Compute palette index: (R<<6)|(G<<4)|(B<<2)|L
-                    local.get $r
-                    i32.const 6
-                    i32.shl
-                    local.get $g
-                    i32.const 4
-                    i32.shl
-                    i32.or
-                    local.get $b
-                    i32.const 2
-                    i32.shl
-                    i32.or
-                    local.get $l
-                    i32.or
-                    local.set $pal_idx
-
-                    ;; Column = B*4 + L
-                    local.get $b
-                    i32.const 4
-                    i32.mul
-                    local.get $l
-                    i32.add
-                    local.set $col
-
-                    ;; Row = R*4 + G
-                    local.get $r
-                    i32.const 4
-                    i32.mul
-                    local.get $g
-                    i32.add
-                    local.set $row
-
-                    ;; Cell x = 20 + col*18
-                    i32.const 20
-                    local.get $col
-                    i32.const 18
-                    i32.mul
-                    i32.add
-                    local.set $cx
-
-                    ;; Cell y = 34 + row*10
-                    i32.const 34
-                    local.get $row
-                    i32.const 10
-                    i32.mul
-                    i32.add
-                    local.set $cy
-
-                    ;; Draw filled rectangle 16×8
-                    local.get $cx
-                    local.get $cy
-                    i32.const 16
-                    i32.const 8
-                    local.get $pal_idx
-                    call $fill_rect
-
-                    ;; Draw thin border on right and bottom edges
-                    ;; Right edge (1px wide): x = cx+16, height 8
-                    local.get $cx
-                    i32.const 16
-                    i32.add
-                    local.get $cy
-                    i32.const 1
-                    i32.const 8
-                    i32.const 0x01  ;; very dark (L=1 only)
-                    call $fill_rect
-                    ;; Bottom edge (1px tall): width 16
-                    local.get $cx
-                    local.get $cy
-                    i32.const 8
-                    i32.add
-                    i32.const 16
-                    i32.const 1
-                    i32.const 0x01  ;; very dark
-                    call $fill_rect
-
-                    local.get $l
-                    i32.const 1
-                    i32.add
-                    local.set $l
-                    br $l_lp
-                  end
-                end
-                local.get $b
-                i32.const 1
-                i32.add
-                local.set $b
-                br $b_lp
-              end
-            end
-            local.get $g
-            i32.const 1
-            i32.add
-            local.set $g
-            br $g_lp
-          end
-        end
-        local.get $r
-        i32.const 1
-        i32.add
-        local.set $r
-        br $r_lp
-      end
-    end
-
-    ;; Draw separator lines between B groups (vertical)
-    i32.const 1
-    local.set $b
-    block $sep_done
-      loop $sep_lp
-        local.get $b
-        i32.const 4
-        i32.ge_u
-        br_if $sep_done
-        ;; x = 20 + b*72 - 1
-        i32.const 19
-        local.get $b
-        i32.const 72
-        i32.mul
-        i32.add
-        i32.const 33
-        i32.const 1
-        i32.const 162
-        i32.const 0x55  ;; dim gray accent
-        call $fill_rect
-
-        local.get $b
-        i32.const 1
-        i32.add
-        local.set $b
-        br $sep_lp
-      end
-    end
-
-    ;; Draw separator lines between R groups (horizontal)
-    i32.const 1
-    local.set $r
-    block $hsep_done
-      loop $hsep_lp
-        local.get $r
-        i32.const 4
-        i32.ge_u
-        br_if $hsep_done
-        ;; y = 34 + r*40 - 1
-        i32.const 20
-        i32.const 33
-        local.get $r
-        i32.const 40
-        i32.mul
-        i32.add
-        i32.const 289
-        i32.const 1
-        i32.const 0x55  ;; dim gray accent
-        call $fill_rect
-
-        local.get $r
-        i32.const 1
-        i32.add
-        local.set $r
-        br $hsep_lp
+        br $hue_lp
       end
     end
 
@@ -9724,7 +9334,7 @@
     i32.const 0x19108
     i32.const 130
     i32.const 194
-    i32.const 0xAB  ;; gray (R=2,G=2,B=2,L=3)
+    i32.const 24  ;; mid-bright gray
     call $draw_str
   )
 
