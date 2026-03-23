@@ -462,8 +462,8 @@ async function loadDemo() {
   const name = document.getElementById('demo').value;
   history.replaceState(null, '', '#' + name);
 
-  // 8 pages = 512KB
-  memory = new WebAssembly.Memory({ initial: 8 });
+  // 10 pages = 640KB (extra for octree cache in vgacraft)
+  memory = new WebAssembly.Memory({ initial: 10 });
   memU8  = new Uint8Array(memory.buffer);
   memU32 = new Uint32Array(memory.buffer);
 
