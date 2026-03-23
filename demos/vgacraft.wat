@@ -3476,6 +3476,17 @@
   (data (i32.const 0x190C0) "Mods:\00")
   (data (i32.const 0x190D0) "/\00")
   (data (i32.const 0x190E0) ":\00")
+  (data (i32.const 0x190F0) "RGBL PALETTE\00")
+  (data (i32.const 0x19100) "R\00")
+  (data (i32.const 0x19102) "G\00")
+  (data (i32.const 0x19104) "B\00")
+  (data (i32.const 0x19106) "L\00")
+  (data (i32.const 0x19108) "ESC:CLOSE\00")
+  (data (i32.const 0x19112) "0\00")
+  (data (i32.const 0x19114) "1\00")
+  (data (i32.const 0x19116) "2\00")
+  (data (i32.const 0x19118) "3\00")
+  (data (i32.const 0x1911A) "256 COLORS\00")
 
   ;; ============================================================
   ;; OCTREE-ACCELERATED VOXEL RAYTRACER (CACHED)
@@ -3493,6 +3504,10 @@
 
   ;; Cache generation counter (low byte of frame counter, bumped on mods)
   (global $g_cache_gen (mut i32) (i32.const 0))
+
+  ;; Inventory toggle state
+  (global $g_show_inv (mut i32) (i32.const 0))
+  (global $g_prev_esc (mut i32) (i32.const 0))
 
   (global $g_hit_face (mut i32) (i32.const 0))
   (global $g_hit_dist (mut f64) (f64.const 0.0))
@@ -6113,6 +6128,17 @@
     i32.load
     local.set $prev_mouse
 
+    ;; If inventory is open, suppress movement/mouse (keep Escape for toggle)
+    global.get $g_show_inv
+    if
+      local.get $keys
+      i32.const 64  ;; preserve only bit 6 (Escape) for inventory toggle
+      i32.and
+      local.set $keys
+      i32.const 0
+      local.set $mouse_btn
+    end
+
     ;; Load player
     i32.const 0x10344
     f64.load
@@ -7997,6 +8023,502 @@
       i32.const 150
       call $note
     end
+
+    ;; ---- Inventory toggle on Escape (bit 6) ----
+    local.get $keys
+    i32.const 64  ;; bit 6 = Escape
+    i32.and
+    i32.const 0
+    i32.ne
+    if
+      global.get $g_prev_esc
+      i32.eqz
+      if
+        ;; Rising edge: toggle inventory
+        global.get $g_show_inv
+        i32.eqz
+        if
+          i32.const 1
+          global.set $g_show_inv
+        else
+          i32.const 0
+          global.set $g_show_inv
+        end
+      end
+    end
+    local.get $keys
+    i32.const 64
+    i32.and
+    i32.const 0
+    i32.ne
+    global.set $g_prev_esc
+
+    ;; ---- Draw inventory overlay if open ----
+    global.get $g_show_inv
+    if
+      call $draw_inventory
+    end
+  )
+
+  ;; ============================================================
+  ;; INVENTORY — Full 256-color RGBL palette display
+  ;; Organized as 16 rows × 16 columns showing all RGBL combinations
+  ;; Rows: R (0-3) × G (0-3) = 16 rows
+  ;; Columns: B (0-3) × L (0-3) = 16 columns
+  ;; Each cell shows the actual palette color as a filled rectangle
+  ;; ============================================================
+  (func $draw_inventory
+    (local $r i32) (local $g i32) (local $b i32) (local $l i32)
+    (local $row i32) (local $col i32)
+    (local $cx i32) (local $cy i32)
+    (local $pal_idx i32)
+    (local $i i32) (local $j i32)
+    (local $label_x i32) (local $label_y i32)
+    (local $anim i32)
+
+    ;; Semi-transparent dark background overlay
+    ;; Fill entire screen with dark color (palette 0 = black)
+    i32.const 0
+    local.set $i
+    block $bg_done
+      loop $bg_lp
+        local.get $i
+        i32.const 200
+        i32.ge_s
+        br_if $bg_done
+        i32.const 0
+        local.set $j
+        block $bg_col_done
+          loop $bg_col_lp
+            local.get $j
+            i32.const 320
+            i32.ge_s
+            br_if $bg_col_done
+            ;; Checkerboard dither: every other pixel to dark
+            local.get $i
+            local.get $j
+            i32.add
+            i32.const 1
+            i32.and
+            if
+              local.get $j
+              local.get $i
+              i32.const 0  ;; black
+              call $put_pixel
+            end
+            local.get $j
+            i32.const 1
+            i32.add
+            local.set $j
+            br $bg_col_lp
+          end
+        end
+        local.get $i
+        i32.const 1
+        i32.add
+        local.set $i
+        br $bg_lp
+      end
+    end
+
+    ;; Title: "RGBL PALETTE" centered at top
+    i32.const 0x190F0  ;; "RGBL PALETTE"
+    i32.const 100
+    i32.const 3
+    i32.const 0x3F  ;; bright white (R=0,G=3,B=3,L=3)
+    call $draw_str
+
+    ;; "256 COLORS" subtitle
+    i32.const 0x1911A  ;; "256 COLORS"
+    i32.const 110
+    i32.const 11
+    i32.const 0x2F  ;; green bright (R=0,G=2,B=3,L=3)
+    call $draw_str
+
+    ;; Column header: "B" label
+    i32.const 0x19104  ;; "B"
+    i32.const 36
+    i32.const 21
+    i32.const 0x1F  ;; blue-ish (R=0,G=1,B=3,L=3)
+    call $draw_str
+    ;; "L" label
+    i32.const 0x19106  ;; "L"
+    i32.const 46
+    i32.const 21
+    i32.const 0xFB  ;; yellow dim (R=3,G=3,B=2,L=3)
+    call $draw_str
+
+    ;; Row header: "R" and "G" labels
+    i32.const 0x19100  ;; "R"
+    i32.const 2
+    i32.const 30
+    i32.const 0xC3  ;; red (R=3,G=0,B=0,L=3)
+    call $draw_str
+    i32.const 0x19102  ;; "G"
+    i32.const 10
+    i32.const 30
+    i32.const 0x33  ;; green (R=0,G=3,B=0,L=3)
+    call $draw_str
+
+    ;; Draw B axis labels (0,1,2,3) across top for each B group
+    i32.const 0
+    local.set $b
+    block $blab_done
+      loop $blab_lp
+        local.get $b
+        i32.const 4
+        i32.ge_u
+        br_if $blab_done
+        ;; B label at x = 22 + b*72 + 32 (centered in B group)
+        i32.const 0x19112  ;; "0" base
+        local.get $b
+        i32.const 2
+        i32.mul
+        i32.add
+        i32.const 40
+        local.get $b
+        i32.const 72
+        i32.mul
+        i32.add
+        i32.const 21
+        i32.const 0x1F  ;; blue accent
+        call $draw_str
+
+        local.get $b
+        i32.const 1
+        i32.add
+        local.set $b
+        br $blab_lp
+      end
+    end
+
+    ;; Draw L axis labels (0,1,2,3) across sub-columns
+    i32.const 0
+    local.set $b
+    block $llab_done
+      loop $llab_lp
+        local.get $b
+        i32.const 4
+        i32.ge_u
+        br_if $llab_done
+        i32.const 0
+        local.set $l
+        block $llab2_done
+          loop $llab2_lp
+            local.get $l
+            i32.const 4
+            i32.ge_u
+            br_if $llab2_done
+            ;; L label at x = 22 + b*72 + l*18 + 6
+            i32.const 0x19112  ;; "0" base
+            local.get $l
+            i32.const 2
+            i32.mul
+            i32.add
+            i32.const 28
+            local.get $b
+            i32.const 72
+            i32.mul
+            i32.add
+            local.get $l
+            i32.const 18
+            i32.mul
+            i32.add
+            i32.const 27
+            i32.const 0xFB  ;; yellow dim
+            call $draw_str
+
+            local.get $l
+            i32.const 1
+            i32.add
+            local.set $l
+            br $llab2_lp
+          end
+        end
+        local.get $b
+        i32.const 1
+        i32.add
+        local.set $b
+        br $llab_lp
+      end
+    end
+
+    ;; Draw R/G row labels on left side
+    i32.const 0
+    local.set $r
+    block $rlab_done
+      loop $rlab_lp
+        local.get $r
+        i32.const 4
+        i32.ge_u
+        br_if $rlab_done
+        i32.const 0
+        local.set $g
+        block $glab_done
+          loop $glab_lp
+            local.get $g
+            i32.const 4
+            i32.ge_u
+            br_if $glab_done
+            ;; Row = r*4 + g, y = 34 + row*10
+            ;; R digit at x=2
+            i32.const 0x19112
+            local.get $r
+            i32.const 2
+            i32.mul
+            i32.add
+            i32.const 2
+            i32.const 34
+            local.get $r
+            i32.const 4
+            i32.mul
+            local.get $g
+            i32.add
+            i32.const 10
+            i32.mul
+            i32.add
+            i32.const 0xC3  ;; red
+            call $draw_str
+            ;; G digit at x=10
+            i32.const 0x19112
+            local.get $g
+            i32.const 2
+            i32.mul
+            i32.add
+            i32.const 10
+            i32.const 34
+            local.get $r
+            i32.const 4
+            i32.mul
+            local.get $g
+            i32.add
+            i32.const 10
+            i32.mul
+            i32.add
+            i32.const 0x33  ;; green
+            call $draw_str
+
+            local.get $g
+            i32.const 1
+            i32.add
+            local.set $g
+            br $glab_lp
+          end
+        end
+        local.get $r
+        i32.const 1
+        i32.add
+        local.set $r
+        br $rlab_lp
+      end
+    end
+
+    ;; ---- Draw the 256 color swatches ----
+    ;; Grid: 16 rows (R*4+G) × 16 cols (B*4+L)
+    ;; Cell origin: x = 20 + col*18, y = 34 + row*10
+    ;; Cell size: 16×8 pixels
+    i32.const 0
+    local.set $r
+    block $r_done
+      loop $r_lp
+        local.get $r
+        i32.const 4
+        i32.ge_u
+        br_if $r_done
+        i32.const 0
+        local.set $g
+        block $g_done
+          loop $g_lp
+            local.get $g
+            i32.const 4
+            i32.ge_u
+            br_if $g_done
+            i32.const 0
+            local.set $b
+            block $b_done
+              loop $b_lp
+                local.get $b
+                i32.const 4
+                i32.ge_u
+                br_if $b_done
+                i32.const 0
+                local.set $l
+                block $l_done
+                  loop $l_lp
+                    local.get $l
+                    i32.const 4
+                    i32.ge_u
+                    br_if $l_done
+
+                    ;; Compute palette index: (R<<6)|(G<<4)|(B<<2)|L
+                    local.get $r
+                    i32.const 6
+                    i32.shl
+                    local.get $g
+                    i32.const 4
+                    i32.shl
+                    i32.or
+                    local.get $b
+                    i32.const 2
+                    i32.shl
+                    i32.or
+                    local.get $l
+                    i32.or
+                    local.set $pal_idx
+
+                    ;; Column = B*4 + L
+                    local.get $b
+                    i32.const 4
+                    i32.mul
+                    local.get $l
+                    i32.add
+                    local.set $col
+
+                    ;; Row = R*4 + G
+                    local.get $r
+                    i32.const 4
+                    i32.mul
+                    local.get $g
+                    i32.add
+                    local.set $row
+
+                    ;; Cell x = 20 + col*18
+                    i32.const 20
+                    local.get $col
+                    i32.const 18
+                    i32.mul
+                    i32.add
+                    local.set $cx
+
+                    ;; Cell y = 34 + row*10
+                    i32.const 34
+                    local.get $row
+                    i32.const 10
+                    i32.mul
+                    i32.add
+                    local.set $cy
+
+                    ;; Draw filled rectangle 16×8
+                    local.get $cx
+                    local.get $cy
+                    i32.const 16
+                    i32.const 8
+                    local.get $pal_idx
+                    call $fill_rect
+
+                    ;; Draw thin border on right and bottom edges
+                    ;; Right edge (1px wide): x = cx+16, height 8
+                    local.get $cx
+                    i32.const 16
+                    i32.add
+                    local.get $cy
+                    i32.const 1
+                    i32.const 8
+                    i32.const 0x01  ;; very dark (L=1 only)
+                    call $fill_rect
+                    ;; Bottom edge (1px tall): width 16
+                    local.get $cx
+                    local.get $cy
+                    i32.const 8
+                    i32.add
+                    i32.const 16
+                    i32.const 1
+                    i32.const 0x01  ;; very dark
+                    call $fill_rect
+
+                    local.get $l
+                    i32.const 1
+                    i32.add
+                    local.set $l
+                    br $l_lp
+                  end
+                end
+                local.get $b
+                i32.const 1
+                i32.add
+                local.set $b
+                br $b_lp
+              end
+            end
+            local.get $g
+            i32.const 1
+            i32.add
+            local.set $g
+            br $g_lp
+          end
+        end
+        local.get $r
+        i32.const 1
+        i32.add
+        local.set $r
+        br $r_lp
+      end
+    end
+
+    ;; Draw separator lines between B groups (vertical)
+    i32.const 1
+    local.set $b
+    block $sep_done
+      loop $sep_lp
+        local.get $b
+        i32.const 4
+        i32.ge_u
+        br_if $sep_done
+        ;; x = 20 + b*72 - 1
+        i32.const 19
+        local.get $b
+        i32.const 72
+        i32.mul
+        i32.add
+        i32.const 33
+        i32.const 1
+        i32.const 162
+        i32.const 0x55  ;; dim gray accent
+        call $fill_rect
+
+        local.get $b
+        i32.const 1
+        i32.add
+        local.set $b
+        br $sep_lp
+      end
+    end
+
+    ;; Draw separator lines between R groups (horizontal)
+    i32.const 1
+    local.set $r
+    block $hsep_done
+      loop $hsep_lp
+        local.get $r
+        i32.const 4
+        i32.ge_u
+        br_if $hsep_done
+        ;; y = 34 + r*40 - 1
+        i32.const 20
+        i32.const 33
+        local.get $r
+        i32.const 40
+        i32.mul
+        i32.add
+        i32.const 289
+        i32.const 1
+        i32.const 0x55  ;; dim gray accent
+        call $fill_rect
+
+        local.get $r
+        i32.const 1
+        i32.add
+        local.set $r
+        br $hsep_lp
+      end
+    end
+
+    ;; Footer: "ESC:CLOSE"
+    i32.const 0x19108
+    i32.const 130
+    i32.const 194
+    i32.const 0xAB  ;; gray (R=2,G=2,B=2,L=3)
+    call $draw_str
   )
 
   ;; ---- Dig or place block ----
