@@ -133,12 +133,17 @@
   body.theater-mode #portrait-btn,
   .canvas-wrap:fullscreen #portrait-btn,
   .canvas-wrap:-webkit-full-screen #portrait-btn { display: block; }
-  /* In portrait mode, counter-rotate the ROT button so it stays readable */
+  /* In portrait mode, counter-rotate the buttons so they stay readable.
+     The canvas-wrap is rotated -90deg, so we rotate buttons +90deg.
+     We position them in the visual top-right corner of the landscape view.
+     Since the wrap is rotated, CSS "top" = visual left, CSS "right" = visual top. 
+     Use fixed positioning to avoid clipping by overflow. */
   body.portrait-mode #portrait-btn {
-    transform: rotate(90deg);
-    transform-origin: top right;
+    position: fixed;
+    transform: none;
     top: 8px;
     right: 60px;
+    z-index: 30;
   }
   #portrait-btn.active, #fs-btn.active { border-color: var(--accent); color: var(--accent); }
 
@@ -167,12 +172,13 @@
   body.portrait-mode #exit-mode-btn { display: block; }
   .canvas-wrap:fullscreen #exit-mode-btn,
   .canvas-wrap:-webkit-full-screen #exit-mode-btn { display: block; }
-  /* In portrait mode, counter-rotate the button so it stays readable */
+  /* In portrait mode, use fixed positioning so buttons don't get clipped */
   body.portrait-mode #exit-mode-btn {
-    transform: rotate(90deg);
-    transform-origin: top right;
+    position: fixed;
+    transform: none;
     top: 8px;
     right: 8px;
+    z-index: 30;
   }
 
   #pause-btn {
@@ -381,13 +387,14 @@
     left: 50%;
     transform: translate(-50%, -50%) rotate(-90deg);
     /* After -90deg rotation: CSS width → visual height, CSS height → visual width.
-       We want visual height = 100dvh → CSS width = 100dvh
+       We want visual height ≤ 100dvh → CSS width ≤ 100dvh
        We want visual width ≤ 100vw → CSS height ≤ 100vw
        With aspect-ratio 320/200: height = width / 1.6
-       So: width ≤ 100vw * 1.6 (to keep height ≤ 100vw)
-       And: width ≤ 100dvh (to keep visual height ≤ screen height) */
-    width: min(100vh, 100vw * 1.6);
-    width: min(100dvh, 100vw * 1.6);
+       So need: width / 1.6 ≤ 100vw → width ≤ 160vw
+       And: width ≤ 100dvh
+       Use 96dvh/96vw to leave room for buttons and safe areas */
+    width: min(96vh, 96vw * 1.6);
+    width: min(96dvh, 96vw * 1.6);
     aspect-ratio: 320 / 200;
     border-radius: 0;
     border: none;
@@ -395,6 +402,7 @@
     max-width: none;
     max-height: none;
     flex-shrink: 0;
+    overflow: visible;
   }
   body.portrait-mode .canvas-wrap::before { display: none; }
 
