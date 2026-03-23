@@ -26,6 +26,7 @@ let memory, memU8, memU32, wasmInstance;
 let animId = null;
 let frameCount = 0, fpsFrames = 0, lastFpsTime = 0;
 let paused = false;
+let ditherEnabled = true;
 
 // --- Sound engine ---
 let audioCtx = null, masterGain = null, isMuted = false, audioDest = null;
@@ -301,6 +302,7 @@ function loop(ts) {
   memU32[0] = frameCount++;         // frame counter (monotonic)
   fpsFrames++;
   memU32[3] = (ts | 0);            // tick_ms
+  memU8[CTL_OFFSET + 17] = ditherEnabled ? 1 : 0;  // dither flag
 
   // call guest frame
   if (wasmInstance.exports.frame) {
@@ -317,6 +319,15 @@ function loop(ts) {
   }
 
   animId = requestAnimationFrame(loop);
+}
+
+function toggleDither() {
+  ditherEnabled = !ditherEnabled;
+  const btn = document.getElementById('dither-btn');
+  if (btn) {
+    btn.textContent = ditherEnabled ? 'DTH' : 'RAW';
+    btn.classList.toggle('active', ditherEnabled);
+  }
 }
 
 function togglePause() {

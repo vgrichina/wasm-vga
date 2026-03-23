@@ -1928,7 +1928,7 @@
     i32.const 5    ;; [3,3]
     i32.store8
 
-    ;; Keep channel level table at 0x19600 for backward compat (sky palette etc)
+    ;; Keep channel level table at 0x19600 for backward compat
     i32.const 0x19600
     i32.const 0     ;; chan[0] = 0
     i32.store8
@@ -7466,77 +7466,83 @@
     i32.gt_s
     if  i32.const 255  local.set $b  end
 
-    ;; Compute Bayer 4x4 threshold for dithering
-    local.get $px
-    i32.const 3
-    i32.and
-    local.set $bx
-    local.get $py
-    i32.const 3
-    i32.and
-    local.set $by
-    local.get $by
-    i32.const 4
-    i32.mul
-    local.get $bx
-    i32.add
-    local.set $idx
-
-    ;; Bayer 4x4 matrix stored at 0x19640 (16 bytes), written by init
-    i32.const 0x19640
-    local.get $idx
-    i32.add
+    ;; Check dither enable flag at control block offset 0x11
+    ;; If non-zero, apply ordered dithering; otherwise skip to straight LUT
+    i32.const 0x11
     i32.load8_u
-    local.set $threshold
+    if
+      ;; Compute Bayer 4x4 threshold for dithering
+      local.get $px
+      i32.const 3
+      i32.and
+      local.set $bx
+      local.get $py
+      i32.const 3
+      i32.and
+      local.set $by
+      local.get $by
+      i32.const 4
+      i32.mul
+      local.get $bx
+      i32.add
+      local.set $idx
 
-    ;; Add dither noise to RGB before quantization to 5-bit
-    ;; threshold is 0-15, we scale to ±4 range for smooth dithering
-    ;; noise = (threshold - 8) => range -8..+7, scale to ±4
-    ;; Apply to each channel before >>3 quantization
-    local.get $r
-    local.get $threshold
-    i32.const 8
-    i32.sub
-    i32.add
-    local.set $r
-    local.get $r
-    i32.const 0
-    i32.lt_s
-    if  i32.const 0  local.set $r  end
-    local.get $r
-    i32.const 255
-    i32.gt_s
-    if  i32.const 255  local.set $r  end
+      ;; Bayer 4x4 matrix stored at 0x19640 (16 bytes), written by init
+      i32.const 0x19640
+      local.get $idx
+      i32.add
+      i32.load8_u
+      local.set $threshold
 
-    local.get $g
-    local.get $threshold
-    i32.const 8
-    i32.sub
-    i32.add
-    local.set $g
-    local.get $g
-    i32.const 0
-    i32.lt_s
-    if  i32.const 0  local.set $g  end
-    local.get $g
-    i32.const 255
-    i32.gt_s
-    if  i32.const 255  local.set $g  end
+      ;; Add dither noise to RGB before quantization to 5-bit
+      ;; threshold is 0-15, we scale to ±4 range for smooth dithering
+      ;; noise = (threshold - 8) => range -8..+7
+      ;; Apply to each channel before >>3 quantization
+      local.get $r
+      local.get $threshold
+      i32.const 8
+      i32.sub
+      i32.add
+      local.set $r
+      local.get $r
+      i32.const 0
+      i32.lt_s
+      if  i32.const 0  local.set $r  end
+      local.get $r
+      i32.const 255
+      i32.gt_s
+      if  i32.const 255  local.set $r  end
 
-    local.get $b
-    local.get $threshold
-    i32.const 8
-    i32.sub
-    i32.add
-    local.set $b
-    local.get $b
-    i32.const 0
-    i32.lt_s
-    if  i32.const 0  local.set $b  end
-    local.get $b
-    i32.const 255
-    i32.gt_s
-    if  i32.const 255  local.set $b  end
+      local.get $g
+      local.get $threshold
+      i32.const 8
+      i32.sub
+      i32.add
+      local.set $g
+      local.get $g
+      i32.const 0
+      i32.lt_s
+      if  i32.const 0  local.set $g  end
+      local.get $g
+      i32.const 255
+      i32.gt_s
+      if  i32.const 255  local.set $g  end
+
+      local.get $b
+      local.get $threshold
+      i32.const 8
+      i32.sub
+      i32.add
+      local.set $b
+      local.get $b
+      i32.const 0
+      i32.lt_s
+      if  i32.const 0  local.set $b  end
+      local.get $b
+      i32.const 255
+      i32.gt_s
+      if  i32.const 255  local.set $b  end
+    end
 
     ;; LUT lookup: index = (r>>3)<<10 | (g>>3)<<5 | (b>>3)
     i32.const 0x20000
@@ -8139,125 +8145,7 @@
       end
     end
 
-    ;; Update sky palette: 4 brightness levels of sky blue
-    ;; New palette: write actual RGB to 4 reserved palette slots (indices 92-95)
-    ;; These are within hue ramp 3 (amber, indices 80-95) - repurposed for sky
-    ;; Actually just overwrite palette entries 0x5C-0x5F (92-95) directly
-    ;; Sky at full day: R=85, G=170, B=255
-
-    ;; Level 0: darkest sky (shadows)
-    i32.const 85
-    i32.const 33
-    i32.mul
-    local.get $day_bright
-    i32.mul
-    i32.const 65025
-    i32.div_u
-    local.set $sky_r
-    i32.const 170
-    i32.const 33
-    i32.mul
-    local.get $day_bright
-    i32.mul
-    i32.const 65025
-    i32.div_u
-    local.set $sky_g
-    i32.const 255
-    i32.const 33
-    i32.mul
-    local.get $day_bright
-    i32.mul
-    i32.const 65025
-    i32.div_u
-    local.set $sky_b
-    i32.const 0x5C
-    local.get $sky_r
-    local.get $sky_g
-    local.get $sky_b
-    call $set_pal
-
-    ;; Level 1
-    i32.const 85
-    i32.const 102
-    i32.mul
-    local.get $day_bright
-    i32.mul
-    i32.const 65025
-    i32.div_u
-    local.set $sky_r
-    i32.const 170
-    i32.const 102
-    i32.mul
-    local.get $day_bright
-    i32.mul
-    i32.const 65025
-    i32.div_u
-    local.set $sky_g
-    i32.const 255
-    i32.const 102
-    i32.mul
-    local.get $day_bright
-    i32.mul
-    i32.const 65025
-    i32.div_u
-    local.set $sky_b
-    i32.const 0x5D
-    local.get $sky_r
-    local.get $sky_g
-    local.get $sky_b
-    call $set_pal
-
-    ;; Level 2
-    i32.const 85
-    i32.const 179
-    i32.mul
-    local.get $day_bright
-    i32.mul
-    i32.const 65025
-    i32.div_u
-    local.set $sky_r
-    i32.const 170
-    i32.const 179
-    i32.mul
-    local.get $day_bright
-    i32.mul
-    i32.const 65025
-    i32.div_u
-    local.set $sky_g
-    i32.const 255
-    i32.const 179
-    i32.mul
-    local.get $day_bright
-    i32.mul
-    i32.const 65025
-    i32.div_u
-    local.set $sky_b
-    i32.const 0x5E
-    local.get $sky_r
-    local.get $sky_g
-    local.get $sky_b
-    call $set_pal
-
-    ;; Level 3: full brightness sky
-    i32.const 85
-    local.get $day_bright
-    i32.mul
-    i32.const 255
-    i32.div_u
-    local.set $sky_r
-    i32.const 170
-    local.get $day_bright
-    i32.mul
-    i32.const 255
-    i32.div_u
-    local.set $sky_g
-    local.get $day_bright
-    local.set $sky_b
-    i32.const 0x5F
-    local.get $sky_r
-    local.get $sky_g
-    local.get $sky_b
-    call $set_pal
+    ;; Sky uses color ramps + dithering like everything else (no special palette)
 
     ;; ---- Update monsters (AI) ----
     i32.const 0
