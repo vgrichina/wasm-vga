@@ -5358,6 +5358,266 @@
   )
 
   ;; ============================================================
+  ;; SHADOW RAY — Simple short-range DDA to check sun occlusion
+  ;; Returns: 0 = in shadow, 1 = lit, intermediate = partial
+  ;; Max 20 block steps, no octree (short distance is fast)
+  ;; ============================================================
+  (func $shadow_ray (param $ox f64) (param $oy f64) (param $oz f64)
+                     (param $sdx f64) (param $sdy f64) (param $sdz f64)
+                     (result i32)
+    (local $vx i32) (local $vy i32) (local $vz i32)
+    (local $step_x i32) (local $step_y i32) (local $step_z i32)
+    (local $t_max_x f64) (local $t_max_y f64) (local $t_max_z f64)
+    (local $t_delta_x f64) (local $t_delta_y f64) (local $t_delta_z f64)
+    (local $steps i32) (local $block i32)
+    (local $inv_dx f64) (local $inv_dy f64) (local $inv_dz f64)
+
+    ;; Starting voxel
+    local.get $ox
+    f64.floor
+    i32.trunc_f64_s
+    local.set $vx
+    local.get $oy
+    f64.floor
+    i32.trunc_f64_s
+    local.set $vy
+    local.get $oz
+    f64.floor
+    i32.trunc_f64_s
+    local.set $vz
+
+    ;; Step direction
+    local.get $sdx
+    f64.const 0.0
+    f64.ge
+    if (result i32)  i32.const 1  else  i32.const -1  end
+    local.set $step_x
+    local.get $sdy
+    f64.const 0.0
+    f64.ge
+    if (result i32)  i32.const 1  else  i32.const -1  end
+    local.set $step_y
+    local.get $sdz
+    f64.const 0.0
+    f64.ge
+    if (result i32)  i32.const 1  else  i32.const -1  end
+    local.set $step_z
+
+    ;; Inverse direction
+    local.get $sdx
+    f64.abs
+    f64.const 0.000001
+    f64.gt
+    if (result f64)
+      f64.const 1.0
+      local.get $sdx
+      f64.div
+    else
+      f64.const 999999.0
+    end
+    local.set $inv_dx
+    local.get $sdy
+    f64.abs
+    f64.const 0.000001
+    f64.gt
+    if (result f64)
+      f64.const 1.0
+      local.get $sdy
+      f64.div
+    else
+      f64.const 999999.0
+    end
+    local.set $inv_dy
+    local.get $sdz
+    f64.abs
+    f64.const 0.000001
+    f64.gt
+    if (result f64)
+      f64.const 1.0
+      local.get $sdz
+      f64.div
+    else
+      f64.const 999999.0
+    end
+    local.set $inv_dz
+
+    ;; t_delta = abs(1/dir)
+    local.get $inv_dx
+    f64.abs
+    local.set $t_delta_x
+    local.get $inv_dy
+    f64.abs
+    local.set $t_delta_y
+    local.get $inv_dz
+    f64.abs
+    local.set $t_delta_z
+
+    ;; t_max = distance to next boundary
+    local.get $step_x
+    i32.const 1
+    i32.eq
+    if (result f64)
+      local.get $vx
+      f64.convert_i32_s
+      f64.const 1.0
+      f64.add
+      local.get $ox
+      f64.sub
+      local.get $inv_dx
+      f64.mul
+    else
+      local.get $ox
+      local.get $vx
+      f64.convert_i32_s
+      f64.sub
+      local.get $inv_dx
+      f64.neg
+      f64.mul
+    end
+    local.set $t_max_x
+    local.get $step_y
+    i32.const 1
+    i32.eq
+    if (result f64)
+      local.get $vy
+      f64.convert_i32_s
+      f64.const 1.0
+      f64.add
+      local.get $oy
+      f64.sub
+      local.get $inv_dy
+      f64.mul
+    else
+      local.get $oy
+      local.get $vy
+      f64.convert_i32_s
+      f64.sub
+      local.get $inv_dy
+      f64.neg
+      f64.mul
+    end
+    local.set $t_max_y
+    local.get $step_z
+    i32.const 1
+    i32.eq
+    if (result f64)
+      local.get $vz
+      f64.convert_i32_s
+      f64.const 1.0
+      f64.add
+      local.get $oz
+      f64.sub
+      local.get $inv_dz
+      f64.mul
+    else
+      local.get $oz
+      local.get $vz
+      f64.convert_i32_s
+      f64.sub
+      local.get $inv_dz
+      f64.neg
+      f64.mul
+    end
+    local.set $t_max_z
+
+    i32.const 0
+    local.set $steps
+
+    block $done
+      loop $lp
+        local.get $steps
+        i32.const 20
+        i32.ge_u
+        br_if $done
+
+        ;; Step to next voxel boundary
+        local.get $t_max_x
+        local.get $t_max_y
+        f64.le
+        local.get $t_max_x
+        local.get $t_max_z
+        f64.le
+        i32.and
+        if
+          local.get $vx
+          local.get $step_x
+          i32.add
+          local.set $vx
+          local.get $t_max_x
+          local.get $t_delta_x
+          f64.add
+          local.set $t_max_x
+        else
+          local.get $t_max_y
+          local.get $t_max_z
+          f64.le
+          if
+            local.get $vy
+            local.get $step_y
+            i32.add
+            local.set $vy
+            local.get $t_max_y
+            local.get $t_delta_y
+            f64.add
+            local.set $t_max_y
+          else
+            local.get $vz
+            local.get $step_z
+            i32.add
+            local.set $vz
+            local.get $t_max_z
+            local.get $t_delta_z
+            f64.add
+            local.set $t_max_z
+          end
+        end
+
+        ;; Bounds check: skip if outside world
+        local.get $vz
+        i32.const 0
+        i32.lt_s
+        local.get $vz
+        i32.const 32
+        i32.gt_s
+        i32.or
+        if
+          ;; Escaped world vertically — likely clear sky above
+          i32.const 1
+          return
+        end
+
+        ;; Check block at new voxel
+        local.get $vx
+        local.get $vy
+        local.get $vz
+        call $get_block
+        local.set $block
+        local.get $block
+        i32.const 0
+        i32.ne
+        local.get $block
+        i32.const 5  ;; water is transparent to light
+        i32.ne
+        i32.and
+        if
+          ;; Hit solid block — in shadow
+          i32.const 0
+          return
+        end
+
+        local.get $steps
+        i32.const 1
+        i32.add
+        local.set $steps
+        br $lp
+      end
+    end
+
+    ;; Reached max steps without hitting — consider lit
+    i32.const 1
+  )
+
+  ;; ============================================================
   ;; PROCEDURAL TEXTURES
   ;; ============================================================
   (func $texture_offset (param $type i32) (param $face i32)
@@ -6111,6 +6371,8 @@
     (local $cel_dir_x f64) (local $cel_dir_y f64) (local $cel_dir_z f64)
     (local $cel_active i32) (local $cel_is_sun i32)
     (local $cel_angle f64) (local $cel_dot f64)
+    (local $shadow_lit i32) (local $sun_dot f64)
+    (local $shadow_ox f64) (local $shadow_oy f64) (local $shadow_oz f64)
 
     i32.const 12
     i32.load
@@ -7167,13 +7429,13 @@
               i32.gt_s
               if  i32.const 255  local.set $shade_full  end
 
-              ;; Apply face lighting offset
+              ;; Apply face lighting offset (ambient contribution for non-sun faces)
               local.get $face
               i32.const 0
               i32.eq
               if
                 local.get $shade_full
-                i32.const 32
+                i32.const 20
                 i32.add
                 local.set $shade_full
               end
@@ -7182,7 +7444,7 @@
               i32.eq
               if
                 local.get $shade_full
-                i32.const 16
+                i32.const 10
                 i32.sub
                 local.set $shade_full
               end
@@ -7191,7 +7453,7 @@
               i32.eq
               if
                 local.get $shade_full
-                i32.const 32
+                i32.const 25
                 i32.sub
                 local.set $shade_full
               end
@@ -7214,6 +7476,196 @@
               local.set $shade_full
 
               ;; Clamp to 0..255
+              local.get $shade_full
+              i32.const 0
+              i32.lt_s
+              if  i32.const 0  local.set $shade_full  end
+              local.get $shade_full
+              i32.const 255
+              i32.gt_s
+              if  i32.const 255  local.set $shade_full  end
+
+              ;; ============================================================
+              ;; SUN SHADOW RAY + DIRECTIONAL LIGHTING
+              ;; Cast shadow ray from hit point toward sun to check occlusion
+              ;; Also compute N·L for directional sun lighting
+              ;; ============================================================
+              i32.const 1
+              local.set $shadow_lit
+
+              local.get $cel_active
+              local.get $cel_is_sun
+              i32.and
+              if
+                ;; Compute face normal dot sun direction for directional lighting
+                ;; face 0 (top): normal = (0, 0, 1)  → dot = cel_dir_z
+                ;; face 1 (side bright): normal ~ (-1,0,0) or (0,-1,0) → approximate with -cel_dir_x
+                ;; face 2 (side dim): normal ~ (1,0,0) or (0,1,0) → approximate with cel_dir_x
+                ;; face 3 (bottom): normal = (0, 0, -1) → dot = -cel_dir_z
+                f64.const 0.0
+                local.set $sun_dot
+
+                local.get $face
+                i32.const 0
+                i32.eq
+                if
+                  local.get $cel_dir_z
+                  local.set $sun_dot
+                end
+                local.get $face
+                i32.const 1
+                i32.eq
+                if
+                  ;; Side bright: take max of abs(cel_dir_x), abs(cel_dir_y) negated
+                  local.get $cel_dir_x
+                  f64.neg
+                  local.get $cel_dir_y
+                  f64.neg
+                  f64.max
+                  local.set $sun_dot
+                end
+                local.get $face
+                i32.const 2
+                i32.eq
+                if
+                  ;; Side dim: take max of cel_dir_x, cel_dir_y
+                  local.get $cel_dir_x
+                  local.get $cel_dir_y
+                  f64.max
+                  local.set $sun_dot
+                end
+                local.get $face
+                i32.const 3
+                i32.eq
+                if
+                  local.get $cel_dir_z
+                  f64.neg
+                  local.set $sun_dot
+                end
+
+                ;; Clamp sun_dot to [0, 1]
+                local.get $sun_dot
+                f64.const 0.0
+                f64.lt
+                if
+                  f64.const 0.0
+                  local.set $sun_dot
+                end
+                local.get $sun_dot
+                f64.const 1.0
+                f64.gt
+                if
+                  f64.const 1.0
+                  local.set $sun_dot
+                end
+
+                ;; Apply directional lighting: blend between ambient (0.35) and full lit (1.0)
+                ;; effective = 0.35 + 0.65 * sun_dot
+                ;; shade_full = shade_full * effective
+                local.get $shade_full
+                f64.convert_i32_s
+                f64.const 0.35
+                f64.const 0.65
+                local.get $sun_dot
+                f64.mul
+                f64.add
+                f64.mul
+                i32.trunc_f64_s
+                local.set $shade_full
+
+                ;; Shadow ray: offset hit point slightly along face normal
+                ;; to avoid self-intersection, then trace toward sun
+                ;; Only trace on checkerboard pattern for performance (every other pixel)
+                local.get $px_col
+                local.get $px_row
+                i32.add
+                i32.const 1
+                i32.and
+                i32.eqz
+                if
+                  ;; Compute shadow origin: hit point + face normal * 0.01
+                  local.get $hit_px
+                  local.set $shadow_ox
+                  local.get $hit_py
+                  local.set $shadow_oy
+                  local.get $hit_pz
+                  local.set $shadow_oz
+
+                  local.get $face
+                  i32.const 0
+                  i32.eq
+                  if
+                    local.get $shadow_oz
+                    f64.const 0.02
+                    f64.add
+                    local.set $shadow_oz
+                  end
+                  local.get $face
+                  i32.const 3
+                  i32.eq
+                  if
+                    local.get $shadow_oz
+                    f64.const 0.02
+                    f64.sub
+                    local.set $shadow_oz
+                  end
+                  local.get $face
+                  i32.const 1
+                  i32.eq
+                  if
+                    local.get $shadow_ox
+                    f64.const 0.02
+                    f64.sub
+                    local.set $shadow_ox
+                    local.get $shadow_oy
+                    f64.const 0.02
+                    f64.sub
+                    local.set $shadow_oy
+                  end
+                  local.get $face
+                  i32.const 2
+                  i32.eq
+                  if
+                    local.get $shadow_ox
+                    f64.const 0.02
+                    f64.add
+                    local.set $shadow_ox
+                    local.get $shadow_oy
+                    f64.const 0.02
+                    f64.add
+                    local.set $shadow_oy
+                  end
+
+                  ;; Cast shadow ray toward sun
+                  local.get $shadow_ox
+                  local.get $shadow_oy
+                  local.get $shadow_oz
+                  local.get $cel_dir_x
+                  local.get $cel_dir_y
+                  local.get $cel_dir_z
+                  call $shadow_ray
+                  local.set $shadow_lit
+                else
+                  ;; Off-pixel: borrow neighbor result by default lit
+                  ;; (we accept slight inaccuracy on alternating pixels)
+                  i32.const 1
+                  local.set $shadow_lit
+                end
+
+                ;; Apply shadow: if in shadow, darken by 55%
+                local.get $shadow_lit
+                i32.eqz
+                if
+                  local.get $shade_full
+                  i32.const 115  ;; 45% brightness when shadowed (0.45 * 256 ≈ 115)
+                  i32.mul
+                  i32.const 256
+                  i32.div_u
+                  local.set $shade_full
+                end
+              end
+
+              ;; Clamp shade_full after sun lighting
               local.get $shade_full
               i32.const 0
               i32.lt_s
