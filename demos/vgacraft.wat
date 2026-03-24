@@ -4235,6 +4235,7 @@
   (data (i32.const 0x19116) "2\00")
   (data (i32.const 0x19118) "3\00")
   (data (i32.const 0x1911A) "256 COLORS\00")
+  (data (i32.const 0x19126) "Steps:\00")
   ;; Bayer dither matrix at 0x19640 is written in init
 
   ;; ============================================================
@@ -4263,6 +4264,9 @@
   (global $g_hit_vx (mut i32) (i32.const 0))
   (global $g_hit_vy (mut i32) (i32.const 0))
   (global $g_hit_vz (mut i32) (i32.const 0))
+
+  ;; Total ray steps this frame (cast_ray + shadow_ray combined)
+  (global $g_total_steps (mut i32) (i32.const 0))
 
   ;; ---- Terrain height bounds for a rectangular XY region ----
   ;; Returns min terrain height via global, max as result
@@ -5607,6 +5611,10 @@
           i32.const 1
           i32.add
           local.set $steps
+          global.get $g_total_steps
+          i32.const 1
+          i32.add
+          global.set $g_total_steps
           br $lp
         end
 
@@ -5976,6 +5984,10 @@
           i32.const 1
           i32.add
           local.set $steps
+          global.get $g_total_steps
+          i32.const 1
+          i32.add
+          global.set $g_total_steps
           br $lp
         end
 
@@ -6132,6 +6144,10 @@
         i32.const 1
         i32.add
         local.set $steps
+        global.get $g_total_steps
+        i32.const 1
+        i32.add
+        global.set $g_total_steps
         br $lp
       end
     end
@@ -6708,6 +6724,10 @@
           i32.const 1
           i32.add
           local.set $steps
+          global.get $g_total_steps
+          i32.const 1
+          i32.add
+          global.set $g_total_steps
           br $lp
         end
 
@@ -7038,6 +7058,10 @@
           i32.const 1
           i32.add
           local.set $steps
+          global.get $g_total_steps
+          i32.const 1
+          i32.add
+          global.set $g_total_steps
           br $lp
         end
 
@@ -7142,6 +7166,10 @@
         i32.const 1
         i32.add
         local.set $steps
+        global.get $g_total_steps
+        i32.const 1
+        i32.add
+        global.set $g_total_steps
         br $lp
       end
     end
@@ -9925,6 +9953,10 @@
     i32.const 0xFF
     call $put_pixel
 
+    ;; Reset total step counter for this frame
+    i32.const 0
+    global.set $g_total_steps
+
     ;; ---- HUD ----
     ;; Time display (top-right)
     local.get $game_hour
@@ -10013,6 +10045,18 @@
     i32.const 62
     i32.const 2
     i32.const 24
+    call $draw_num
+
+    ;; ---- Total ray steps display ----
+    i32.const 0x19126
+    i32.const 2
+    i32.const 9
+    i32.const 24
+    call $draw_str
+    global.get $g_total_steps
+    i32.const 32
+    i32.const 9
+    i32.const 31
     call $draw_num
 
     ;; ---- Gods angry message ----
