@@ -307,61 +307,76 @@
     local.get $result
   )
 
-  ;; ---- Terrain height: returns 2-14 for given world XY ----
+  ;; ---- Terrain height: returns 1-22 for given world XY ----
+  ;; More hilly terrain with deeper valleys for lakes (water level at Z<=7)
   (func $terrain_height (param $wx i32) (param $wy i32) (result i32)
-    (local $h1 i32) (local $h2 i32) (local $h3 i32) (local $result i32)
-    ;; h1 = smooth_hash(wx, wy, 16) >> 5
+    (local $h1 i32) (local $h2 i32) (local $h3 i32) (local $h4 i32) (local $result i32)
+    ;; h1 = smooth_hash(wx, wy, 32) >> 4  (large rolling hills, 0-15)
     local.get $wx
     local.get $wy
-    i32.const 16
+    i32.const 32
     call $smooth_hash
-    i32.const 5
+    i32.const 4
     i32.shr_u
     local.set $h1
-    ;; h2 = smooth_hash(wx+1000, wy+2000, 7) >> 6
+    ;; h2 = smooth_hash(wx+1000, wy+2000, 12) >> 5 (medium bumps, 0-7)
     local.get $wx
     i32.const 1000
     i32.add
     local.get $wy
     i32.const 2000
     i32.add
-    i32.const 7
+    i32.const 12
     call $smooth_hash
-    i32.const 6
+    i32.const 5
     i32.shr_u
     local.set $h2
-    ;; h3 = hash2d(wx+5000, wy+7000) & 1
+    ;; h3 = smooth_hash(wx+5000, wy+7000, 6) >> 6 (fine detail, 0-3)
     local.get $wx
     i32.const 5000
     i32.add
     local.get $wy
     i32.const 7000
     i32.add
+    i32.const 6
+    call $smooth_hash
+    i32.const 6
+    i32.shr_u
+    local.set $h3
+    ;; h4 = hash2d(wx+9000, wy+3000) & 1 (noise, 0-1)
+    local.get $wx
+    i32.const 9000
+    i32.add
+    local.get $wy
+    i32.const 3000
+    i32.add
     call $hash2d
     i32.const 1
     i32.and
-    local.set $h3
-    ;; result = 2 + h1 + h2 + h3
-    i32.const 2
+    local.set $h4
+    ;; result = 1 + h1 + h2 + h3 + h4  (range ~1 to 27, clamped to 1-22)
+    i32.const 1
     local.get $h1
     i32.add
     local.get $h2
+    i32.add
     local.get $h3
+    local.get $h4
     i32.add
     i32.add
     local.set $result
     local.get $result
-    i32.const 14
+    i32.const 22
     i32.gt_s
     if
-      i32.const 14
+      i32.const 22
       local.set $result
     end
     local.get $result
-    i32.const 2
+    i32.const 1
     i32.lt_s
     if
-      i32.const 2
+      i32.const 1
       local.set $result
     end
     local.get $result
@@ -378,7 +393,7 @@
     i32.add
     call $hash2d
     local.set $h
-    ;; (h & 255) < 10 && terrain_height(wx, wy) > 5
+    ;; (h & 255) < 10 && terrain_height(wx, wy) > 8 (trees only above water level)
     local.get $h
     i32.const 255
     i32.and
@@ -387,7 +402,7 @@
     local.get $wx
     local.get $wy
     call $terrain_height
-    i32.const 5
+    i32.const 8
     i32.gt_s
     i32.and
   )
@@ -535,16 +550,16 @@
         return
       end
     end
-    ;; Above terrain = air (or water)
+    ;; Above terrain = air (or water at Z<=7)
     local.get $wz
     local.get $th
     i32.gt_s
     if
       local.get $wz
-      i32.const 4
+      i32.const 7
       i32.le_s
       local.get $th
-      i32.const 4
+      i32.const 7
       i32.le_s
       i32.and
       if
@@ -560,7 +575,7 @@
     i32.eq
     if
       local.get $th
-      i32.const 4
+      i32.const 7
       i32.le_s
       if
         i32.const 4
@@ -4580,8 +4595,8 @@
   ;; Level 1 (chunk): 4×4×4 voxels — fine skip over empty air
   ;; Level 2 (fine):  standard per-voxel DDA in occupied chunks
   ;;
-  ;; Terrain height range is 2-14 + trees up to +6 = max 20.
-  ;; Water at Z<=4. Bedrock at Z<0.
+  ;; Terrain height range is 1-22 + trees up to +6 = max 28.
+  ;; Water at Z<=7. Bedrock at Z<0.
   ;; Cache: direct-mapped hash table, generation-tagged per frame.
   ;; ============================================================
 
@@ -4697,23 +4712,23 @@
     local.get $mx
     i32.gt_s
     if local.get $h local.set $mx end
-    ;; Apply safety margin: height can vary by ±2 between samples
+    ;; Apply safety margin: height can vary by ±3 between samples (hillier terrain)
     local.get $mn
-    i32.const 2
+    i32.const 3
     i32.sub
     local.tee $mn
-    i32.const 2
+    i32.const 1
     i32.lt_s
-    if i32.const 2 local.set $mn end
+    if i32.const 1 local.set $mn end
     local.get $mn
     global.set $g_th_min
     local.get $mx
-    i32.const 2
+    i32.const 3
     i32.add
     local.tee $mx
-    i32.const 14
+    i32.const 22
     i32.gt_s
-    if i32.const 14 local.set $mx end
+    if i32.const 22 local.set $mx end
     local.get $mx
   )
 
@@ -4898,9 +4913,9 @@
       return
     end
 
-    ;; Far above any possible terrain+trees (max terrain=14, trees add 6 → 20)
+    ;; Far above any possible terrain+trees (max terrain=22, trees add 6 → 28)
     local.get $z_lo
-    i32.const 21
+    i32.const 29
     i32.gt_s
     if
       ;; Still check for modifications up here
@@ -4965,7 +4980,7 @@
     ;; Terrain fills from Z=0 to Z=th (surface). Below surface = solid.
     ;; So terrain occupies Z <= th_max for any column.
     ;; Trees can extend up to th_max + 6.
-    ;; Water at Z <= 4 when th <= 4.
+    ;; Water at Z <= 7 when th <= 7.
 
     ;; If chunk bottom is above terrain+trees+margin, it's empty (just air)
     local.get $z_lo
@@ -4974,12 +4989,12 @@
     i32.add
     i32.gt_s
     if
-      ;; Might still have water if z_lo <= 4
+      ;; Might still have water if z_lo <= 7
       local.get $z_lo
-      i32.const 5
+      i32.const 8
       i32.le_s
       local.get $th_min
-      i32.const 5
+      i32.const 8
       i32.le_s
       i32.and
       if
@@ -5134,9 +5149,9 @@
       return
     end
 
-    ;; Far above everything
+    ;; Far above everything (max terrain=22, trees +6 → 28)
     local.get $z_lo
-    i32.const 21
+    i32.const 29
     i32.gt_s
     if
       ;; Check modifications
@@ -5203,12 +5218,12 @@
     i32.add
     i32.gt_s
     if
-      ;; Water check
+      ;; Water check (water at Z<=7)
       local.get $z_lo
-      i32.const 5
+      i32.const 8
       i32.le_s
       local.get $th_min
-      i32.const 5
+      i32.const 8
       i32.le_s
       i32.and
       if
@@ -5518,10 +5533,10 @@
     local.set $steps
 
     ;; ---- EARLY SKY EXIT ----
-    ;; If ray origin is above max terrain+tree height (Z > 21) and ray goes up,
+    ;; If ray origin is above max terrain+tree height (Z > 29) and ray goes up,
     ;; there's nothing to hit — skip expensive traversal entirely.
     local.get $vz
-    i32.const 22
+    i32.const 30
     i32.gt_s
     local.get $dz
     f64.const 0.0
@@ -6446,7 +6461,7 @@
         i32.lt_s
         br_if $done
         local.get $vz
-        i32.const 24
+        i32.const 32
         i32.gt_s
         if
           ;; Above terrain: if going up, bail immediately
