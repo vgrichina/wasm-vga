@@ -1032,86 +1032,86 @@
 
     ;; ---- 8 material base colors stored temporarily at 0x28000 ----
     ;; Each material: 3 bytes (R, G, B) — 8 × 3 = 24 bytes
-    ;; More colorful & distinct palette:
-    ;; 0: grass — vibrant green
+    ;; VIBRANT palette — maximally distinct hues, no duplicates:
+    ;; 0: grass — emerald green (pure green, no yellow)
     i32.const 0x28000
-    i32.const 55
-    i32.store8
-    i32.const 0x28001
-    i32.const 195
-    i32.store8
-    i32.const 0x28002
-    i32.const 40
-    i32.store8
-    ;; 1: dirt — warm earthy brown
-    i32.const 0x28003
-    i32.const 155
-    i32.store8
-    i32.const 0x28004
-    i32.const 100
-    i32.store8
-    i32.const 0x28005
-    i32.const 55
-    i32.store8
-    ;; 2: stone — cool blue-grey
-    i32.const 0x28006
-    i32.const 125
-    i32.store8
-    i32.const 0x28007
-    i32.const 130
-    i32.store8
-    i32.const 0x28008
-    i32.const 148
-    i32.store8
-    ;; 3: sand — warm golden yellow
-    i32.const 0x28009
-    i32.const 235
-    i32.store8
-    i32.const 0x2800A
-    i32.const 215
-    i32.store8
-    i32.const 0x2800B
-    i32.const 130
-    i32.store8
-    ;; 4: water — rich ocean blue
-    i32.const 0x2800C
-    i32.const 20
-    i32.store8
-    i32.const 0x2800D
-    i32.const 95
-    i32.store8
-    i32.const 0x2800E
-    i32.const 225
-    i32.store8
-    ;; 5: wood — reddish-brown (distinct from dirt)
-    i32.const 0x2800F
-    i32.const 135
-    i32.store8
-    i32.const 0x28010
-    i32.const 70
-    i32.store8
-    i32.const 0x28011
     i32.const 30
     i32.store8
-    ;; 6: leaves — yellow-green (distinct from grass)
-    i32.const 0x28012
-    i32.const 45
+    i32.const 0x28001
+    i32.const 200
     i32.store8
-    i32.const 0x28013
-    i32.const 160
-    i32.store8
-    i32.const 0x28014
-    i32.const 20
-    i32.store8
-    ;; 7: coal — dark purple-grey (ore tint)
-    i32.const 0x28015
+    i32.const 0x28002
     i32.const 50
     i32.store8
+    ;; 1: dirt — warm sienna orange-brown (distinct from wood)
+    i32.const 0x28003
+    i32.const 185
+    i32.store8
+    i32.const 0x28004
+    i32.const 115
+    i32.store8
+    i32.const 0x28005
+    i32.const 45
+    i32.store8
+    ;; 2: stone — cool slate blue-grey
+    i32.const 0x28006
+    i32.const 105
+    i32.store8
+    i32.const 0x28007
+    i32.const 118
+    i32.store8
+    i32.const 0x28008
+    i32.const 160
+    i32.store8
+    ;; 3: sand — bright warm gold
+    i32.const 0x28009
+    i32.const 248
+    i32.store8
+    i32.const 0x2800A
+    i32.const 225
+    i32.store8
+    i32.const 0x2800B
+    i32.const 90
+    i32.store8
+    ;; 4: water — vivid ocean blue
+    i32.const 0x2800C
+    i32.const 10
+    i32.store8
+    i32.const 0x2800D
+    i32.const 110
+    i32.store8
+    i32.const 0x2800E
+    i32.const 245
+    i32.store8
+    ;; 5: wood — deep mahogany red-brown (darker, redder than dirt)
+    i32.const 0x2800F
+    i32.const 110
+    i32.store8
+    i32.const 0x28010
+    i32.const 50
+    i32.store8
+    i32.const 0x28011
+    i32.const 25
+    i32.store8
+    ;; 6: leaves — bright chartreuse lime (yellow-green, distinct from grass)
+    i32.const 0x28012
+    i32.const 85
+    i32.store8
+    i32.const 0x28013
+    i32.const 210
+    i32.store8
+    i32.const 0x28014
+    i32.const 15
+    i32.store8
+    ;; 7: coal — deep violet-purple (saturated ore)
+    i32.const 0x28015
+    i32.const 60
+    i32.store8
     i32.const 0x28016
-    i32.const 42
+    i32.const 35
     i32.store8
     i32.const 0x28017
-    i32.const 65
+    i32.const 95
     i32.store8
 
     ;; ---- Generate 8 × 32 = 256 palette entries ----
@@ -1938,85 +1938,85 @@
     i32.const 0x19502
     i32.const 0
     i32.store8
-    ;; grass — vibrant green
+    ;; grass — emerald green
     i32.const 0x19503
-    i32.const 55
-    i32.store8
-    i32.const 0x19504
-    i32.const 195
-    i32.store8
-    i32.const 0x19505
-    i32.const 40
-    i32.store8
-    ;; dirt — warm earthy brown
-    i32.const 0x19506
-    i32.const 155
-    i32.store8
-    i32.const 0x19507
-    i32.const 100
-    i32.store8
-    i32.const 0x19508
-    i32.const 55
-    i32.store8
-    ;; stone — cool blue-grey
-    i32.const 0x19509
-    i32.const 125
-    i32.store8
-    i32.const 0x1950A
-    i32.const 130
-    i32.store8
-    i32.const 0x1950B
-    i32.const 148
-    i32.store8
-    ;; sand — warm golden yellow
-    i32.const 0x1950C
-    i32.const 235
-    i32.store8
-    i32.const 0x1950D
-    i32.const 215
-    i32.store8
-    i32.const 0x1950E
-    i32.const 130
-    i32.store8
-    ;; water — rich ocean blue
-    i32.const 0x1950F
-    i32.const 20
-    i32.store8
-    i32.const 0x19510
-    i32.const 95
-    i32.store8
-    i32.const 0x19511
-    i32.const 225
-    i32.store8
-    ;; wood — reddish-brown (distinct from dirt)
-    i32.const 0x19512
-    i32.const 135
-    i32.store8
-    i32.const 0x19513
-    i32.const 70
-    i32.store8
-    i32.const 0x19514
     i32.const 30
     i32.store8
-    ;; leaves — yellow-green (distinct from grass)
-    i32.const 0x19515
-    i32.const 45
+    i32.const 0x19504
+    i32.const 200
     i32.store8
-    i32.const 0x19516
-    i32.const 160
-    i32.store8
-    i32.const 0x19517
-    i32.const 20
-    i32.store8
-    ;; coal — dark purple-grey (ore tint)
-    i32.const 0x19518
+    i32.const 0x19505
     i32.const 50
     i32.store8
+    ;; dirt — warm sienna orange-brown
+    i32.const 0x19506
+    i32.const 185
+    i32.store8
+    i32.const 0x19507
+    i32.const 115
+    i32.store8
+    i32.const 0x19508
+    i32.const 45
+    i32.store8
+    ;; stone — cool slate blue-grey
+    i32.const 0x19509
+    i32.const 105
+    i32.store8
+    i32.const 0x1950A
+    i32.const 118
+    i32.store8
+    i32.const 0x1950B
+    i32.const 160
+    i32.store8
+    ;; sand — bright warm gold
+    i32.const 0x1950C
+    i32.const 248
+    i32.store8
+    i32.const 0x1950D
+    i32.const 225
+    i32.store8
+    i32.const 0x1950E
+    i32.const 90
+    i32.store8
+    ;; water — vivid ocean blue
+    i32.const 0x1950F
+    i32.const 10
+    i32.store8
+    i32.const 0x19510
+    i32.const 110
+    i32.store8
+    i32.const 0x19511
+    i32.const 245
+    i32.store8
+    ;; wood — deep mahogany red-brown
+    i32.const 0x19512
+    i32.const 110
+    i32.store8
+    i32.const 0x19513
+    i32.const 50
+    i32.store8
+    i32.const 0x19514
+    i32.const 25
+    i32.store8
+    ;; leaves — bright chartreuse lime
+    i32.const 0x19515
+    i32.const 85
+    i32.store8
+    i32.const 0x19516
+    i32.const 210
+    i32.store8
+    i32.const 0x19517
+    i32.const 15
+    i32.store8
+    ;; coal — deep violet-purple
+    i32.const 0x19518
+    i32.const 60
+    i32.store8
     i32.const 0x19519
-    i32.const 42
+    i32.const 35
     i32.store8
     i32.const 0x1951A
-    i32.const 65
+    i32.const 95
     i32.store8
 
     ;; Initialize player position (palette set by $init_palette above)
@@ -8662,58 +8662,59 @@
 
     ;; ============================================================
     ;; Precompute sky colors with sunset blending
-    ;; Day horizon: R=140,G=180,B=220 → Sunset horizon: R=240,G=130,B=60
-    ;; Day zenith: R=30,G=80,B=200 → Sunset zenith: R=180,G=60,B=80
-    ;; Sun center: R=255,G=240,B=200 → R=255,G=160,B=50 at sunset
+    ;; Day horizon: R=135,G=185,B=230 → Sunset horizon: R=255,G=100,B=30
+    ;; Day zenith: R=25,G=75,B=210 → Sunset zenith: R=210,G=40,B=90
+    ;; Sun center: R=255,G=250,B=210 → R=255,G=130,B=20 at sunset
+    ;; Rich, dramatic sunsets with fiery oranges and magenta sky
     ;; Fog uses horizon colors
     ;; ============================================================
-    ;; sky_hr = 140 + (240-140)*sunset_t/255 = 140 + 100*sunset_t/255
-    i32.const 140
-    i32.const 100
+    ;; sky_hr = 135 + (255-135)*sunset_t/255 = 135 + 120*sunset_t/255
+    i32.const 135
+    i32.const 120
     local.get $sunset_t
     i32.mul
     i32.const 255
     i32.div_u
     i32.add
     local.set $sky_hr
-    ;; sky_hg = 180 - (180-130)*sunset_t/255 = 180 - 50*sunset_t/255
-    i32.const 180
-    i32.const 50
+    ;; sky_hg = 185 - (185-100)*sunset_t/255 = 185 - 85*sunset_t/255
+    i32.const 185
+    i32.const 85
     local.get $sunset_t
     i32.mul
     i32.const 255
     i32.div_u
     i32.sub
     local.set $sky_hg
-    ;; sky_hb = 220 - (220-60)*sunset_t/255 = 220 - 160*sunset_t/255
-    i32.const 220
-    i32.const 160
+    ;; sky_hb = 230 - (230-30)*sunset_t/255 = 230 - 200*sunset_t/255
+    i32.const 230
+    i32.const 200
     local.get $sunset_t
     i32.mul
     i32.const 255
     i32.div_u
     i32.sub
     local.set $sky_hb
-    ;; sky_zr = 30 + (180-30)*sunset_t/255 = 30 + 150*sunset_t/255
-    i32.const 30
-    i32.const 150
+    ;; sky_zr = 25 + (210-25)*sunset_t/255 = 25 + 185*sunset_t/255
+    i32.const 25
+    i32.const 185
     local.get $sunset_t
     i32.mul
     i32.const 255
     i32.div_u
     i32.add
     local.set $sky_zr
-    ;; sky_zg = 80 - (80-60)*sunset_t/255 = 80 - 20*sunset_t/255
-    i32.const 80
-    i32.const 20
+    ;; sky_zg = 75 - (75-40)*sunset_t/255 = 75 - 35*sunset_t/255
+    i32.const 75
+    i32.const 35
     local.get $sunset_t
     i32.mul
     i32.const 255
     i32.div_u
     i32.sub
     local.set $sky_zg
-    ;; sky_zb = 200 - (200-80)*sunset_t/255 = 200 - 120*sunset_t/255
-    i32.const 200
+    ;; sky_zb = 210 - (210-90)*sunset_t/255 = 210 - 120*sunset_t/255
+    i32.const 210
     i32.const 120
     local.get $sunset_t
     i32.mul
@@ -8728,22 +8729,22 @@
     local.set $fog_g
     local.get $sky_hb
     local.set $fog_b
-    ;; Sun center color: blend from (255,240,200) to (255,160,50) with sunset_t
+    ;; Sun center color: blend from (255,250,210) to (255,130,20) with sunset_t
     ;; sun_cr = 255 (always)
     i32.const 255
     local.set $sun_cr
-    ;; sun_cg = 240 - (240-160)*sunset_t/255 = 240 - 80*sunset_t/255
-    i32.const 240
-    i32.const 80
+    ;; sun_cg = 250 - (250-130)*sunset_t/255 = 250 - 120*sunset_t/255
+    i32.const 250
+    i32.const 120
     local.get $sunset_t
     i32.mul
     i32.const 255
     i32.div_u
     i32.sub
     local.set $sun_cg
-    ;; sun_cb = 200 - (200-50)*sunset_t/255 = 200 - 150*sunset_t/255
-    i32.const 200
-    i32.const 150
+    ;; sun_cb = 210 - (210-20)*sunset_t/255 = 210 - 190*sunset_t/255
+    i32.const 210
+    i32.const 190
     local.get $sunset_t
     i32.mul
     i32.const 255
