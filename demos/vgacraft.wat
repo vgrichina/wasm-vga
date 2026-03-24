@@ -4593,6 +4593,8 @@
   (global $g_idle_timer (mut i32) (i32.const 0))
   ;; Idle demo accumulated angle offset for smooth rotation
   (global $g_idle_angle (mut f64) (f64.const 0.0))
+  ;; Idle demo flyover altitude (gradually increases from 0)
+  (global $g_idle_alt (mut f64) (f64.const 0.0))
 
   ;; Inventory toggle state
   (global $g_show_inv (mut i32) (i32.const 0))
@@ -8580,11 +8582,13 @@
     local.get $mouse_btn
     i32.or
     if
-      ;; User is active — reset idle timer and idle angle
+      ;; User is active — reset idle timer, idle angle, and flyover altitude
       i32.const 0
       global.set $g_idle_timer
       f64.const 0.0
       global.set $g_idle_angle
+      f64.const 0.0
+      global.set $g_idle_alt
     else
       ;; No input — increment idle timer
       global.get $g_idle_timer
@@ -8599,12 +8603,25 @@
     i32.gt_s
     if
       ;; === IDLE DEMO MODE ===
-      ;; Slowly rotate camera to showcase sun/moon
+      ;; Start on the ground, then gradually do a flyover
       ;; Advance idle angle smoothly
       global.get $g_idle_angle
       f64.const 0.008
       f64.add
       global.set $g_idle_angle
+
+      ;; Gradually increase flyover altitude
+      ;; Ramp up slowly: 0 at start, reaching ~15 blocks over ~10 seconds
+      ;; idle_alt approaches max_alt smoothly via lerp
+      ;; max_alt = 15.0, lerp factor ~0.003 per frame
+      global.get $g_idle_alt
+      f64.const 15.0
+      global.get $g_idle_alt
+      f64.sub
+      f64.const 0.003
+      f64.mul
+      f64.add
+      global.set $g_idle_alt
 
       ;; Set angle from idle rotation
       local.get $angle
@@ -8612,17 +8629,38 @@
       f64.add
       local.set $angle
 
-      ;; Tilt look_y upward to show celestial bodies (sun/moon)
-      ;; Oscillate between looking slightly up and more up
-      ;; Use a sine wave based on idle_angle for smooth pitch variation
-      ;; Range: -25 (looking up to see sky) to +5 (slightly down to see landscape)
+      ;; Adjust look pitch based on flyover altitude
+      ;; When on ground (alt~0): look slightly forward (look_y ~ 5, slight downward)
+      ;; When flying high (alt~15): oscillate between looking down at landscape and up at sky
+      ;; Transition: blend from ground-level view to flyover view
+      ;; fly_frac = idle_alt / 15.0 (0..1)
+      ;; ground look_y = 5 (slightly forward/down)
+      ;; fly look_y = sin-based oscillation between -20 (up/sky) and +15 (down/landscape)
+      global.get $g_idle_alt
+      f64.const 15.0
+      f64.div
+      ;; fly_frac on stack (0..1), clamp to 1.0
+      f64.const 1.0
+      f64.min
+      ;; fly_frac is on stack
+      ;; fly_look = sin(idle_angle * 0.25) * 18.0 + 5.0
+      ;; This oscillates between -13 (looking up) and +23 (looking down at terrain)
       global.get $g_idle_angle
-      f64.const 0.3
+      f64.const 0.25
       f64.mul
       call $sin_a
-      f64.const 15.0
+      f64.const 18.0
       f64.mul
-      f64.const -15.0
+      f64.const 5.0
+      f64.add
+      ;; stack: fly_frac, fly_look
+      ;; ground_look = 3.0
+      ;; result = ground_look + fly_frac * (fly_look - ground_look)
+      ;; = 3.0 + fly_frac * (fly_look - 3.0)
+      f64.const 3.0
+      f64.sub
+      f64.mul
+      f64.const 3.0
       f64.add
       i32.trunc_f64_s
       local.set $look_y
@@ -8845,24 +8883,27 @@
     i32.trunc_f64_s
     call $terrain_height
     local.set $ground_h
-    local.get $vz
-    f64.const 0.015
-    f64.sub
-    local.set $vz
-    local.get $pz
-    local.get $vz
-    f64.add
-    local.set $pz
-    local.get $pz
-    local.get $ground_h
-    f64.convert_i32_s
-    f64.const 1.7
-    f64.add
-    f64.le
+
+    ;; In idle flyover mode, override gravity with smooth altitude rise
+    global.get $g_idle_timer
+    i32.const 180
+    i32.gt_s
     if
+      ;; Idle flyover: target pz = ground_h + 1.7 + idle_alt
+      ;; Smoothly lerp current pz toward target
       local.get $ground_h
       f64.convert_i32_s
       f64.const 1.7
+      f64.add
+      global.get $g_idle_alt
+      f64.add
+      ;; target_pz on stack
+      local.get $pz
+      f64.sub
+      ;; (target - current) on stack
+      f64.const 0.02
+      f64.mul
+      local.get $pz
       f64.add
       local.set $pz
       f64.const 0.0
@@ -8870,8 +8911,35 @@
       i32.const 1
       local.set $on_ground
     else
-      i32.const 0
-      local.set $on_ground
+      ;; Normal gravity
+      local.get $vz
+      f64.const 0.015
+      f64.sub
+      local.set $vz
+      local.get $pz
+      local.get $vz
+      f64.add
+      local.set $pz
+      local.get $pz
+      local.get $ground_h
+      f64.convert_i32_s
+      f64.const 1.7
+      f64.add
+      f64.le
+      if
+        local.get $ground_h
+        f64.convert_i32_s
+        f64.const 1.7
+        f64.add
+        local.set $pz
+        f64.const 0.0
+        local.set $vz
+        i32.const 1
+        local.set $on_ground
+      else
+        i32.const 0
+        local.set $on_ground
+      end
     end
 
     ;; Jump
