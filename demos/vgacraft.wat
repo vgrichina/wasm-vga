@@ -1014,7 +1014,7 @@
   ;; ============================================================
   ;; PALETTE + LUT INIT — fully in WAT
   ;; 8 material colors × 32 lighting levels = 256 palette entries
-  ;; Materials: grass(0), dirt(1), stone(2), sand(3), water(4), wood(5), leaves(6), coal(7)
+  ;; Materials: grass(0), dirt(1), stone(2), sand(3), water(4), wood(5), leaves(6), flowers(7)
   ;; Index = material * 32 + brightness (0=black, 31=full bright)
   ;; Then builds 32KB nearest-color LUT at 0x20000
   ;; ============================================================
@@ -1094,27 +1094,26 @@
     i32.const 0x28011
     i32.const 25
     i32.store8
-    ;; 6: leaves — vivid autumn red (distinct from grass green)
+    ;; 6: leaves — rich forest green (distinct darker green from grass)
     i32.const 0x28012
-    i32.const 200
-    i32.store8
-    i32.const 0x28013
-    i32.const 40
-    i32.store8
-    i32.const 0x28014
     i32.const 30
     i32.store8
-    ;; 7: sky/atmosphere — cool white-blue (excellent sky, cloud, moon coverage)
-    ;; This ramp covers: deep navy (shade 2-4), sky blue (10-18), cloud white (26-31)
-    ;; Coal ore visuals folded into stone material with darker shades
+    i32.const 0x28013
+    i32.const 160
+    i32.store8
+    i32.const 0x28014
+    i32.const 40
+    i32.store8
+    ;; 7: flowers/accent — vivid magenta-pink (distinct from all other materials)
+    ;; Used for sky/cloud rendering ramp AND flower blocks
     i32.const 0x28015
-    i32.const 200
+    i32.const 220
     i32.store8
     i32.const 0x28016
-    i32.const 215
+    i32.const 50
     i32.store8
     i32.const 0x28017
-    i32.const 255
+    i32.const 180
     i32.store8
 
     ;; ---- Generate 8 × 32 = 256 palette entries ----
@@ -2001,25 +2000,25 @@
     i32.const 0x19514
     i32.const 25
     i32.store8
-    ;; leaves — vivid autumn red
+    ;; leaves — rich forest green (distinct darker green from grass)
     i32.const 0x19515
-    i32.const 200
-    i32.store8
-    i32.const 0x19516
-    i32.const 40
-    i32.store8
-    i32.const 0x19517
     i32.const 30
     i32.store8
-    ;; sky/atmosphere — cool white-blue (replaces coal for better sky/cloud rendering)
+    i32.const 0x19516
+    i32.const 160
+    i32.store8
+    i32.const 0x19517
+    i32.const 40
+    i32.store8
+    ;; flowers/accent — vivid magenta-pink (distinct from all other materials)
     i32.const 0x19518
-    i32.const 200
+    i32.const 220
     i32.store8
     i32.const 0x19519
-    i32.const 215
+    i32.const 50
     i32.store8
     i32.const 0x1951A
-    i32.const 255
+    i32.const 180
     i32.store8
 
     ;; ================================================================
