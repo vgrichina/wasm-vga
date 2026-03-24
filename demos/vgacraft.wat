@@ -8583,6 +8583,27 @@
     i32.or
     if
       ;; User is active — reset idle timer, idle angle, and flyover altitude
+      ;; If we were in idle flyover, snap pz back near ground to avoid
+      ;; long falls that can cause out-of-range trunc errors in raycasting
+      global.get $g_idle_timer
+      i32.const 180
+      i32.gt_s
+      if
+        ;; Was in idle flyover — snap pz to ground + 1.7
+        local.get $px
+        f64.floor
+        i32.trunc_f64_s
+        local.get $py
+        f64.floor
+        i32.trunc_f64_s
+        call $terrain_height
+        f64.convert_i32_s
+        f64.const 1.7
+        f64.add
+        local.set $pz
+        f64.const 0.0
+        local.set $vz
+      end
       i32.const 0
       global.set $g_idle_timer
       f64.const 0.0

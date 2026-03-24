@@ -312,7 +312,21 @@ function loop(ts) {
 
   // call guest frame
   if (wasmInstance.exports.frame) {
-    wasmInstance.exports.frame();
+    try {
+      wasmInstance.exports.frame();
+    } catch (e) {
+      if (e instanceof WebAssembly.RuntimeError) {
+        // Out of bounds Trunc operation — typically caused by NaN/infinity
+        // reaching i32.trunc. Reset the demo state to recover gracefully.
+        console.warn('WASM RuntimeError (recovering):', e.message);
+        // Clear control block inputs to reset idle/active transition
+        memU8[CTL_OFFSET + 16] = 0; // clear keyboard
+        memU8[CTL_OFFSET + 8] = 0;  // clear mouse buttons
+        // Try to continue — next frame may succeed after state settles
+      } else {
+        throw e;
+      }
+    }
   }
 
   blitFramebuffer();
