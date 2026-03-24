@@ -1094,15 +1094,15 @@
     i32.const 0x28011
     i32.const 25
     i32.store8
-    ;; 6: leaves — bright chartreuse lime (yellow-green, distinct from grass)
+    ;; 6: leaves — vivid autumn red (distinct from grass green)
     i32.const 0x28012
-    i32.const 85
+    i32.const 200
     i32.store8
     i32.const 0x28013
-    i32.const 210
+    i32.const 40
     i32.store8
     i32.const 0x28014
-    i32.const 15
+    i32.const 30
     i32.store8
     ;; 7: sky/atmosphere — cool white-blue (excellent sky, cloud, moon coverage)
     ;; This ramp covers: deep navy (shade 2-4), sky blue (10-18), cloud white (26-31)
@@ -2001,15 +2001,15 @@
     i32.const 0x19514
     i32.const 25
     i32.store8
-    ;; leaves — bright chartreuse lime
+    ;; leaves — vivid autumn red
     i32.const 0x19515
-    i32.const 85
+    i32.const 200
     i32.store8
     i32.const 0x19516
-    i32.const 210
+    i32.const 40
     i32.store8
     i32.const 0x19517
-    i32.const 15
+    i32.const 30
     i32.store8
     ;; sky/atmosphere — cool white-blue (replaces coal for better sky/cloud rendering)
     i32.const 0x19518
