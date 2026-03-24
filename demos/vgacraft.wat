@@ -8141,6 +8141,10 @@
     (local $sky_zr i32) (local $sky_zg i32) (local $sky_zb i32)
     (local $fog_r i32) (local $fog_g i32) (local $fog_b i32)
     (local $sun_cr i32) (local $sun_cg i32) (local $sun_cb i32)
+    (local $cloud_u i32) (local $cloud_v i32)
+    (local $cloud_d1 i32) (local $cloud_d2 i32) (local $cloud_val i32)
+    (local $cloud_r i32) (local $cloud_g i32) (local $cloud_b i32)
+    (local $cloud_inv_dz f64) (local $cloud_scale f64)
 
     i32.const 12
     i32.load
@@ -9893,7 +9897,7 @@
                     call $rgb_to_rgbl_dither
                     i32.store8
                   else
-                    ;; Sky gradient with dithered 24-bit RGB
+                    ;; Sky gradient with dithered 24-bit RGB + PROCEDURAL CLOUDS
                     ;; ray_dz (0..1) controls gradient from horizon to zenith
                     ;; Sky color: blend from horizon to zenith (sunset-aware)
                     ;; Horizon/Zenith colors precomputed with sunset blending
@@ -9930,11 +9934,7 @@
                     ;; B = (sky_hb*(255-t) + sky_zb*t) / 255
                     ;; Then multiply by day_bright/255 and add night base
 
-                    local.get $fb_addr
-                    local.get $px_col
-                    local.get $px_row
-                    ;; R: day_r * day_bright/255 + night_r * (255-day_bright)/255
-                    ;; day_r = (sky_hr*(255-sky_idx) + sky_zr*sky_idx) / 255
+                    ;; Compute base sky R
                     local.get $sky_hr
                     i32.const 255
                     local.get $sky_idx
@@ -9957,7 +9957,8 @@
                     i32.add
                     i32.const 255
                     i32.div_u
-                    ;; G
+                    local.set $cloud_r
+                    ;; Compute base sky G
                     local.get $sky_hg
                     i32.const 255
                     local.get $sky_idx
@@ -9979,7 +9980,8 @@
                     i32.add
                     i32.const 255
                     i32.div_u
-                    ;; B
+                    local.set $cloud_g
+                    ;; Compute base sky B
                     local.get $sky_hb
                     i32.const 255
                     local.get $sky_idx
@@ -10001,6 +10003,348 @@
                     i32.add
                     i32.const 255
                     i32.div_u
+                    local.set $cloud_b
+
+                    ;; ============================================================
+                    ;; PROCEDURAL CLOUDS — two layers of scrolling noise
+                    ;; Project ray onto cloud planes, sample multi-octave noise
+                    ;; Only during daytime (day_bright > 30) and above horizon
+                    ;; ============================================================
+                    local.get $day_bright
+                    i32.const 30
+                    i32.gt_s
+                    local.get $ray_dz
+                    f64.const 0.02
+                    f64.gt
+                    i32.and
+                    if
+                      ;; inv_dz = 1.0 / ray_dz (projection scale onto cloud plane)
+                      f64.const 1.0
+                      local.get $ray_dz
+                      f64.div
+                      local.set $cloud_inv_dz
+
+                      ;; ---- Layer 1: large puffy clouds (high altitude, slow drift) ----
+                      ;; Project ray onto plane: u = ray_dx / ray_dz * scale + px + time_offset
+                      ;; cloud_u = (ray_dx * 80 / ray_dz) + px*4 + tick/120
+                      ;; cloud_v = (ray_dy * 80 / ray_dz) + py*4 + tick/200
+                      local.get $ray_dx
+                      f64.const 80.0
+                      f64.mul
+                      local.get $cloud_inv_dz
+                      f64.mul
+                      local.get $px
+                      f64.const 4.0
+                      f64.mul
+                      f64.add
+                      local.get $tick
+                      f64.convert_i32_s
+                      f64.const 120.0
+                      f64.div
+                      f64.add
+                      i32.trunc_f64_s
+                      local.set $cloud_u
+                      local.get $ray_dy
+                      f64.const 80.0
+                      f64.mul
+                      local.get $cloud_inv_dz
+                      f64.mul
+                      local.get $py
+                      f64.const 4.0
+                      f64.mul
+                      f64.add
+                      local.get $tick
+                      f64.convert_i32_s
+                      f64.const 200.0
+                      f64.div
+                      f64.add
+                      i32.trunc_f64_s
+                      local.set $cloud_v
+                      ;; Octave 1: large scale (period=64), contributes 0-180
+                      local.get $cloud_u
+                      local.get $cloud_v
+                      i32.const 64
+                      call $smooth_hash
+                      i32.const 180
+                      i32.mul
+                      i32.const 255
+                      i32.div_u
+                      local.set $cloud_d1
+                      ;; Octave 2: medium detail (period=24), contributes 0-60
+                      local.get $cloud_u
+                      i32.const 3
+                      i32.mul
+                      local.get $cloud_v
+                      i32.const 3
+                      i32.mul
+                      i32.const 24
+                      call $smooth_hash
+                      i32.const 60
+                      i32.mul
+                      i32.const 255
+                      i32.div_u
+                      local.get $cloud_d1
+                      i32.add
+                      local.set $cloud_d1
+                      ;; Octave 3: fine wispy detail (period=10), contributes 0-25
+                      local.get $cloud_u
+                      i32.const 7
+                      i32.mul
+                      i32.const 1000
+                      i32.add
+                      local.get $cloud_v
+                      i32.const 7
+                      i32.mul
+                      i32.const 2000
+                      i32.add
+                      i32.const 10
+                      call $smooth_hash
+                      i32.const 25
+                      i32.mul
+                      i32.const 255
+                      i32.div_u
+                      local.get $cloud_d1
+                      i32.add
+                      local.set $cloud_d1
+                      ;; Threshold: subtract 120, clamp to 0-145, then scale to 0-255
+                      ;; This makes clouds have defined edges with clear sky between
+                      local.get $cloud_d1
+                      i32.const 120
+                      i32.sub
+                      local.set $cloud_d1
+                      local.get $cloud_d1
+                      i32.const 0
+                      i32.lt_s
+                      if  i32.const 0  local.set $cloud_d1  end
+                      ;; Scale: d1 * 255 / 145 ≈ d1 * 7 / 4
+                      local.get $cloud_d1
+                      i32.const 7
+                      i32.mul
+                      i32.const 4
+                      i32.div_u
+                      local.set $cloud_d1
+                      local.get $cloud_d1
+                      i32.const 255
+                      i32.gt_s
+                      if  i32.const 255  local.set $cloud_d1  end
+
+                      ;; ---- Layer 2: thin wispy cirrus (higher, faster drift) ----
+                      local.get $ray_dx
+                      f64.const 120.0
+                      f64.mul
+                      local.get $cloud_inv_dz
+                      f64.mul
+                      local.get $px
+                      f64.const 6.0
+                      f64.mul
+                      f64.add
+                      local.get $tick
+                      f64.convert_i32_s
+                      f64.const 60.0
+                      f64.div
+                      f64.add
+                      i32.trunc_f64_s
+                      local.set $cloud_u
+                      local.get $ray_dy
+                      f64.const 120.0
+                      f64.mul
+                      local.get $cloud_inv_dz
+                      f64.mul
+                      local.get $py
+                      f64.const 6.0
+                      f64.mul
+                      f64.add
+                      local.get $tick
+                      f64.convert_i32_s
+                      f64.const 300.0
+                      f64.div
+                      f64.add
+                      i32.trunc_f64_s
+                      local.set $cloud_v
+                      ;; Single octave with wider period for streaky look
+                      local.get $cloud_u
+                      i32.const 5000
+                      i32.add
+                      local.get $cloud_v
+                      i32.const 5000
+                      i32.add
+                      i32.const 40
+                      call $smooth_hash
+                      i32.const 140
+                      i32.mul
+                      i32.const 255
+                      i32.div_u
+                      local.set $cloud_d2
+                      ;; Wispy detail octave
+                      local.get $cloud_u
+                      i32.const 4
+                      i32.mul
+                      i32.const 8000
+                      i32.add
+                      local.get $cloud_v
+                      i32.const 4
+                      i32.mul
+                      i32.const 9000
+                      i32.add
+                      i32.const 16
+                      call $smooth_hash
+                      i32.const 80
+                      i32.mul
+                      i32.const 255
+                      i32.div_u
+                      local.get $cloud_d2
+                      i32.add
+                      local.set $cloud_d2
+                      ;; Threshold higher for thinner clouds
+                      local.get $cloud_d2
+                      i32.const 130
+                      i32.sub
+                      local.set $cloud_d2
+                      local.get $cloud_d2
+                      i32.const 0
+                      i32.lt_s
+                      if  i32.const 0  local.set $cloud_d2  end
+                      ;; Scale to 0-255
+                      local.get $cloud_d2
+                      i32.const 255
+                      i32.mul
+                      i32.const 90
+                      i32.div_u
+                      local.set $cloud_d2
+                      local.get $cloud_d2
+                      i32.const 255
+                      i32.gt_s
+                      if  i32.const 255  local.set $cloud_d2  end
+                      ;; Cirrus layer is semi-transparent (max 50% opacity)
+                      local.get $cloud_d2
+                      i32.const 1
+                      i32.shr_u
+                      local.set $cloud_d2
+
+                      ;; Combine layers: use max of both for soft overlap
+                      ;; cloud_val = max(cloud_d1, cloud_d2)
+                      ;; Actually blend additively for layered feel: d1 + d2*(255-d1)/255
+                      local.get $cloud_d1
+                      local.get $cloud_d2
+                      i32.const 255
+                      local.get $cloud_d1
+                      i32.sub
+                      i32.mul
+                      i32.const 255
+                      i32.div_u
+                      i32.add
+                      local.set $cloud_val
+                      local.get $cloud_val
+                      i32.const 255
+                      i32.gt_s
+                      if  i32.const 255  local.set $cloud_val  end
+
+                      ;; Fade clouds near horizon (ray_dz < 0.15 → fade out)
+                      ;; horizon_fade = min(255, ray_dz * 255 / 0.15) = ray_dz * 1700
+                      local.get $ray_dz
+                      f64.const 1700.0
+                      f64.mul
+                      i32.trunc_f64_s
+                      local.set $shade_frac
+                      local.get $shade_frac
+                      i32.const 255
+                      i32.gt_s
+                      if  i32.const 255  local.set $shade_frac  end
+                      ;; Apply horizon fade
+                      local.get $cloud_val
+                      local.get $shade_frac
+                      i32.mul
+                      i32.const 255
+                      i32.div_u
+                      local.set $cloud_val
+
+                      ;; Scale cloud opacity by day brightness
+                      local.get $cloud_val
+                      local.get $day_bright
+                      i32.mul
+                      i32.const 255
+                      i32.div_u
+                      local.set $cloud_val
+
+                      ;; Blend cloud white into sky color
+                      ;; Cloud color: bright white (240,245,255) during day
+                      ;; At sunset, warm the clouds: blend toward (255,200,140)
+                      ;; cloud_target_r = 240 + 15*sunset_t/255
+                      ;; cloud_target_g = 245 - 45*sunset_t/255
+                      ;; cloud_target_b = 255 - 115*sunset_t/255
+
+                      ;; R: sky_r + (cloud_white_r - sky_r) * cloud_val / 255
+                      ;; Simplified: sky_r * (255-cloud_val)/255 + cloud_white_r * cloud_val/255
+                      local.get $cloud_r
+                      i32.const 255
+                      local.get $cloud_val
+                      i32.sub
+                      i32.mul
+                      ;; cloud_target_r
+                      i32.const 240
+                      i32.const 15
+                      local.get $sunset_t
+                      i32.mul
+                      i32.const 255
+                      i32.div_u
+                      i32.add
+                      local.get $cloud_val
+                      i32.mul
+                      i32.add
+                      i32.const 255
+                      i32.div_u
+                      local.set $cloud_r
+
+                      ;; G
+                      local.get $cloud_g
+                      i32.const 255
+                      local.get $cloud_val
+                      i32.sub
+                      i32.mul
+                      ;; cloud_target_g
+                      i32.const 245
+                      i32.const 45
+                      local.get $sunset_t
+                      i32.mul
+                      i32.const 255
+                      i32.div_u
+                      i32.sub
+                      local.get $cloud_val
+                      i32.mul
+                      i32.add
+                      i32.const 255
+                      i32.div_u
+                      local.set $cloud_g
+
+                      ;; B
+                      local.get $cloud_b
+                      i32.const 255
+                      local.get $cloud_val
+                      i32.sub
+                      i32.mul
+                      ;; cloud_target_b
+                      i32.const 255
+                      i32.const 115
+                      local.get $sunset_t
+                      i32.mul
+                      i32.const 255
+                      i32.div_u
+                      i32.sub
+                      local.get $cloud_val
+                      i32.mul
+                      i32.add
+                      i32.const 255
+                      i32.div_u
+                      local.set $cloud_b
+                    end
+
+                    ;; Write final sky+cloud pixel
+                    local.get $fb_addr
+                    local.get $px_col
+                    local.get $px_row
+                    local.get $cloud_r
+                    local.get $cloud_g
+                    local.get $cloud_b
                     call $rgb_to_rgbl_dither
                     i32.store8
                   end
