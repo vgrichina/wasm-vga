@@ -10273,9 +10273,9 @@
                 i32.store8
               end
             else
-              ;; Sky
+              ;; Sky (allow slightly below horizon so sun/moon disc isn't clipped)
               local.get $ray_dz
-              f64.const 0.0
+              f64.const -0.06
               f64.gt
               if
                 ;; Check sun/moon
