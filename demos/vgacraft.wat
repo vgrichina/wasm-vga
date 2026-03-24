@@ -1032,85 +1032,86 @@
 
     ;; ---- 8 material base colors stored temporarily at 0x28000 ----
     ;; Each material: 3 bytes (R, G, B) — 8 × 3 = 24 bytes
-    ;; 0: grass (50,180,50)
+    ;; More colorful & distinct palette:
+    ;; 0: grass — vibrant green
     i32.const 0x28000
-    i32.const 50
+    i32.const 55
     i32.store8
     i32.const 0x28001
-    i32.const 180
+    i32.const 195
     i32.store8
     i32.const 0x28002
-    i32.const 50
+    i32.const 40
     i32.store8
-    ;; 1: dirt (140,90,50)
+    ;; 1: dirt — warm earthy brown
     i32.const 0x28003
-    i32.const 140
+    i32.const 155
     i32.store8
     i32.const 0x28004
-    i32.const 90
+    i32.const 100
     i32.store8
     i32.const 0x28005
-    i32.const 50
+    i32.const 55
     i32.store8
-    ;; 2: stone (130,130,130)
+    ;; 2: stone — cool blue-grey
     i32.const 0x28006
-    i32.const 130
+    i32.const 125
     i32.store8
     i32.const 0x28007
     i32.const 130
     i32.store8
     i32.const 0x28008
-    i32.const 130
+    i32.const 148
     i32.store8
-    ;; 3: sand (220,210,120)
+    ;; 3: sand — warm golden yellow
     i32.const 0x28009
-    i32.const 220
+    i32.const 235
     i32.store8
     i32.const 0x2800A
-    i32.const 210
+    i32.const 215
     i32.store8
     i32.const 0x2800B
-    i32.const 120
+    i32.const 130
     i32.store8
-    ;; 4: water (30,80,200)
+    ;; 4: water — rich ocean blue
     i32.const 0x2800C
-    i32.const 30
+    i32.const 20
     i32.store8
     i32.const 0x2800D
-    i32.const 80
+    i32.const 95
     i32.store8
     i32.const 0x2800E
-    i32.const 200
+    i32.const 225
     i32.store8
-    ;; 5: wood (110,80,40)
+    ;; 5: wood — reddish-brown (distinct from dirt)
     i32.const 0x2800F
-    i32.const 110
+    i32.const 135
     i32.store8
     i32.const 0x28010
-    i32.const 80
+    i32.const 70
     i32.store8
     i32.const 0x28011
-    i32.const 40
-    i32.store8
-    ;; 6: leaves (30,120,30)
-    i32.const 0x28012
     i32.const 30
+    i32.store8
+    ;; 6: leaves — yellow-green (distinct from grass)
+    i32.const 0x28012
+    i32.const 45
     i32.store8
     i32.const 0x28013
-    i32.const 120
+    i32.const 160
     i32.store8
     i32.const 0x28014
-    i32.const 30
+    i32.const 20
     i32.store8
-    ;; 7: coal (60,60,60)
+    ;; 7: coal — dark purple-grey (ore tint)
     i32.const 0x28015
-    i32.const 60
+    i32.const 50
     i32.store8
     i32.const 0x28016
-    i32.const 60
+    i32.const 42
     i32.store8
     i32.const 0x28017
-    i32.const 60
+    i32.const 65
     i32.store8
 
     ;; ---- Generate 8 × 32 = 256 palette entries ----
@@ -1937,85 +1938,85 @@
     i32.const 0x19502
     i32.const 0
     i32.store8
-    ;; grass: 50,180,50
+    ;; grass — vibrant green
     i32.const 0x19503
-    i32.const 50
+    i32.const 55
     i32.store8
     i32.const 0x19504
-    i32.const 180
+    i32.const 195
     i32.store8
     i32.const 0x19505
-    i32.const 50
+    i32.const 40
     i32.store8
-    ;; dirt: 140,90,50
+    ;; dirt — warm earthy brown
     i32.const 0x19506
-    i32.const 140
+    i32.const 155
     i32.store8
     i32.const 0x19507
-    i32.const 90
+    i32.const 100
     i32.store8
     i32.const 0x19508
-    i32.const 50
+    i32.const 55
     i32.store8
-    ;; stone: 130,130,130
+    ;; stone — cool blue-grey
     i32.const 0x19509
-    i32.const 130
+    i32.const 125
     i32.store8
     i32.const 0x1950A
     i32.const 130
     i32.store8
     i32.const 0x1950B
-    i32.const 130
+    i32.const 148
     i32.store8
-    ;; sand: 220,210,120
+    ;; sand — warm golden yellow
     i32.const 0x1950C
-    i32.const 220
+    i32.const 235
     i32.store8
     i32.const 0x1950D
-    i32.const 210
+    i32.const 215
     i32.store8
     i32.const 0x1950E
-    i32.const 120
+    i32.const 130
     i32.store8
-    ;; water: 30,80,200
+    ;; water — rich ocean blue
     i32.const 0x1950F
-    i32.const 30
+    i32.const 20
     i32.store8
     i32.const 0x19510
-    i32.const 80
+    i32.const 95
     i32.store8
     i32.const 0x19511
-    i32.const 200
+    i32.const 225
     i32.store8
-    ;; wood: 110,80,40
+    ;; wood — reddish-brown (distinct from dirt)
     i32.const 0x19512
-    i32.const 110
+    i32.const 135
     i32.store8
     i32.const 0x19513
-    i32.const 80
+    i32.const 70
     i32.store8
     i32.const 0x19514
-    i32.const 40
-    i32.store8
-    ;; leaves: 30,120,30
-    i32.const 0x19515
     i32.const 30
+    i32.store8
+    ;; leaves — yellow-green (distinct from grass)
+    i32.const 0x19515
+    i32.const 45
     i32.store8
     i32.const 0x19516
-    i32.const 120
+    i32.const 160
     i32.store8
     i32.const 0x19517
-    i32.const 30
+    i32.const 20
     i32.store8
-    ;; coal: 60,60,60
+    ;; coal — dark purple-grey (ore tint)
     i32.const 0x19518
-    i32.const 60
+    i32.const 50
     i32.store8
     i32.const 0x19519
-    i32.const 60
+    i32.const 42
     i32.store8
     i32.const 0x1951A
-    i32.const 60
+    i32.const 65
     i32.store8
 
     ;; Initialize player position (palette set by $init_palette above)
@@ -8135,6 +8136,11 @@
     (local $cel_angle f64) (local $cel_dot f64)
     (local $shadow_lit i32) (local $sun_dot f64)
     (local $shadow_ox f64) (local $shadow_oy f64) (local $shadow_oz f64)
+    (local $sunset_t i32)
+    (local $sky_hr i32) (local $sky_hg i32) (local $sky_hb i32)
+    (local $sky_zr i32) (local $sky_zg i32) (local $sky_zb i32)
+    (local $fog_r i32) (local $fog_g i32) (local $fog_b i32)
+    (local $sun_cr i32) (local $sun_cg i32) (local $sun_cb i32)
 
     i32.const 12
     i32.load
@@ -8577,6 +8583,173 @@
         end
       end
     end
+
+    ;; ============================================================
+    ;; SUNSET/SUNRISE factor: 0 at full day/night, peaks at 255 during transitions
+    ;; Sunrise: day_phase 48-80 (peak at 64), Sunset: day_phase 176-208 (peak at 192)
+    ;; sunset_t blends sky from blue to warm orange/pink tones
+    ;; ============================================================
+    i32.const 0
+    local.set $sunset_t
+
+    ;; Sunrise: day_phase 48..80 → triangle peak at 64
+    local.get $day_phase
+    i32.const 48
+    i32.ge_u
+    local.get $day_phase
+    i32.const 80
+    i32.lt_u
+    i32.and
+    if
+      local.get $day_phase
+      i32.const 64
+      i32.le_u
+      if
+        ;; Rising: (phase-48)*16 → 0..255
+        local.get $day_phase
+        i32.const 48
+        i32.sub
+        i32.const 16
+        i32.mul
+        local.set $sunset_t
+      else
+        ;; Falling: (80-phase)*16 → 255..0
+        i32.const 80
+        local.get $day_phase
+        i32.sub
+        i32.const 16
+        i32.mul
+        local.set $sunset_t
+      end
+    end
+
+    ;; Sunset: day_phase 176..208 → triangle peak at 192
+    local.get $day_phase
+    i32.const 176
+    i32.ge_u
+    local.get $day_phase
+    i32.const 208
+    i32.lt_u
+    i32.and
+    if
+      local.get $day_phase
+      i32.const 192
+      i32.le_u
+      if
+        ;; Rising: (phase-176)*16 → 0..255
+        local.get $day_phase
+        i32.const 176
+        i32.sub
+        i32.const 16
+        i32.mul
+        local.set $sunset_t
+      else
+        ;; Falling: (208-phase)*16 → 255..0
+        i32.const 208
+        local.get $day_phase
+        i32.sub
+        i32.const 16
+        i32.mul
+        local.set $sunset_t
+      end
+    end
+
+    ;; Clamp sunset_t to 255
+    local.get $sunset_t
+    i32.const 255
+    i32.gt_s
+    if  i32.const 255  local.set $sunset_t  end
+
+    ;; ============================================================
+    ;; Precompute sky colors with sunset blending
+    ;; Day horizon: R=140,G=180,B=220 → Sunset horizon: R=240,G=130,B=60
+    ;; Day zenith: R=30,G=80,B=200 → Sunset zenith: R=180,G=60,B=80
+    ;; Sun center: R=255,G=240,B=200 → R=255,G=160,B=50 at sunset
+    ;; Fog uses horizon colors
+    ;; ============================================================
+    ;; sky_hr = 140 + (240-140)*sunset_t/255 = 140 + 100*sunset_t/255
+    i32.const 140
+    i32.const 100
+    local.get $sunset_t
+    i32.mul
+    i32.const 255
+    i32.div_u
+    i32.add
+    local.set $sky_hr
+    ;; sky_hg = 180 - (180-130)*sunset_t/255 = 180 - 50*sunset_t/255
+    i32.const 180
+    i32.const 50
+    local.get $sunset_t
+    i32.mul
+    i32.const 255
+    i32.div_u
+    i32.sub
+    local.set $sky_hg
+    ;; sky_hb = 220 - (220-60)*sunset_t/255 = 220 - 160*sunset_t/255
+    i32.const 220
+    i32.const 160
+    local.get $sunset_t
+    i32.mul
+    i32.const 255
+    i32.div_u
+    i32.sub
+    local.set $sky_hb
+    ;; sky_zr = 30 + (180-30)*sunset_t/255 = 30 + 150*sunset_t/255
+    i32.const 30
+    i32.const 150
+    local.get $sunset_t
+    i32.mul
+    i32.const 255
+    i32.div_u
+    i32.add
+    local.set $sky_zr
+    ;; sky_zg = 80 - (80-60)*sunset_t/255 = 80 - 20*sunset_t/255
+    i32.const 80
+    i32.const 20
+    local.get $sunset_t
+    i32.mul
+    i32.const 255
+    i32.div_u
+    i32.sub
+    local.set $sky_zg
+    ;; sky_zb = 200 - (200-80)*sunset_t/255 = 200 - 120*sunset_t/255
+    i32.const 200
+    i32.const 120
+    local.get $sunset_t
+    i32.mul
+    i32.const 255
+    i32.div_u
+    i32.sub
+    local.set $sky_zb
+    ;; fog_r = sky_hr, fog_g = sky_hg, fog_b = sky_hb (horizon colors for fog)
+    local.get $sky_hr
+    local.set $fog_r
+    local.get $sky_hg
+    local.set $fog_g
+    local.get $sky_hb
+    local.set $fog_b
+    ;; Sun center color: blend from (255,240,200) to (255,160,50) with sunset_t
+    ;; sun_cr = 255 (always)
+    i32.const 255
+    local.set $sun_cr
+    ;; sun_cg = 240 - (240-160)*sunset_t/255 = 240 - 80*sunset_t/255
+    i32.const 240
+    i32.const 80
+    local.get $sunset_t
+    i32.mul
+    i32.const 255
+    i32.div_u
+    i32.sub
+    local.set $sun_cg
+    ;; sun_cb = 200 - (200-50)*sunset_t/255 = 200 - 150*sunset_t/255
+    i32.const 200
+    i32.const 150
+    local.get $sunset_t
+    i32.mul
+    i32.const 255
+    i32.div_u
+    i32.sub
+    local.set $sun_cb
 
     ;; Sky uses color ramps + dithering like everything else (no special palette)
 
@@ -9417,9 +9590,8 @@
                 local.get $fb_addr
                 local.get $px_col
                 local.get $px_row
-                ;; R: fog from block R to sky R
-                ;; sky R at day: 140*day_bright/255, night: 2
-                i32.const 140
+                ;; R: fog from block R to sky R (using sunset-aware fog colors)
+                local.get $fog_r
                 local.get $day_bright
                 i32.mul
                 i32.const 2
@@ -9446,8 +9618,8 @@
                 i32.add
                 i32.const 255
                 i32.div_u
-                ;; G: fog blend
-                i32.const 180
+                ;; G: fog blend (using sunset-aware fog colors)
+                local.get $fog_g
                 local.get $day_bright
                 i32.mul
                 i32.const 4
@@ -9473,8 +9645,8 @@
                 i32.add
                 i32.const 255
                 i32.div_u
-                ;; B: fog blend
-                i32.const 220
+                ;; B: fog blend (using sunset-aware fog colors)
+                local.get $fog_b
                 local.get $day_bright
                 i32.mul
                 i32.const 10
@@ -9585,19 +9757,19 @@
                   i32.lt_s
                   if  i32.const 0  local.set $shade_full  end
 
-                  ;; Blend from sky color to sun color (warm yellow-white)
-                  ;; Sky RGB: (sky_r, sky_g, sky_b) scaled by bright[3]/day_bright
-                  ;; Actually compute sky at full brightness for blending base
-                  ;; sky base at day: R=85*day_bright/255, G=170*day_bright/255, B=day_bright
-                  ;; Sun center: R=255, G=240, B=200
+                  ;; Blend from sky color to sun color (sunset-aware warm orange)
+                  ;; Sun center: sunset-blended (sun_cr, sun_cg, sun_cb)
+                  ;; sky base blended with sunset colors
                   ;; Blend: color = sky*(255-t)/255 + sun*t/255
                   ;; Red
                   local.get $fb_addr
                   local.get $px_col
                   local.get $px_row
-                  ;; R = sky_r_full*(255-t)/255 + 255*t/255
-                  ;; sky_r_full = 85*day_bright/255
-                  i32.const 85
+                  ;; R = sky_r_full*(255-t)/255 + sun_cr*t/255
+                  ;; sky_r_full = sky_hr*day_bright/255 (use half of horizon for sun halo)
+                  local.get $sky_hr
+                  i32.const 2
+                  i32.div_u
                   local.get $day_bright
                   i32.mul
                   i32.const 255
@@ -9606,14 +9778,14 @@
                   local.get $shade_full
                   i32.sub
                   i32.mul
-                  i32.const 255
+                  local.get $sun_cr
                   local.get $shade_full
                   i32.mul
                   i32.add
                   i32.const 255
                   i32.div_u
-                  ;; G = sky_g_full*(255-t)/255 + 240*t/255
-                  i32.const 170
+                  ;; G = sky_g_full*(255-t)/255 + sun_cg*t/255
+                  local.get $sky_hg
                   local.get $day_bright
                   i32.mul
                   i32.const 255
@@ -9622,19 +9794,23 @@
                   local.get $shade_full
                   i32.sub
                   i32.mul
-                  i32.const 240
+                  local.get $sun_cg
                   local.get $shade_full
                   i32.mul
                   i32.add
                   i32.const 255
                   i32.div_u
-                  ;; B = day_bright*(255-t)/255 + 200*t/255
+                  ;; B = sky_b_full*(255-t)/255 + sun_cb*t/255
+                  local.get $sky_hb
                   local.get $day_bright
+                  i32.mul
+                  i32.const 255
+                  i32.div_u
                   i32.const 255
                   local.get $shade_full
                   i32.sub
                   i32.mul
-                  i32.const 200
+                  local.get $sun_cb
                   local.get $shade_full
                   i32.mul
                   i32.add
@@ -9718,8 +9894,8 @@
                   else
                     ;; Sky gradient with dithered 24-bit RGB
                     ;; ray_dz (0..1) controls gradient from horizon to zenith
-                    ;; Sky color: blend from horizon (lighter/hazier) to zenith (deeper blue)
-                    ;; Horizon: R=140, G=180, B=220 (hazy)  Zenith: R=30, G=80, B=200 (deep)
+                    ;; Sky color: blend from horizon to zenith (sunset-aware)
+                    ;; Horizon/Zenith colors precomputed with sunset blending
                     ;; Scale by day_bright/255
                     ;; Also at night: very dark blue R≈2, G≈4, B≈10
                     local.get $ray_dz
@@ -9748,22 +9924,22 @@
                     if  i32.const 255  local.set $sky_idx  end
 
                     ;; Day sky RGB (before brightness scaling):
-                    ;; R = (140*(255-t) + 30*t) / 255
-                    ;; G = (180*(255-t) + 80*t) / 255
-                    ;; B = (220*(255-t) + 200*t) / 255
+                    ;; R = (sky_hr*(255-t) + sky_zr*t) / 255
+                    ;; G = (sky_hg*(255-t) + sky_zg*t) / 255
+                    ;; B = (sky_hb*(255-t) + sky_zb*t) / 255
                     ;; Then multiply by day_bright/255 and add night base
 
                     local.get $fb_addr
                     local.get $px_col
                     local.get $px_row
                     ;; R: day_r * day_bright/255 + night_r * (255-day_bright)/255
-                    ;; day_r = (140*(255-sky_idx) + 30*sky_idx) / 255
-                    i32.const 140
+                    ;; day_r = (sky_hr*(255-sky_idx) + sky_zr*sky_idx) / 255
+                    local.get $sky_hr
                     i32.const 255
                     local.get $sky_idx
                     i32.sub
                     i32.mul
-                    i32.const 30
+                    local.get $sky_zr
                     local.get $sky_idx
                     i32.mul
                     i32.add
@@ -9781,12 +9957,12 @@
                     i32.const 255
                     i32.div_u
                     ;; G
-                    i32.const 180
+                    local.get $sky_hg
                     i32.const 255
                     local.get $sky_idx
                     i32.sub
                     i32.mul
-                    i32.const 80
+                    local.get $sky_zg
                     local.get $sky_idx
                     i32.mul
                     i32.add
@@ -9803,12 +9979,12 @@
                     i32.const 255
                     i32.div_u
                     ;; B
-                    i32.const 220
+                    local.get $sky_hb
                     i32.const 255
                     local.get $sky_idx
                     i32.sub
                     i32.mul
-                    i32.const 200
+                    local.get $sky_zb
                     local.get $sky_idx
                     i32.mul
                     i32.add
@@ -9829,15 +10005,14 @@
                   end
                 end
               else
-                ;; Below horizon fog: dithered sky at horizon level
-                ;; Use horizon sky color (ray_dz≈0 equivalent)
-                ;; day: R=140*day_bright/255, G=180*day_bright/255, B=220*day_bright/255
+                ;; Below horizon fog: dithered sky at horizon level (sunset-aware)
+                ;; Use precomputed horizon sky color
                 ;; plus night base
                 local.get $fb_addr
                 local.get $px_col
                 local.get $px_row
                 ;; R
-                i32.const 140
+                local.get $fog_r
                 local.get $day_bright
                 i32.mul
                 i32.const 2
@@ -9849,7 +10024,7 @@
                 i32.const 255
                 i32.div_u
                 ;; G
-                i32.const 180
+                local.get $fog_g
                 local.get $day_bright
                 i32.mul
                 i32.const 4
@@ -9861,7 +10036,7 @@
                 i32.const 255
                 i32.div_u
                 ;; B
-                i32.const 220
+                local.get $fog_b
                 local.get $day_bright
                 i32.mul
                 i32.const 10
