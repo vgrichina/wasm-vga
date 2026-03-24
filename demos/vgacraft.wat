@@ -2,6 +2,7 @@
   (import "env" "memory" (memory 10))
   (import "env" "sfx" (func $sfx (param i32)))
   (import "env" "note" (func $note (param i32 i32 i32 i32)))
+  (import "env" "music" (func $music (param i32)))
 
   ;; ============================================================
   ;; VGACraft — Proper Per-Pixel 3D Voxel Raytracer
@@ -1103,15 +1104,17 @@
     i32.const 0x28014
     i32.const 15
     i32.store8
-    ;; 7: coal — deep violet-purple (saturated ore)
+    ;; 7: sky/atmosphere — cool white-blue (excellent sky, cloud, moon coverage)
+    ;; This ramp covers: deep navy (shade 2-4), sky blue (10-18), cloud white (26-31)
+    ;; Coal ore visuals folded into stone material with darker shades
     i32.const 0x28015
-    i32.const 60
+    i32.const 200
     i32.store8
     i32.const 0x28016
-    i32.const 35
+    i32.const 215
     i32.store8
     i32.const 0x28017
-    i32.const 95
+    i32.const 255
     i32.store8
 
     ;; ---- Generate 8 × 32 = 256 palette entries ----
@@ -2008,16 +2011,377 @@
     i32.const 0x19517
     i32.const 15
     i32.store8
-    ;; coal — deep violet-purple
+    ;; sky/atmosphere — cool white-blue (replaces coal for better sky/cloud rendering)
     i32.const 0x19518
-    i32.const 60
+    i32.const 200
     i32.store8
     i32.const 0x19519
-    i32.const 35
+    i32.const 215
     i32.store8
     i32.const 0x1951A
-    i32.const 95
+    i32.const 255
     i32.store8
+
+    ;; ================================================================
+    ;; AMBIENT MUSIC — calm Minecraft-style pentatonic pattern
+    ;; Written to 0x19700 (well after string/dither data)
+    ;; Format: bpm(u16), steps(u8), num_tracks(u8),
+    ;;         per track: type(u8), vol(u8), dur_cs(u8), pad(u8)
+    ;;         then note data: track0[steps], track1[steps], track2[steps]
+    ;; ================================================================
+    ;; bpm = 72 (slow, ambient)
+    i32.const 0x19700
+    i32.const 72  ;; bpm low byte
+    i32.store8
+    i32.const 0x19701
+    i32.const 0   ;; bpm high byte
+    i32.store8
+    ;; steps = 32
+    i32.const 0x19702
+    i32.const 32
+    i32.store8
+    ;; num_tracks = 3
+    i32.const 0x19703
+    i32.const 3
+    i32.store8
+    ;; Track 0: triangle bass — warm and mellow, vol=60, dur=15cs
+    i32.const 0x19704
+    i32.const 3   ;; triangle
+    i32.store8
+    i32.const 0x19705
+    i32.const 60  ;; vol
+    i32.store8
+    i32.const 0x19706
+    i32.const 15  ;; dur centisec
+    i32.store8
+    i32.const 0x19707
+    i32.const 0   ;; pad
+    i32.store8
+    ;; Track 1: sine pad — ethereal, vol=45, dur=20cs
+    i32.const 0x19708
+    i32.const 0   ;; sine
+    i32.store8
+    i32.const 0x19709
+    i32.const 45  ;; vol
+    i32.store8
+    i32.const 0x1970A
+    i32.const 20  ;; dur centisec
+    i32.store8
+    i32.const 0x1970B
+    i32.const 0   ;; pad
+    i32.store8
+    ;; Track 2: triangle melody — gentle high notes, vol=35, dur=12cs
+    i32.const 0x1970C
+    i32.const 3   ;; triangle
+    i32.store8
+    i32.const 0x1970D
+    i32.const 35  ;; vol
+    i32.store8
+    i32.const 0x1970E
+    i32.const 12  ;; dur centisec
+    i32.store8
+    i32.const 0x1970F
+    i32.const 0   ;; pad
+    i32.store8
+    ;; Note data at 0x19710 — 32 steps × 3 tracks = 96 bytes
+    ;; Track 0 (bass): C pentatonic — C3(48), D3(50), E3(52), G3(55), A3(57)
+    ;; Sparse, breathing bass — lots of rests for openness
+    i32.const 0x19710  ;; step 0
+    i32.const 48  ;; C3
+    i32.store8
+    i32.const 0x19711
+    i32.const 0   ;; rest
+    i32.store8
+    i32.const 0x19712
+    i32.const 0
+    i32.store8
+    i32.const 0x19713
+    i32.const 0
+    i32.store8
+    i32.const 0x19714
+    i32.const 55  ;; G3
+    i32.store8
+    i32.const 0x19715
+    i32.const 0
+    i32.store8
+    i32.const 0x19716
+    i32.const 0
+    i32.store8
+    i32.const 0x19717
+    i32.const 0
+    i32.store8
+    i32.const 0x19718
+    i32.const 48  ;; C3
+    i32.store8
+    i32.const 0x19719
+    i32.const 0
+    i32.store8
+    i32.const 0x1971A
+    i32.const 0
+    i32.store8
+    i32.const 0x1971B
+    i32.const 0
+    i32.store8
+    i32.const 0x1971C
+    i32.const 57  ;; A3
+    i32.store8
+    i32.const 0x1971D
+    i32.const 0
+    i32.store8
+    i32.const 0x1971E
+    i32.const 0
+    i32.store8
+    i32.const 0x1971F
+    i32.const 0
+    i32.store8
+    i32.const 0x19720
+    i32.const 50  ;; D3
+    i32.store8
+    i32.const 0x19721
+    i32.const 0
+    i32.store8
+    i32.const 0x19722
+    i32.const 0
+    i32.store8
+    i32.const 0x19723
+    i32.const 0
+    i32.store8
+    i32.const 0x19724
+    i32.const 52  ;; E3
+    i32.store8
+    i32.const 0x19725
+    i32.const 0
+    i32.store8
+    i32.const 0x19726
+    i32.const 0
+    i32.store8
+    i32.const 0x19727
+    i32.const 0
+    i32.store8
+    i32.const 0x19728
+    i32.const 55  ;; G3
+    i32.store8
+    i32.const 0x19729
+    i32.const 0
+    i32.store8
+    i32.const 0x1972A
+    i32.const 0
+    i32.store8
+    i32.const 0x1972B
+    i32.const 0
+    i32.store8
+    i32.const 0x1972C
+    i32.const 48  ;; C3
+    i32.store8
+    i32.const 0x1972D
+    i32.const 0
+    i32.store8
+    i32.const 0x1972E
+    i32.const 0
+    i32.store8
+    i32.const 0x1972F
+    i32.const 0
+    i32.store8
+    ;; Track 1 (pad): gentle chord tones — sparse and airy
+    ;; 32 bytes at 0x19730
+    i32.const 0x19730
+    i32.const 60  ;; C4
+    i32.store8
+    i32.const 0x19731
+    i32.const 0
+    i32.store8
+    i32.const 0x19732
+    i32.const 64  ;; E4
+    i32.store8
+    i32.const 0x19733
+    i32.const 0
+    i32.store8
+    i32.const 0x19734
+    i32.const 0
+    i32.store8
+    i32.const 0x19735
+    i32.const 67  ;; G4
+    i32.store8
+    i32.const 0x19736
+    i32.const 0
+    i32.store8
+    i32.const 0x19737
+    i32.const 0
+    i32.store8
+    i32.const 0x19738
+    i32.const 60  ;; C4
+    i32.store8
+    i32.const 0x19739
+    i32.const 0
+    i32.store8
+    i32.const 0x1973A
+    i32.const 0
+    i32.store8
+    i32.const 0x1973B
+    i32.const 64  ;; E4
+    i32.store8
+    i32.const 0x1973C
+    i32.const 0
+    i32.store8
+    i32.const 0x1973D
+    i32.const 0
+    i32.store8
+    i32.const 0x1973E
+    i32.const 69  ;; A4
+    i32.store8
+    i32.const 0x1973F
+    i32.const 0
+    i32.store8
+    i32.const 0x19740
+    i32.const 0
+    i32.store8
+    i32.const 0x19741
+    i32.const 62  ;; D4
+    i32.store8
+    i32.const 0x19742
+    i32.const 0
+    i32.store8
+    i32.const 0x19743
+    i32.const 67  ;; G4
+    i32.store8
+    i32.const 0x19744
+    i32.const 0
+    i32.store8
+    i32.const 0x19745
+    i32.const 0
+    i32.store8
+    i32.const 0x19746
+    i32.const 64  ;; E4
+    i32.store8
+    i32.const 0x19747
+    i32.const 0
+    i32.store8
+    i32.const 0x19748
+    i32.const 0
+    i32.store8
+    i32.const 0x19749
+    i32.const 67  ;; G4
+    i32.store8
+    i32.const 0x1974A
+    i32.const 0
+    i32.store8
+    i32.const 0x1974B
+    i32.const 0
+    i32.store8
+    i32.const 0x1974C
+    i32.const 60  ;; C4
+    i32.store8
+    i32.const 0x1974D
+    i32.const 0
+    i32.store8
+    i32.const 0x1974E
+    i32.const 0
+    i32.store8
+    i32.const 0x1974F
+    i32.const 0
+    i32.store8
+    ;; Track 2 (melody): high dreamy notes — very sparse, pentatonic
+    ;; 32 bytes at 0x19750
+    i32.const 0x19750
+    i32.const 0
+    i32.store8
+    i32.const 0x19751
+    i32.const 0
+    i32.store8
+    i32.const 0x19752
+    i32.const 72  ;; C5
+    i32.store8
+    i32.const 0x19753
+    i32.const 0
+    i32.store8
+    i32.const 0x19754
+    i32.const 0
+    i32.store8
+    i32.const 0x19755
+    i32.const 0
+    i32.store8
+    i32.const 0x19756
+    i32.const 0
+    i32.store8
+    i32.const 0x19757
+    i32.const 76  ;; E5
+    i32.store8
+    i32.const 0x19758
+    i32.const 0
+    i32.store8
+    i32.const 0x19759
+    i32.const 0
+    i32.store8
+    i32.const 0x1975A
+    i32.const 0
+    i32.store8
+    i32.const 0x1975B
+    i32.const 0
+    i32.store8
+    i32.const 0x1975C
+    i32.const 79  ;; G5
+    i32.store8
+    i32.const 0x1975D
+    i32.const 0
+    i32.store8
+    i32.const 0x1975E
+    i32.const 0
+    i32.store8
+    i32.const 0x1975F
+    i32.const 0
+    i32.store8
+    i32.const 0x19760
+    i32.const 0
+    i32.store8
+    i32.const 0x19761
+    i32.const 0
+    i32.store8
+    i32.const 0x19762
+    i32.const 0
+    i32.store8
+    i32.const 0x19763
+    i32.const 74  ;; D5
+    i32.store8
+    i32.const 0x19764
+    i32.const 0
+    i32.store8
+    i32.const 0x19765
+    i32.const 0
+    i32.store8
+    i32.const 0x19766
+    i32.const 0
+    i32.store8
+    i32.const 0x19767
+    i32.const 0
+    i32.store8
+    i32.const 0x19768
+    i32.const 72  ;; C5
+    i32.store8
+    i32.const 0x19769
+    i32.const 0
+    i32.store8
+    i32.const 0x1976A
+    i32.const 0
+    i32.store8
+    i32.const 0x1976B
+    i32.const 0
+    i32.store8
+    i32.const 0x1976C
+    i32.const 0
+    i32.store8
+    i32.const 0x1976D
+    i32.const 69  ;; A4
+    i32.store8
+    i32.const 0x1976E
+    i32.const 0
+    i32.store8
+    i32.const 0x1976F
+    i32.const 0
+    i32.store8
+
+    ;; Start ambient music
+    i32.const 0x19700
+    call $music
 
     ;; Initialize player position (palette set by $init_palette above)
     i32.const 0x10344
@@ -8666,60 +9030,60 @@
 
     ;; ============================================================
     ;; Precompute sky colors with sunset blending
-    ;; Day horizon: R=135,G=185,B=230 → Sunset horizon: R=255,G=100,B=30
-    ;; Day zenith: R=25,G=75,B=210 → Sunset zenith: R=210,G=40,B=90
-    ;; Sun center: R=255,G=250,B=210 → R=255,G=130,B=20 at sunset
-    ;; Rich, dramatic sunsets with fiery oranges and magenta sky
+    ;; Day horizon: R=140,G=190,B=235 → Sunset horizon: R=255,G=90,B=20
+    ;; Day zenith: R=30,G=85,B=220 → Sunset zenith: R=220,G=35,B=80
+    ;; Sun center: R=255,G=250,B=210 → R=255,G=120,B=15 at sunset
+    ;; Richer, more dramatic sunsets with deeper oranges and vivid magenta sky
     ;; Fog uses horizon colors
     ;; ============================================================
-    ;; sky_hr = 135 + (255-135)*sunset_t/255 = 135 + 120*sunset_t/255
-    i32.const 135
-    i32.const 120
+    ;; sky_hr = 140 + (255-140)*sunset_t/255 = 140 + 115*sunset_t/255
+    i32.const 140
+    i32.const 115
     local.get $sunset_t
     i32.mul
     i32.const 255
     i32.div_u
     i32.add
     local.set $sky_hr
-    ;; sky_hg = 185 - (185-100)*sunset_t/255 = 185 - 85*sunset_t/255
-    i32.const 185
-    i32.const 85
+    ;; sky_hg = 190 - (190-90)*sunset_t/255 = 190 - 100*sunset_t/255
+    i32.const 190
+    i32.const 100
     local.get $sunset_t
     i32.mul
     i32.const 255
     i32.div_u
     i32.sub
     local.set $sky_hg
-    ;; sky_hb = 230 - (230-30)*sunset_t/255 = 230 - 200*sunset_t/255
-    i32.const 230
-    i32.const 200
+    ;; sky_hb = 235 - (235-20)*sunset_t/255 = 235 - 215*sunset_t/255
+    i32.const 235
+    i32.const 215
     local.get $sunset_t
     i32.mul
     i32.const 255
     i32.div_u
     i32.sub
     local.set $sky_hb
-    ;; sky_zr = 25 + (210-25)*sunset_t/255 = 25 + 185*sunset_t/255
-    i32.const 25
-    i32.const 185
+    ;; sky_zr = 30 + (220-30)*sunset_t/255 = 30 + 190*sunset_t/255
+    i32.const 30
+    i32.const 190
     local.get $sunset_t
     i32.mul
     i32.const 255
     i32.div_u
     i32.add
     local.set $sky_zr
-    ;; sky_zg = 75 - (75-40)*sunset_t/255 = 75 - 35*sunset_t/255
-    i32.const 75
-    i32.const 35
+    ;; sky_zg = 85 - (85-35)*sunset_t/255 = 85 - 50*sunset_t/255
+    i32.const 85
+    i32.const 50
     local.get $sunset_t
     i32.mul
     i32.const 255
     i32.div_u
     i32.sub
     local.set $sky_zg
-    ;; sky_zb = 210 - (210-90)*sunset_t/255 = 210 - 120*sunset_t/255
-    i32.const 210
-    i32.const 120
+    ;; sky_zb = 220 - (220-80)*sunset_t/255 = 220 - 140*sunset_t/255
+    i32.const 220
+    i32.const 140
     local.get $sunset_t
     i32.mul
     i32.const 255
@@ -8737,18 +9101,18 @@
     ;; sun_cr = 255 (always)
     i32.const 255
     local.set $sun_cr
-    ;; sun_cg = 250 - (250-130)*sunset_t/255 = 250 - 120*sunset_t/255
+    ;; sun_cg = 250 - (250-120)*sunset_t/255 = 250 - 130*sunset_t/255
     i32.const 250
-    i32.const 120
+    i32.const 130
     local.get $sunset_t
     i32.mul
     i32.const 255
     i32.div_u
     i32.sub
     local.set $sun_cg
-    ;; sun_cb = 210 - (210-20)*sunset_t/255 = 210 - 190*sunset_t/255
+    ;; sun_cb = 210 - (210-15)*sunset_t/255 = 210 - 195*sunset_t/255
     i32.const 210
-    i32.const 190
+    i32.const 195
     local.get $sunset_t
     i32.mul
     i32.const 255
@@ -9829,16 +10193,17 @@
                   i32.eqz
                   i32.and
                   local.get $cel_dot
-                  f64.const 0.992
+                  f64.const 0.988
                   f64.gt
                   i32.and
                   if
                     ;; Moon rendering with dithered 24-bit RGB (dim moonlight)
-                    ;; Map cel_dot from 0.992..1.0 to t = 0..255
+                    ;; Moon glow halo — wider detection radius
+                    ;; Map cel_dot from 0.988..1.0 to t = 0..255
                     local.get $cel_dot
-                    f64.const 0.992
+                    f64.const 0.988
                     f64.sub
-                    f64.const 31875.0  ;; 255/0.008
+                    f64.const 21250.0  ;; 255/0.012
                     f64.mul
                     i32.trunc_f64_s
                     local.set $shade_full
@@ -9851,49 +10216,133 @@
                     i32.gt_s
                     if  i32.const 255  local.set $shade_full  end
 
-                    ;; Moon: dim cool white, max brightness ~100 (not very bright)
-                    ;; Blend from night sky (very dark blue) to moon surface
+                    ;; Moon: bright cool white with warm edge glow
+                    ;; Brighter moon: center (200,210,230), edge glow (180,170,140)
+                    ;; Blend from night sky (very dark blue) through warm edge to bright center
                     ;; Night sky: R≈2, G≈4, B≈10
-                    ;; Moon center: R=90, G=95, B=100 (dim cool white)
+                    ;; shade_full 0-127: night sky → warm edge glow
+                    ;; shade_full 128-255: warm edge → bright center
                     local.get $fb_addr
                     local.get $px_col
                     local.get $px_row
-                    ;; R = 2*(255-t)/255 + 90*t/255
-                    i32.const 2
-                    i32.const 255
                     local.get $shade_full
-                    i32.sub
-                    i32.mul
-                    i32.const 90
-                    local.get $shade_full
-                    i32.mul
-                    i32.add
-                    i32.const 255
-                    i32.div_u
-                    ;; G = 4*(255-t)/255 + 95*t/255
-                    i32.const 4
-                    i32.const 255
-                    local.get $shade_full
-                    i32.sub
-                    i32.mul
-                    i32.const 95
-                    local.get $shade_full
-                    i32.mul
-                    i32.add
-                    i32.const 255
-                    i32.div_u
-                    ;; B = 10*(255-t)/255 + 100*t/255
-                    i32.const 10
-                    i32.const 255
-                    local.get $shade_full
-                    i32.sub
-                    i32.mul
-                    i32.const 100
-                    local.get $shade_full
-                    i32.mul
-                    i32.add
-                    i32.const 255
-                    i32.div_u
+                    i32.const 128
+                    i32.lt_s
+                    if (result i32 i32 i32)
+                      ;; Outer halo: blend night sky (2,4,10) → warm edge (180,160,120)
+                      ;; t2 = shade_full * 2 (0-254)
+                      ;; R = 2*(255-t2)/255 + 180*t2/255
+                      i32.const 2
+                      i32.const 255
+                      local.get $shade_full
+                      i32.const 2
+                      i32.mul
+                      i32.sub
+                      i32.mul
+                      i32.const 180
+                      local.get $shade_full
+                      i32.const 2
+                      i32.mul
+                      i32.mul
+                      i32.add
+                      i32.const 255
+                      i32.div_u
+                      ;; G = 4*(255-t2)/255 + 160*t2/255
+                      i32.const 4
+                      i32.const 255
+                      local.get $shade_full
+                      i32.const 2
+                      i32.mul
+                      i32.sub
+                      i32.mul
+                      i32.const 160
+                      local.get $shade_full
+                      i32.const 2
+                      i32.mul
+                      i32.mul
+                      i32.add
+                      i32.const 255
+                      i32.div_u
+                      ;; B = 10*(255-t2)/255 + 120*t2/255
+                      i32.const 10
+                      i32.const 255
+                      local.get $shade_full
+                      i32.const 2
+                      i32.mul
+                      i32.sub
+                      i32.mul
+                      i32.const 120
+                      local.get $shade_full
+                      i32.const 2
+                      i32.mul
+                      i32.mul
+                      i32.add
+                      i32.const 255
+                      i32.div_u
+                    else
+                      ;; Inner disc: blend warm edge (180,160,120) → bright center (210,220,240)
+                      ;; t2 = (shade_full - 128) * 2 (0-254)
+                      ;; R = 180*(255-t2)/255 + 210*t2/255
+                      i32.const 180
+                      i32.const 255
+                      local.get $shade_full
+                      i32.const 128
+                      i32.sub
+                      i32.const 2
+                      i32.mul
+                      i32.sub
+                      i32.mul
+                      i32.const 210
+                      local.get $shade_full
+                      i32.const 128
+                      i32.sub
+                      i32.const 2
+                      i32.mul
+                      i32.mul
+                      i32.add
+                      i32.const 255
+                      i32.div_u
+                      ;; G = 160*(255-t2)/255 + 220*t2/255
+                      i32.const 160
+                      i32.const 255
+                      local.get $shade_full
+                      i32.const 128
+                      i32.sub
+                      i32.const 2
+                      i32.mul
+                      i32.sub
+                      i32.mul
+                      i32.const 220
+                      local.get $shade_full
+                      i32.const 128
+                      i32.sub
+                      i32.const 2
+                      i32.mul
+                      i32.mul
+                      i32.add
+                      i32.const 255
+                      i32.div_u
+                      ;; B = 120*(255-t2)/255 + 240*t2/255
+                      i32.const 120
+                      i32.const 255
+                      local.get $shade_full
+                      i32.const 128
+                      i32.sub
+                      i32.const 2
+                      i32.mul
+                      i32.sub
+                      i32.mul
+                      i32.const 240
+                      local.get $shade_full
+                      i32.const 128
+                      i32.sub
+                      i32.const 2
+                      i32.mul
+                      i32.mul
+                      i32.add
+                      i32.const 255
+                      i32.div_u
+                    end
                     call $rgb_to_rgbl_dither
                     i32.store8
                   else
@@ -10004,6 +10453,116 @@
                     i32.const 255
                     i32.div_u
                     local.set $cloud_b
+
+                    ;; ============================================================
+                    ;; NIGHT STARS — sprinkle bright dots in night sky
+                    ;; Use hash of screen position + ray direction for pseudo-random stars
+                    ;; Only visible when day_bright < 140 (night/twilight)
+                    ;; ============================================================
+                    local.get $day_bright
+                    i32.const 140
+                    i32.lt_s
+                    local.get $ray_dz
+                    f64.const 0.05
+                    f64.gt
+                    i32.and
+                    if
+                      ;; Hash screen pixel coords for star pattern
+                      ;; Use a simple hash: (px_col * 7919 + px_row * 7727 + 13) mod 997
+                      ;; If result < 3, it's a star (gives ~0.3% density)
+                      local.get $px_col
+                      i32.const 7919
+                      i32.mul
+                      local.get $px_row
+                      i32.const 7727
+                      i32.mul
+                      i32.add
+                      i32.const 13
+                      i32.add
+                      ;; XOR with camera angle-based value for parallax
+                      local.get $ray_dx
+                      f64.const 500.0
+                      f64.mul
+                      i32.trunc_f64_s
+                      i32.xor
+                      local.get $ray_dy
+                      f64.const 500.0
+                      f64.mul
+                      i32.trunc_f64_s
+                      i32.xor
+                      ;; Take absolute value and mod by prime
+                      i32.const 0x7FFFFFFF
+                      i32.and
+                      i32.const 997
+                      i32.rem_u
+                      i32.const 3
+                      i32.lt_u
+                      if
+                        ;; Star brightness: twinkle using tick + position hash
+                        ;; star_bright = 140 + (hash % 115) — between 140-255
+                        ;; Fade with day brightness: star_alpha = (140 - day_bright) * 255 / 140
+                        ;; Blend star white into current sky color
+                        i32.const 140
+                        local.get $day_bright
+                        i32.sub
+                        i32.const 255
+                        i32.mul
+                        i32.const 140
+                        i32.div_u
+                        local.set $shade_frac  ;; reuse as star_alpha
+
+                        ;; Twinkle: vary brightness with tick
+                        local.get $px_col
+                        i32.const 31
+                        i32.mul
+                        local.get $px_row
+                        i32.const 17
+                        i32.mul
+                        i32.add
+                        local.get $tick
+                        i32.const 7
+                        i32.shr_u
+                        i32.add
+                        i32.const 3
+                        i32.and
+                        i32.const 0
+                        i32.eq
+                        if
+                          ;; Bright twinkle frame: blend star into sky
+                          ;; R = cloud_r + (255 - cloud_r) * star_alpha / 255
+                          local.get $cloud_r
+                          i32.const 255
+                          local.get $cloud_r
+                          i32.sub
+                          local.get $shade_frac
+                          i32.mul
+                          i32.const 255
+                          i32.div_u
+                          i32.add
+                          local.set $cloud_r
+                          local.get $cloud_g
+                          i32.const 255
+                          local.get $cloud_g
+                          i32.sub
+                          local.get $shade_frac
+                          i32.mul
+                          i32.const 255
+                          i32.div_u
+                          i32.add
+                          local.set $cloud_g
+                          local.get $cloud_b
+                          i32.const 255
+                          local.get $cloud_b
+                          i32.sub
+                          local.get $shade_frac
+                          i32.mul
+                          i32.const 255
+                          i32.div_u
+                          i32.add
+                          local.set $cloud_b
+                        end
+                      end
+                    end
 
                     ;; ============================================================
                     ;; PROCEDURAL CLOUDS — two layers of scrolling noise
@@ -10267,11 +10826,11 @@
                       local.set $cloud_val
 
                       ;; Blend cloud white into sky color
-                      ;; Cloud color: bright white (240,245,255) during day
-                      ;; At sunset, warm the clouds: blend toward (255,200,140)
-                      ;; cloud_target_r = 240 + 15*sunset_t/255
-                      ;; cloud_target_g = 245 - 45*sunset_t/255
-                      ;; cloud_target_b = 255 - 115*sunset_t/255
+                      ;; Cloud color: bright white (245,248,255) during day
+                      ;; At sunset, intensely warm: blend toward (255,160,80)
+                      ;; cloud_target_r = 245 + 10*sunset_t/255
+                      ;; cloud_target_g = 248 - 88*sunset_t/255
+                      ;; cloud_target_b = 255 - 175*sunset_t/255
 
                       ;; R: sky_r + (cloud_white_r - sky_r) * cloud_val / 255
                       ;; Simplified: sky_r * (255-cloud_val)/255 + cloud_white_r * cloud_val/255
@@ -10281,8 +10840,8 @@
                       i32.sub
                       i32.mul
                       ;; cloud_target_r
-                      i32.const 240
-                      i32.const 15
+                      i32.const 245
+                      i32.const 10
                       local.get $sunset_t
                       i32.mul
                       i32.const 255
@@ -10302,8 +10861,8 @@
                       i32.sub
                       i32.mul
                       ;; cloud_target_g
-                      i32.const 245
-                      i32.const 45
+                      i32.const 248
+                      i32.const 88
                       local.get $sunset_t
                       i32.mul
                       i32.const 255
@@ -10324,7 +10883,7 @@
                       i32.mul
                       ;; cloud_target_b
                       i32.const 255
-                      i32.const 115
+                      i32.const 175
                       local.get $sunset_t
                       i32.mul
                       i32.const 255
