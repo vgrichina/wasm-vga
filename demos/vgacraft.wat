@@ -4589,6 +4589,11 @@
   ;; Cache generation counter (low byte of frame counter, bumped on mods)
   (global $g_cache_gen (mut i32) (i32.const 0))
 
+  ;; Idle demo mode: frames since last input (triggers auto-camera after threshold)
+  (global $g_idle_timer (mut i32) (i32.const 0))
+  ;; Idle demo accumulated angle offset for smooth rotation
+  (global $g_idle_angle (mut f64) (f64.const 0.0))
+
   ;; Inventory toggle state
   (global $g_show_inv (mut i32) (i32.const 0))
   (global $g_prev_esc (mut i32) (i32.const 0))
@@ -8568,130 +8573,233 @@
     i32.load
     local.set $look_y
 
-    ;; ---- Mouse X → yaw ----
-    i32.const 0x04
-    i32.load8_u
-    i32.const 0x05
-    i32.load8_u
-    i32.const 8
-    i32.shl
+    ;; ---- Idle demo detection ----
+    ;; If no keys pressed and no mouse buttons, increment idle timer
+    ;; Any input resets the timer
+    local.get $keys
+    local.get $mouse_btn
     i32.or
-    local.set $mouse_x
-    local.get $angle
-    local.get $mouse_x
-    f64.convert_i32_s
-    f64.const 160.0
-    f64.sub
-    f64.const 0.0002
-    f64.mul
-    f64.sub
-    local.set $angle
-
-    ;; ---- Mouse Y → look pitch ----
-    i32.const 0x06
-    i32.load8_u
-    i32.const 0x07
-    i32.load8_u
-    i32.const 8
-    i32.shl
-    i32.or
-    local.set $mouse_y
-    local.get $mouse_y
-    f64.convert_i32_s
-    f64.const 100.0
-    f64.sub
-    f64.const -0.6
-    f64.mul
-    i32.trunc_f64_s
-    local.set $look_y
-    local.get $look_y
-    i32.const -60
-    i32.lt_s
     if
-      i32.const -60
-      local.set $look_y
+      ;; User is active — reset idle timer and idle angle
+      i32.const 0
+      global.set $g_idle_timer
+      f64.const 0.0
+      global.set $g_idle_angle
+    else
+      ;; No input — increment idle timer
+      global.get $g_idle_timer
+      i32.const 1
+      i32.add
+      global.set $g_idle_timer
     end
-    local.get $look_y
-    i32.const 60
+
+    ;; ---- Check if in idle demo mode (>180 frames = ~3 seconds no input) ----
+    global.get $g_idle_timer
+    i32.const 180
     i32.gt_s
     if
-      i32.const 60
+      ;; === IDLE DEMO MODE ===
+      ;; Slowly rotate camera to showcase sun/moon
+      ;; Advance idle angle smoothly
+      global.get $g_idle_angle
+      f64.const 0.008
+      f64.add
+      global.set $g_idle_angle
+
+      ;; Set angle from idle rotation
+      local.get $angle
+      f64.const 0.008
+      f64.add
+      local.set $angle
+
+      ;; Tilt look_y upward to show celestial bodies (sun/moon)
+      ;; Oscillate between looking slightly up and more up
+      ;; Use a sine wave based on idle_angle for smooth pitch variation
+      ;; Range: -25 (looking up to see sky) to +5 (slightly down to see landscape)
+      global.get $g_idle_angle
+      f64.const 0.3
+      f64.mul
+      call $sin_a
+      f64.const 15.0
+      f64.mul
+      f64.const -15.0
+      f64.add
+      i32.trunc_f64_s
       local.set $look_y
-    end
-    i32.const 0x103AC
-    local.get $look_y
-    i32.store
+      i32.const 0x103AC
+      local.get $look_y
+      i32.store
 
-    ;; ---- Input ----
-    f64.const 0.06
-    local.set $speed
-    ;; Turn left
-    local.get $keys
-    i32.const 4
-    i32.and
-    if
+      ;; Auto-move forward slowly to explore landscape
       local.get $angle
-      f64.const 0.04
-      f64.sub
-      local.set $angle
-    end
-    ;; Turn right
-    local.get $keys
-    i32.const 8
-    i32.and
-    if
+      call $cos_a
+      local.set $cos_a_v
       local.get $angle
-      f64.const 0.04
-      f64.add
-      local.set $angle
-    end
+      call $sin_a
+      local.set $sin_a_v
+      f64.const 0.0
+      local.set $move_x
+      f64.const 0.0
+      local.set $move_y
 
-    local.get $angle
-    call $cos_a
-    local.set $cos_a_v
-    local.get $angle
-    call $sin_a
-    local.set $sin_a_v
-
-    f64.const 0.0
-    local.set $move_x
-    f64.const 0.0
-    local.set $move_y
-    ;; Forward
-    local.get $keys
-    i32.const 1
-    i32.and
-    if
-      local.get $move_x
+      ;; Gentle forward movement
       local.get $cos_a_v
+      f64.const 0.03
+      f64.mul
+      local.set $move_x
+      local.get $sin_a_v
+      f64.const 0.03
+      f64.mul
+      local.set $move_y
+
+      ;; Add slight sinusoidal strafe for more interesting path
+      global.get $g_idle_angle
+      f64.const 0.15
+      f64.mul
+      call $sin_a
+      f64.const 0.015
+      f64.mul
+      local.set $speed ;; reuse speed as temp
+      local.get $move_x
+      local.get $sin_a_v
+      f64.neg
       local.get $speed
       f64.mul
       f64.add
       local.set $move_x
       local.get $move_y
-      local.get $sin_a_v
+      local.get $cos_a_v
       local.get $speed
       f64.mul
       f64.add
       local.set $move_y
-    end
-    ;; Backward
-    local.get $keys
-    i32.const 2
-    i32.and
-    if
-      local.get $move_x
-      local.get $cos_a_v
-      local.get $speed
+    else
+      ;; === NORMAL INPUT MODE ===
+      ;; ---- Mouse X → yaw ----
+      i32.const 0x04
+      i32.load8_u
+      i32.const 0x05
+      i32.load8_u
+      i32.const 8
+      i32.shl
+      i32.or
+      local.set $mouse_x
+      local.get $angle
+      local.get $mouse_x
+      f64.convert_i32_s
+      f64.const 160.0
+      f64.sub
+      f64.const 0.0002
       f64.mul
       f64.sub
+      local.set $angle
+
+      ;; ---- Mouse Y → look pitch ----
+      i32.const 0x06
+      i32.load8_u
+      i32.const 0x07
+      i32.load8_u
+      i32.const 8
+      i32.shl
+      i32.or
+      local.set $mouse_y
+      local.get $mouse_y
+      f64.convert_i32_s
+      f64.const 100.0
+      f64.sub
+      f64.const -0.6
+      f64.mul
+      i32.trunc_f64_s
+      local.set $look_y
+      local.get $look_y
+      i32.const -60
+      i32.lt_s
+      if
+        i32.const -60
+        local.set $look_y
+      end
+      local.get $look_y
+      i32.const 60
+      i32.gt_s
+      if
+        i32.const 60
+        local.set $look_y
+      end
+      i32.const 0x103AC
+      local.get $look_y
+      i32.store
+
+      ;; ---- Input ----
+      f64.const 0.06
+      local.set $speed
+      ;; Turn left
+      local.get $keys
+      i32.const 4
+      i32.and
+      if
+        local.get $angle
+        f64.const 0.04
+        f64.sub
+        local.set $angle
+      end
+      ;; Turn right
+      local.get $keys
+      i32.const 8
+      i32.and
+      if
+        local.get $angle
+        f64.const 0.04
+        f64.add
+        local.set $angle
+      end
+
+      local.get $angle
+      call $cos_a
+      local.set $cos_a_v
+      local.get $angle
+      call $sin_a
+      local.set $sin_a_v
+
+      f64.const 0.0
       local.set $move_x
-      local.get $move_y
-      local.get $sin_a_v
-      local.get $speed
-      f64.mul
-      f64.sub
+      f64.const 0.0
       local.set $move_y
+      ;; Forward
+      local.get $keys
+      i32.const 1
+      i32.and
+      if
+        local.get $move_x
+        local.get $cos_a_v
+        local.get $speed
+        f64.mul
+        f64.add
+        local.set $move_x
+        local.get $move_y
+        local.get $sin_a_v
+        local.get $speed
+        f64.mul
+        f64.add
+        local.set $move_y
+      end
+      ;; Backward
+      local.get $keys
+      i32.const 2
+      i32.and
+      if
+        local.get $move_x
+        local.get $cos_a_v
+        local.get $speed
+        f64.mul
+        f64.sub
+        local.set $move_x
+        local.get $move_y
+        local.get $sin_a_v
+        local.get $speed
+        f64.mul
+        f64.sub
+        local.set $move_y
+      end
     end
 
     ;; Collision check
