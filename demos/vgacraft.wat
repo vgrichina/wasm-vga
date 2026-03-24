@@ -10100,258 +10100,18 @@
                   local.set $cel_dot
                 end
 
-                local.get $cel_active
-                local.get $cel_is_sun
-                i32.and
-                local.get $cel_dot
-                f64.const 0.980
-                f64.gt
-                i32.and
-                if
-                  ;; Sun rendering with dithered 24-bit RGB
-                  ;; cel_dot 0.980→1.0, map to t = 0..255
-                  local.get $cel_dot
-                  f64.const 0.980
-                  f64.sub
-                  f64.const 12750.0
-                  f64.mul
-                  i32.trunc_f64_s
-                  local.set $shade_full
-                  local.get $shade_full
-                  i32.const 255
-                  i32.gt_s
-                  if  i32.const 255  local.set $shade_full  end
-                  local.get $shade_full
-                  i32.const 0
-                  i32.lt_s
-                  if  i32.const 0  local.set $shade_full  end
+                ;; ============================================================
+                ;; UNIFIED SKY RENDERING: sky gradient → sun/moon → stars → clouds
+                ;; Clouds render ON TOP of sun/moon for proper layering
+                ;; ============================================================
 
-                  ;; Blend from sky color to sun color (sunset-aware warm orange)
-                  ;; Sun center: sunset-blended (sun_cr, sun_cg, sun_cb)
-                  ;; sky base blended with sunset colors
-                  ;; Blend: color = sky*(255-t)/255 + sun*t/255
-                  ;; Red
-                  local.get $fb_addr
-                  local.get $px_col
-                  local.get $px_row
-                  ;; R = sky_r_full*(255-t)/255 + sun_cr*t/255
-                  ;; sky_r_full = sky_hr*day_bright/255 (use half of horizon for sun halo)
-                  local.get $sky_hr
-                  i32.const 2
-                  i32.div_u
-                  local.get $day_bright
-                  i32.mul
-                  i32.const 255
-                  i32.div_u
-                  i32.const 255
-                  local.get $shade_full
-                  i32.sub
-                  i32.mul
-                  local.get $sun_cr
-                  local.get $shade_full
-                  i32.mul
-                  i32.add
-                  i32.const 255
-                  i32.div_u
-                  ;; G = sky_g_full*(255-t)/255 + sun_cg*t/255
-                  local.get $sky_hg
-                  local.get $day_bright
-                  i32.mul
-                  i32.const 255
-                  i32.div_u
-                  i32.const 255
-                  local.get $shade_full
-                  i32.sub
-                  i32.mul
-                  local.get $sun_cg
-                  local.get $shade_full
-                  i32.mul
-                  i32.add
-                  i32.const 255
-                  i32.div_u
-                  ;; B = sky_b_full*(255-t)/255 + sun_cb*t/255
-                  local.get $sky_hb
-                  local.get $day_bright
-                  i32.mul
-                  i32.const 255
-                  i32.div_u
-                  i32.const 255
-                  local.get $shade_full
-                  i32.sub
-                  i32.mul
-                  local.get $sun_cb
-                  local.get $shade_full
-                  i32.mul
-                  i32.add
-                  i32.const 255
-                  i32.div_u
-                  call $rgb_to_rgbl_dither
-                  i32.store8
-                else
-                  local.get $cel_active
-                  local.get $cel_is_sun
-                  i32.eqz
-                  i32.and
-                  local.get $cel_dot
-                  f64.const 0.988
-                  f64.gt
-                  i32.and
-                  if
-                    ;; Moon rendering with dithered 24-bit RGB (dim moonlight)
-                    ;; Moon glow halo — wider detection radius
-                    ;; Map cel_dot from 0.988..1.0 to t = 0..255
-                    local.get $cel_dot
-                    f64.const 0.988
-                    f64.sub
-                    f64.const 21250.0  ;; 255/0.012
-                    f64.mul
-                    i32.trunc_f64_s
-                    local.set $shade_full
-                    local.get $shade_full
-                    i32.const 0
-                    i32.lt_s
-                    if  i32.const 0  local.set $shade_full  end
-                    local.get $shade_full
-                    i32.const 255
-                    i32.gt_s
-                    if  i32.const 255  local.set $shade_full  end
-
-                    ;; Moon: bright cool white with warm edge glow
-                    ;; Brighter moon: center (200,210,230), edge glow (180,170,140)
-                    ;; Blend from night sky (very dark blue) through warm edge to bright center
-                    ;; Night sky: R≈2, G≈4, B≈10
-                    ;; shade_full 0-127: night sky → warm edge glow
-                    ;; shade_full 128-255: warm edge → bright center
-                    local.get $fb_addr
-                    local.get $px_col
-                    local.get $px_row
-                    local.get $shade_full
-                    i32.const 128
-                    i32.lt_s
-                    if (result i32 i32 i32)
-                      ;; Outer halo: blend night sky (2,4,10) → warm edge (180,160,120)
-                      ;; t2 = shade_full * 2 (0-254)
-                      ;; R = 2*(255-t2)/255 + 180*t2/255
-                      i32.const 2
-                      i32.const 255
-                      local.get $shade_full
-                      i32.const 2
-                      i32.mul
-                      i32.sub
-                      i32.mul
-                      i32.const 180
-                      local.get $shade_full
-                      i32.const 2
-                      i32.mul
-                      i32.mul
-                      i32.add
-                      i32.const 255
-                      i32.div_u
-                      ;; G = 4*(255-t2)/255 + 160*t2/255
-                      i32.const 4
-                      i32.const 255
-                      local.get $shade_full
-                      i32.const 2
-                      i32.mul
-                      i32.sub
-                      i32.mul
-                      i32.const 160
-                      local.get $shade_full
-                      i32.const 2
-                      i32.mul
-                      i32.mul
-                      i32.add
-                      i32.const 255
-                      i32.div_u
-                      ;; B = 10*(255-t2)/255 + 120*t2/255
-                      i32.const 10
-                      i32.const 255
-                      local.get $shade_full
-                      i32.const 2
-                      i32.mul
-                      i32.sub
-                      i32.mul
-                      i32.const 120
-                      local.get $shade_full
-                      i32.const 2
-                      i32.mul
-                      i32.mul
-                      i32.add
-                      i32.const 255
-                      i32.div_u
-                    else
-                      ;; Inner disc: blend warm edge (180,160,120) → bright center (210,220,240)
-                      ;; t2 = (shade_full - 128) * 2 (0-254)
-                      ;; R = 180*(255-t2)/255 + 210*t2/255
-                      i32.const 180
-                      i32.const 255
-                      local.get $shade_full
-                      i32.const 128
-                      i32.sub
-                      i32.const 2
-                      i32.mul
-                      i32.sub
-                      i32.mul
-                      i32.const 210
-                      local.get $shade_full
-                      i32.const 128
-                      i32.sub
-                      i32.const 2
-                      i32.mul
-                      i32.mul
-                      i32.add
-                      i32.const 255
-                      i32.div_u
-                      ;; G = 160*(255-t2)/255 + 220*t2/255
-                      i32.const 160
-                      i32.const 255
-                      local.get $shade_full
-                      i32.const 128
-                      i32.sub
-                      i32.const 2
-                      i32.mul
-                      i32.sub
-                      i32.mul
-                      i32.const 220
-                      local.get $shade_full
-                      i32.const 128
-                      i32.sub
-                      i32.const 2
-                      i32.mul
-                      i32.mul
-                      i32.add
-                      i32.const 255
-                      i32.div_u
-                      ;; B = 120*(255-t2)/255 + 240*t2/255
-                      i32.const 120
-                      i32.const 255
-                      local.get $shade_full
-                      i32.const 128
-                      i32.sub
-                      i32.const 2
-                      i32.mul
-                      i32.sub
-                      i32.mul
-                      i32.const 240
-                      local.get $shade_full
-                      i32.const 128
-                      i32.sub
-                      i32.const 2
-                      i32.mul
-                      i32.mul
-                      i32.add
-                      i32.const 255
-                      i32.div_u
-                    end
-                    call $rgb_to_rgbl_dither
-                    i32.store8
-                  else
-                    ;; Sky gradient with dithered 24-bit RGB + PROCEDURAL CLOUDS
-                    ;; ray_dz (0..1) controls gradient from horizon to zenith
-                    ;; Sky color: blend from horizon to zenith (sunset-aware)
-                    ;; Horizon/Zenith colors precomputed with sunset blending
-                    ;; Scale by day_bright/255
-                    ;; Also at night: very dark blue R≈2, G≈4, B≈10
+                ;; Step 1: Always compute sky gradient into cloud_r/g/b
+                ;; Sky gradient with dithered 24-bit RGB
+                ;; ray_dz (0..1) controls gradient from horizon to zenith
+                ;; Sky color: blend from horizon to zenith (sunset-aware)
+                ;; Horizon/Zenith colors precomputed with sunset blending
+                ;; Scale by day_bright/255
+                ;; Also at night: very dark blue R≈2, G≈4, B≈10
                     local.get $ray_dz
                     f64.const 0.0
                     f64.lt
@@ -10454,8 +10214,235 @@
                     i32.div_u
                     local.set $cloud_b
 
-                    ;; ============================================================
-                    ;; NIGHT STARS — sprinkle bright dots in night sky
+                ;; Step 2: Blend sun/moon into cloud_r/g/b (behind clouds)
+                local.get $cel_active
+                local.get $cel_is_sun
+                i32.and
+                local.get $cel_dot
+                f64.const 0.980
+                f64.gt
+                i32.and
+                if
+                  ;; Sun rendering: blend sun color into sky gradient (cloud_r/g/b)
+                  ;; cel_dot 0.980→1.0, map to t = 0..255
+                  local.get $cel_dot
+                  f64.const 0.980
+                  f64.sub
+                  f64.const 12750.0
+                  f64.mul
+                  i32.trunc_f64_s
+                  local.set $shade_full
+                  local.get $shade_full
+                  i32.const 255
+                  i32.gt_s
+                  if  i32.const 255  local.set $shade_full  end
+                  local.get $shade_full
+                  i32.const 0
+                  i32.lt_s
+                  if  i32.const 0  local.set $shade_full  end
+
+                  ;; Blend: cloud_r = cloud_r*(255-t)/255 + sun_cr*t/255
+                  local.get $cloud_r
+                  i32.const 255
+                  local.get $shade_full
+                  i32.sub
+                  i32.mul
+                  local.get $sun_cr
+                  local.get $shade_full
+                  i32.mul
+                  i32.add
+                  i32.const 255
+                  i32.div_u
+                  local.set $cloud_r
+                  ;; G
+                  local.get $cloud_g
+                  i32.const 255
+                  local.get $shade_full
+                  i32.sub
+                  i32.mul
+                  local.get $sun_cg
+                  local.get $shade_full
+                  i32.mul
+                  i32.add
+                  i32.const 255
+                  i32.div_u
+                  local.set $cloud_g
+                  ;; B
+                  local.get $cloud_b
+                  i32.const 255
+                  local.get $shade_full
+                  i32.sub
+                  i32.mul
+                  local.get $sun_cb
+                  local.get $shade_full
+                  i32.mul
+                  i32.add
+                  i32.const 255
+                  i32.div_u
+                  local.set $cloud_b
+                end
+
+                ;; Moon blending into cloud_r/g/b
+                local.get $cel_active
+                local.get $cel_is_sun
+                i32.eqz
+                i32.and
+                local.get $cel_dot
+                f64.const 0.988
+                f64.gt
+                i32.and
+                if
+                  ;; Moon rendering: blend moon color into sky gradient (cloud_r/g/b)
+                  ;; Map cel_dot from 0.988..1.0 to t = 0..255
+                  local.get $cel_dot
+                  f64.const 0.988
+                  f64.sub
+                  f64.const 21250.0  ;; 255/0.012
+                  f64.mul
+                  i32.trunc_f64_s
+                  local.set $shade_full
+                  local.get $shade_full
+                  i32.const 0
+                  i32.lt_s
+                  if  i32.const 0  local.set $shade_full  end
+                  local.get $shade_full
+                  i32.const 255
+                  i32.gt_s
+                  if  i32.const 255  local.set $shade_full  end
+
+                  ;; Moon: bright cool white with warm edge glow
+                  ;; Compute moon RGB based on shade_full
+                  ;; shade_full 0-127: warm edge glow (180,160,120)
+                  ;; shade_full 128-255: bright center (210,220,240)
+                  ;; Blend moon color into cloud_r/g/b using shade_full as opacity
+
+                  ;; Compute moon color for this pixel
+                  local.get $shade_full
+                  i32.const 128
+                  i32.lt_s
+                  if
+                    ;; Outer halo: blend night sky toward warm edge (180,160,120)
+                    ;; t2 = shade_full * 2 (0-254)
+                    ;; moon_r = 2*(255-t2)/255 + 180*t2/255
+                    i32.const 2
+                    i32.const 255
+                    local.get $shade_full
+                    i32.const 2
+                    i32.mul
+                    i32.sub
+                    i32.mul
+                    i32.const 180
+                    local.get $shade_full
+                    i32.const 2
+                    i32.mul
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    local.set $cloud_r
+                    ;; moon_g
+                    i32.const 4
+                    i32.const 255
+                    local.get $shade_full
+                    i32.const 2
+                    i32.mul
+                    i32.sub
+                    i32.mul
+                    i32.const 160
+                    local.get $shade_full
+                    i32.const 2
+                    i32.mul
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    local.set $cloud_g
+                    ;; moon_b
+                    i32.const 10
+                    i32.const 255
+                    local.get $shade_full
+                    i32.const 2
+                    i32.mul
+                    i32.sub
+                    i32.mul
+                    i32.const 120
+                    local.get $shade_full
+                    i32.const 2
+                    i32.mul
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    local.set $cloud_b
+                  else
+                    ;; Inner disc: blend warm edge (180,160,120) → bright center (210,220,240)
+                    ;; t2 = (shade_full - 128) * 2 (0-254)
+                    i32.const 180
+                    i32.const 255
+                    local.get $shade_full
+                    i32.const 128
+                    i32.sub
+                    i32.const 2
+                    i32.mul
+                    i32.sub
+                    i32.mul
+                    i32.const 210
+                    local.get $shade_full
+                    i32.const 128
+                    i32.sub
+                    i32.const 2
+                    i32.mul
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    local.set $cloud_r
+                    ;; G
+                    i32.const 160
+                    i32.const 255
+                    local.get $shade_full
+                    i32.const 128
+                    i32.sub
+                    i32.const 2
+                    i32.mul
+                    i32.sub
+                    i32.mul
+                    i32.const 220
+                    local.get $shade_full
+                    i32.const 128
+                    i32.sub
+                    i32.const 2
+                    i32.mul
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    local.set $cloud_g
+                    ;; B
+                    i32.const 120
+                    i32.const 255
+                    local.get $shade_full
+                    i32.const 128
+                    i32.sub
+                    i32.const 2
+                    i32.mul
+                    i32.sub
+                    i32.mul
+                    i32.const 240
+                    local.get $shade_full
+                    i32.const 128
+                    i32.sub
+                    i32.const 2
+                    i32.mul
+                    i32.mul
+                    i32.add
+                    i32.const 255
+                    i32.div_u
+                    local.set $cloud_b
+                  end
+                end
+
+                    ;; Step 3: NIGHT STARS — sprinkle bright dots in night sky
                     ;; Use hash of screen position + ray direction for pseudo-random stars
                     ;; Only visible when day_bright < 140 (night/twilight)
                     ;; ============================================================
@@ -10897,7 +10884,7 @@
                       local.set $cloud_b
                     end
 
-                    ;; Write final sky+cloud pixel
+                    ;; Write final sky+sun/moon+stars+cloud pixel
                     local.get $fb_addr
                     local.get $px_col
                     local.get $px_row
@@ -10906,8 +10893,6 @@
                     local.get $cloud_b
                     call $rgb_to_rgbl_dither
                     i32.store8
-                  end
-                end
               else
                 ;; Below horizon fog: dithered sky at horizon level (sunset-aware)
                 ;; Use precomputed horizon sky color
