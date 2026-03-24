@@ -8173,6 +8173,11 @@
     i32.const 0
     i32.load
     local.set $frame_ct
+
+    ;; Reset total step counter at start of frame (before rendering)
+    i32.const 0
+    global.set $g_total_steps
+
     i32.const 0x10
     i32.load8_u
     local.set $keys
@@ -9952,10 +9957,6 @@
     i32.const 100
     i32.const 0xFF
     call $put_pixel
-
-    ;; Reset total step counter for this frame
-    i32.const 0
-    global.set $g_total_steps
 
     ;; ---- HUD ----
     ;; Time display (top-right)
