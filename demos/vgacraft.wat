@@ -10312,8 +10312,8 @@
                 end
 
                 ;; ============================================================
-                ;; UNIFIED SKY RENDERING: sky gradient → sun/moon → stars → clouds
-                ;; Clouds render ON TOP of sun/moon for proper layering
+                ;; UNIFIED SKY RENDERING: sky gradient → sun/moon → clouds → stars
+                ;; Stars only visible where clouds don't cover them
                 ;; ============================================================
 
                 ;; Step 1: Always compute sky gradient into cloud_r/g/b
@@ -10653,114 +10653,9 @@
                   end
                 end
 
-                    ;; Step 3: NIGHT STARS — sprinkle bright dots in night sky
-                    ;; Use hash of screen position + ray direction for pseudo-random stars
-                    ;; Only visible when day_bright < 140 (night/twilight)
-                    ;; ============================================================
-                    local.get $day_bright
-                    i32.const 140
-                    i32.lt_s
-                    local.get $ray_dz
-                    f64.const 0.05
-                    f64.gt
-                    i32.and
-                    if
-                      ;; Hash screen pixel coords for star pattern
-                      ;; Use a simple hash: (px_col * 7919 + px_row * 7727 + 13) mod 997
-                      ;; If result < 3, it's a star (gives ~0.3% density)
-                      local.get $px_col
-                      i32.const 7919
-                      i32.mul
-                      local.get $px_row
-                      i32.const 7727
-                      i32.mul
-                      i32.add
-                      i32.const 13
-                      i32.add
-                      ;; XOR with camera angle-based value for parallax
-                      local.get $ray_dx
-                      f64.const 500.0
-                      f64.mul
-                      i32.trunc_f64_s
-                      i32.xor
-                      local.get $ray_dy
-                      f64.const 500.0
-                      f64.mul
-                      i32.trunc_f64_s
-                      i32.xor
-                      ;; Take absolute value and mod by prime
-                      i32.const 0x7FFFFFFF
-                      i32.and
-                      i32.const 997
-                      i32.rem_u
-                      i32.const 3
-                      i32.lt_u
-                      if
-                        ;; Star brightness: twinkle using tick + position hash
-                        ;; star_bright = 140 + (hash % 115) — between 140-255
-                        ;; Fade with day brightness: star_alpha = (140 - day_bright) * 255 / 140
-                        ;; Blend star white into current sky color
-                        i32.const 140
-                        local.get $day_bright
-                        i32.sub
-                        i32.const 255
-                        i32.mul
-                        i32.const 140
-                        i32.div_u
-                        local.set $shade_frac  ;; reuse as star_alpha
-
-                        ;; Twinkle: vary brightness with tick
-                        local.get $px_col
-                        i32.const 31
-                        i32.mul
-                        local.get $px_row
-                        i32.const 17
-                        i32.mul
-                        i32.add
-                        local.get $tick
-                        i32.const 7
-                        i32.shr_u
-                        i32.add
-                        i32.const 3
-                        i32.and
-                        i32.const 0
-                        i32.eq
-                        if
-                          ;; Bright twinkle frame: blend star into sky
-                          ;; R = cloud_r + (255 - cloud_r) * star_alpha / 255
-                          local.get $cloud_r
-                          i32.const 255
-                          local.get $cloud_r
-                          i32.sub
-                          local.get $shade_frac
-                          i32.mul
-                          i32.const 255
-                          i32.div_u
-                          i32.add
-                          local.set $cloud_r
-                          local.get $cloud_g
-                          i32.const 255
-                          local.get $cloud_g
-                          i32.sub
-                          local.get $shade_frac
-                          i32.mul
-                          i32.const 255
-                          i32.div_u
-                          i32.add
-                          local.set $cloud_g
-                          local.get $cloud_b
-                          i32.const 255
-                          local.get $cloud_b
-                          i32.sub
-                          local.get $shade_frac
-                          i32.mul
-                          i32.const 255
-                          i32.div_u
-                          i32.add
-                          local.set $cloud_b
-                        end
-                      end
-                    end
+                    ;; Reset cloud_val before cloud computation (0 = no cloud)
+                    i32.const 0
+                    local.set $cloud_val
 
                     ;; ============================================================
                     ;; PROCEDURAL CLOUDS — two layers of scrolling noise
@@ -11095,7 +10990,160 @@
                       local.set $cloud_b
                     end
 
-                    ;; Write final sky+sun/moon+stars+cloud pixel
+                    ;; ============================================================
+                    ;; Step 3: NIGHT STARS — cubemap-style direction-based stars
+                    ;; Uses ray direction for stable parallax (not screen coords)
+                    ;; Only visible when day_bright < 140 AND cloud_val < 20
+                    ;; Stars render BEHIND clouds — only where sky is clear
+                    ;; ============================================================
+                    local.get $day_bright
+                    i32.const 140
+                    i32.lt_s
+                    local.get $ray_dz
+                    f64.const 0.05
+                    f64.gt
+                    i32.and
+                    local.get $cloud_val
+                    i32.const 20
+                    i32.lt_s
+                    i32.and
+                    if
+                      ;; Cubemap-style star hash: quantize ray direction to a grid
+                      ;; on the sky sphere, then hash the grid cell for star presence.
+                      ;; This gives stars fixed positions on the sky dome that don't
+                      ;; move with the camera — only the visible portion changes.
+                      ;;
+                      ;; Project ray onto unit sphere grid:
+                      ;; grid_u = atan2(ray_dy, ray_dx) * 200 / pi  (azimuth, ~400 cells around)
+                      ;; grid_v = ray_dz * 300  (elevation, ~300 cells zenith)
+                      ;; Approximate atan2 with ray_dx and ray_dy ratios for speed
+                      ;;
+                      ;; Fast spherical grid: use (ray_dx/ray_dz, ray_dy/ray_dz) projected
+                      ;; onto a high-res grid. Since ray_dz > 0.05 (checked above), safe to divide.
+                      ;; Multiply by large scale for fine grid cells.
+
+                      ;; grid_u = (ray_dx / ray_dz) * 150
+                      ;; grid_v = (ray_dy / ray_dz) * 150
+                      ;; These are stable in world space — camera rotation changes which
+                      ;; grid cells map to which screen pixels, but the grid itself is fixed.
+                      local.get $ray_dx
+                      local.get $ray_dz
+                      f64.div
+                      f64.const 150.0
+                      f64.mul
+                      i32.trunc_f64_s
+                      ;; grid_u on stack
+
+                      local.get $ray_dy
+                      local.get $ray_dz
+                      f64.div
+                      f64.const 150.0
+                      f64.mul
+                      i32.trunc_f64_s
+                      ;; grid_v on stack
+
+                      ;; Hash: (grid_u * 7919 + grid_v * 7727 + 13) & 0x7FFFFFFF % 997
+                      ;; Store grid_v, compute hash
+                      local.set $cloud_d2  ;; reuse as grid_v temp
+                      ;; grid_u still on stack
+                      i32.const 7919
+                      i32.mul
+                      local.get $cloud_d2
+                      i32.const 7727
+                      i32.mul
+                      i32.add
+                      i32.const 13
+                      i32.add
+                      i32.const 0x7FFFFFFF
+                      i32.and
+                      i32.const 997
+                      i32.rem_u
+                      i32.const 3
+                      i32.lt_u
+                      if
+                        ;; Star brightness: twinkle using tick + direction hash
+                        ;; Fade with day brightness: star_alpha = (140 - day_bright) * 255 / 140
+                        ;; Also fade by inverse cloud_val for smooth cloud edges
+                        i32.const 140
+                        local.get $day_bright
+                        i32.sub
+                        i32.const 255
+                        i32.mul
+                        i32.const 140
+                        i32.div_u
+                        local.set $shade_frac  ;; reuse as star_alpha
+
+                        ;; Further attenuate by cloud proximity (cloud_val 0→20)
+                        ;; star_alpha *= (20 - cloud_val) / 20
+                        local.get $shade_frac
+                        i32.const 20
+                        local.get $cloud_val
+                        i32.sub
+                        i32.mul
+                        i32.const 20
+                        i32.div_u
+                        local.set $shade_frac
+
+                        ;; Twinkle: use direction-based hash + tick for animation
+                        ;; (grid_u * 31 + grid_v * 17 + tick>>7) & 3 == 0
+                        local.get $ray_dx
+                        local.get $ray_dz
+                        f64.div
+                        f64.const 150.0
+                        f64.mul
+                        i32.trunc_f64_s
+                        i32.const 31
+                        i32.mul
+                        local.get $cloud_d2  ;; grid_v
+                        i32.const 17
+                        i32.mul
+                        i32.add
+                        local.get $tick
+                        i32.const 7
+                        i32.shr_u
+                        i32.add
+                        i32.const 3
+                        i32.and
+                        i32.const 0
+                        i32.eq
+                        if
+                          ;; Bright twinkle frame: blend star white into sky
+                          ;; R = cloud_r + (255 - cloud_r) * star_alpha / 255
+                          local.get $cloud_r
+                          i32.const 255
+                          local.get $cloud_r
+                          i32.sub
+                          local.get $shade_frac
+                          i32.mul
+                          i32.const 255
+                          i32.div_u
+                          i32.add
+                          local.set $cloud_r
+                          local.get $cloud_g
+                          i32.const 255
+                          local.get $cloud_g
+                          i32.sub
+                          local.get $shade_frac
+                          i32.mul
+                          i32.const 255
+                          i32.div_u
+                          i32.add
+                          local.set $cloud_g
+                          local.get $cloud_b
+                          i32.const 255
+                          local.get $cloud_b
+                          i32.sub
+                          local.get $shade_frac
+                          i32.mul
+                          i32.const 255
+                          i32.div_u
+                          i32.add
+                          local.set $cloud_b
+                        end
+                      end
+                    end
+
+                    ;; Write final sky+sun/moon+clouds+stars pixel
                     local.get $fb_addr
                     local.get $px_col
                     local.get $px_row
